@@ -1,0 +1,102 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "observation_id": {
+      "title": "Observation Id",
+      "type": "string"
+    },
+    "agent_id": {
+      "title": "Agent Id",
+      "type": "string"
+    },
+    "branch_id": {
+      "title": "Branch Id",
+      "type": "string"
+    },
+    "sim_time_us": {
+      "minimum": 0,
+      "title": "Sim Time Us",
+      "type": "integer"
+    },
+    "world_version": {
+      "minimum": 0,
+      "title": "World Version",
+      "type": "integer"
+    },
+    "market_view": {
+      "additionalProperties": true,
+      "title": "Market View",
+      "type": "object"
+    },
+    "portfolio_view": {
+      "additionalProperties": true,
+      "title": "Portfolio View",
+      "type": "object"
+    },
+    "information_items": {
+      "items": {
+        "additionalProperties": true,
+        "type": "object"
+      },
+      "title": "Information Items",
+      "type": "array"
+    },
+    "private_messages": {
+      "items": {
+        "additionalProperties": true,
+        "type": "object"
+      },
+      "title": "Private Messages",
+      "type": "array"
+    },
+    "chain_view": {
+      "additionalProperties": true,
+      "title": "Chain View",
+      "type": "object"
+    },
+    "missing_fields": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Missing Fields",
+      "type": "array"
+    },
+    "observation_delays": {
+      "additionalProperties": {
+        "type": "integer"
+      },
+      "title": "Observation Delays",
+      "type": "object"
+    },
+    "provenance": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Provenance",
+      "type": "array"
+    },
+    "attention_decisions": {
+      "items": {
+        "additionalProperties": true,
+        "type": "object"
+      },
+      "title": "Attention Decisions",
+      "type": "array"
+    },
+    "schema_version": {
+      "const": "observation.v0.2",
+      "default": "observation.v0.2",
+      "title": "Schema Version",
+      "type": "string"
+    }
+  },
+  "required": [
+    "observation_id",
+    "agent_id",
+    "branch_id",
+    "sim_time_us",
+    "world_version"
+  ],
+  "title": "ObservationPacket",
+  "type": "object"
+}

@@ -1,0 +1,85 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "action_id": {
+      "title": "Action Id",
+      "type": "string"
+    },
+    "agent_id": {
+      "title": "Agent Id",
+      "type": "string"
+    },
+    "branch_id": {
+      "title": "Branch Id",
+      "type": "string"
+    },
+    "submitted_sim_time_us": {
+      "minimum": 0,
+      "title": "Submitted Sim Time Us",
+      "type": "integer"
+    },
+    "action_type": {
+      "enum": [
+        "SubmitLimitOrder",
+        "SubmitProtectedMarketOrder",
+        "CancelOrder",
+        "ReplaceOrder",
+        "PublishInformation"
+      ],
+      "title": "Action Type",
+      "type": "string"
+    },
+    "payload": {
+      "additionalProperties": true,
+      "title": "Payload",
+      "type": "object"
+    },
+    "expected_execution_time_us": {
+      "minimum": 0,
+      "title": "Expected Execution Time Us",
+      "type": "integer"
+    },
+    "validity_window_us": {
+      "minimum": 0,
+      "title": "Validity Window Us",
+      "type": "integer"
+    },
+    "parent_observation_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Parent Observation Id"
+    },
+    "client_command_id": {
+      "maxLength": 256,
+      "minLength": 1,
+      "title": "Client Command Id",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": "action.v0.2",
+      "default": "action.v0.2",
+      "title": "Schema Version",
+      "type": "string"
+    }
+  },
+  "required": [
+    "action_id",
+    "agent_id",
+    "branch_id",
+    "submitted_sim_time_us",
+    "action_type",
+    "payload",
+    "expected_execution_time_us",
+    "validity_window_us",
+    "client_command_id"
+  ],
+  "title": "ActionContract",
+  "type": "object"
+}

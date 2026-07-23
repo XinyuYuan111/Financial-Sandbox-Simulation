@@ -1,0 +1,58 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "checkpoint_id": {
+      "title": "Checkpoint Id",
+      "type": "string"
+    },
+    "run_id": {
+      "title": "Run Id",
+      "type": "string"
+    },
+    "branch_id": {
+      "title": "Branch Id",
+      "type": "string"
+    },
+    "branch_seq": {
+      "minimum": 0,
+      "title": "Branch Seq",
+      "type": "integer"
+    },
+    "event_hash": {
+      "title": "Event Hash",
+      "type": "string"
+    },
+    "sim_time_us": {
+      "minimum": 0,
+      "title": "Sim Time Us",
+      "type": "integer"
+    },
+    "state": {
+      "additionalProperties": true,
+      "title": "State",
+      "type": "object"
+    },
+    "runtime_version": {
+      "title": "Runtime Version",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": "checkpoint.v0.2",
+      "default": "checkpoint.v0.2",
+      "title": "Schema Version",
+      "type": "string"
+    }
+  },
+  "required": [
+    "checkpoint_id",
+    "run_id",
+    "branch_id",
+    "branch_seq",
+    "event_hash",
+    "sim_time_us",
+    "state",
+    "runtime_version"
+  ],
+  "title": "Checkpoint",
+  "type": "object"
+}

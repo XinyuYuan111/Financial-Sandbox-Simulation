@@ -1,0 +1,176 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "sim_time_us": {
+      "minimum": 0,
+      "title": "Sim Time Us",
+      "type": "integer"
+    },
+    "priority": {
+      "maximum": 100,
+      "minimum": 0,
+      "title": "Priority",
+      "type": "integer"
+    },
+    "tie_break_key": {
+      "maxLength": 256,
+      "minLength": 1,
+      "title": "Tie Break Key",
+      "type": "string"
+    },
+    "event_type": {
+      "maxLength": 128,
+      "minLength": 1,
+      "title": "Event Type",
+      "type": "string"
+    },
+    "source_id": {
+      "maxLength": 256,
+      "minLength": 1,
+      "title": "Source Id",
+      "type": "string"
+    },
+    "target_ids": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Target Ids",
+      "type": "array"
+    },
+    "payload": {
+      "additionalProperties": true,
+      "title": "Payload",
+      "type": "object"
+    },
+    "parent_event_ids": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Parent Event Ids",
+      "type": "array"
+    },
+    "observation_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Observation Id"
+    },
+    "action_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Action Id"
+    },
+    "correlation_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Correlation Id"
+    },
+    "visibility": {
+      "default": "public",
+      "enum": [
+        "public",
+        "participants",
+        "agent_private",
+        "analyst_only"
+      ],
+      "title": "Visibility",
+      "type": "string"
+    },
+    "rng_stream": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Rng Stream"
+    },
+    "rng_draw_index": {
+      "anyOf": [
+        {
+          "minimum": 0,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Rng Draw Index"
+    },
+    "event_id": {
+      "title": "Event Id",
+      "type": "string"
+    },
+    "run_id": {
+      "title": "Run Id",
+      "type": "string"
+    },
+    "branch_id": {
+      "title": "Branch Id",
+      "type": "string"
+    },
+    "branch_seq": {
+      "minimum": 1,
+      "title": "Branch Seq",
+      "type": "integer"
+    },
+    "schema_version": {
+      "const": "event.v0.2",
+      "default": "event.v0.2",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "schema_hash": {
+      "default": "sha256:58e4932603526789bcbfbe4ac4b740e21116680787c204e159f2c074c8cb6977",
+      "title": "Schema Hash",
+      "type": "string"
+    },
+    "prev_event_hash": {
+      "title": "Prev Event Hash",
+      "type": "string"
+    },
+    "event_hash": {
+      "title": "Event Hash",
+      "type": "string"
+    }
+  },
+  "required": [
+    "sim_time_us",
+    "priority",
+    "tie_break_key",
+    "event_type",
+    "source_id",
+    "event_id",
+    "run_id",
+    "branch_id",
+    "branch_seq",
+    "prev_event_hash",
+    "event_hash"
+  ],
+  "title": "EventEnvelope",
+  "type": "object"
+}

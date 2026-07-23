@@ -1,0 +1,59 @@
+{
+  "preset_version": "framework-alpha.default.v0.2",
+  "mode": "test_fixture",
+  "seed": 20260723,
+  "market": {
+    "market_id": "TOKEN-USDX",
+    "base_asset": "TOKEN",
+    "quote_asset": "USDX",
+    "base_scale": 1,
+    "quote_scale": 1,
+    "price_tick": 1,
+    "maker_fee_bps": 5,
+    "taker_fee_bps": 10,
+    "initial_mid_price": 100
+  },
+  "agents": [
+    {
+      "agent_id": "rule_alpha",
+      "display_name": "Alpha Desk",
+      "strategy": "rule",
+      "role_tags": ["capital"],
+      "funding_profile": "capital",
+      "capabilities": ["market.trade", "information.read"],
+      "token_balance": 100000,
+      "usdx_balance": 20000000
+    },
+    {
+      "agent_id": "rule_beta",
+      "display_name": "Beta Flow",
+      "strategy": "rule",
+      "role_tags": ["market_participant"],
+      "funding_profile": "ordinary",
+      "capabilities": ["market.trade", "information.read"],
+      "token_balance": 100000,
+      "usdx_balance": 20000000
+    },
+    {
+      "agent_id": "replay_agent",
+      "display_name": "Replay Research",
+      "strategy": "replay",
+      "role_tags": ["information"],
+      "funding_profile": "information",
+      "capabilities": ["market.trade", "information.read", "information.publish"],
+      "token_balance": 50000,
+      "usdx_balance": 10000000
+    },
+    {
+      "agent_id": "background",
+      "display_name": "Background Sector",
+      "strategy": "background",
+      "role_tags": ["liquidity"],
+      "funding_profile": "background",
+      "capabilities": ["market.trade", "information.read"],
+      "token_balance": 600000,
+      "usdx_balance": 40000000
+    }
+  ]
+}
+

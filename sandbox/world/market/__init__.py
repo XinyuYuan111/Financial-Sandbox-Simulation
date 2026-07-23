@@ -1,0 +1,2 @@
+"""Local spot market implementation."""
+

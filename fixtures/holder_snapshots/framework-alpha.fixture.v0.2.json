@@ -1,0 +1,11 @@
+{
+  "schema_version": "holder-snapshot.v0.2",
+  "provider": "bundled-holder-snapshot",
+  "chain_id": "fixture-chain",
+  "target_token": "TOKEN",
+  "block_height": 20260723,
+  "block_hash": "fixture:framework-alpha-v0.2",
+  "finalized": true,
+  "coverage_ratio_milli": 1000
+}
+

@@ -1,0 +1,205 @@
+{
+  "$defs": {
+    "AgentConfig": {
+      "additionalProperties": false,
+      "properties": {
+        "agent_id": {
+          "title": "Agent Id",
+          "type": "string"
+        },
+        "display_name": {
+          "title": "Display Name",
+          "type": "string"
+        },
+        "strategy": {
+          "enum": [
+            "rule",
+            "replay",
+            "background"
+          ],
+          "title": "Strategy",
+          "type": "string"
+        },
+        "role_tags": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Role Tags",
+          "type": "array"
+        },
+        "funding_profile": {
+          "title": "Funding Profile",
+          "type": "string"
+        },
+        "capabilities": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Capabilities",
+          "type": "array"
+        },
+        "token_balance": {
+          "minimum": 0,
+          "title": "Token Balance",
+          "type": "integer"
+        },
+        "usdx_balance": {
+          "minimum": 0,
+          "title": "Usdx Balance",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "agent_id",
+        "display_name",
+        "strategy",
+        "funding_profile",
+        "token_balance",
+        "usdx_balance"
+      ],
+      "title": "AgentConfig",
+      "type": "object"
+    },
+    "MarketConfig": {
+      "additionalProperties": false,
+      "properties": {
+        "market_id": {
+          "default": "TOKEN-USDX",
+          "title": "Market Id",
+          "type": "string"
+        },
+        "base_asset": {
+          "default": "TOKEN",
+          "title": "Base Asset",
+          "type": "string"
+        },
+        "quote_asset": {
+          "default": "USDX",
+          "title": "Quote Asset",
+          "type": "string"
+        },
+        "base_scale": {
+          "default": 1,
+          "minimum": 1,
+          "title": "Base Scale",
+          "type": "integer"
+        },
+        "quote_scale": {
+          "default": 1,
+          "minimum": 1,
+          "title": "Quote Scale",
+          "type": "integer"
+        },
+        "price_tick": {
+          "default": 1,
+          "minimum": 1,
+          "title": "Price Tick",
+          "type": "integer"
+        },
+        "maker_fee_bps": {
+          "default": 5,
+          "maximum": 1000,
+          "minimum": 0,
+          "title": "Maker Fee Bps",
+          "type": "integer"
+        },
+        "taker_fee_bps": {
+          "default": 10,
+          "maximum": 1000,
+          "minimum": 0,
+          "title": "Taker Fee Bps",
+          "type": "integer"
+        },
+        "initial_mid_price": {
+          "default": 100,
+          "minimum": 1,
+          "title": "Initial Mid Price",
+          "type": "integer"
+        }
+      },
+      "title": "MarketConfig",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "scenario_id": {
+      "title": "Scenario Id",
+      "type": "string"
+    },
+    "name": {
+      "title": "Name",
+      "type": "string"
+    },
+    "mode": {
+      "enum": [
+        "test_fixture",
+        "live"
+      ],
+      "title": "Mode",
+      "type": "string"
+    },
+    "seed": {
+      "title": "Seed",
+      "type": "integer"
+    },
+    "preset_version": {
+      "title": "Preset Version",
+      "type": "string"
+    },
+    "provider_report": {
+      "additionalProperties": true,
+      "title": "Provider Report",
+      "type": "object"
+    },
+    "chain_snapshot": {
+      "additionalProperties": true,
+      "title": "Chain Snapshot",
+      "type": "object"
+    },
+    "market": {
+      "$ref": "#/$defs/MarketConfig"
+    },
+    "agents": {
+      "items": {
+        "$ref": "#/$defs/AgentConfig"
+      },
+      "title": "Agents",
+      "type": "array"
+    },
+    "total_supply": {
+      "additionalProperties": {
+        "type": "integer"
+      },
+      "title": "Total Supply",
+      "type": "object"
+    },
+    "warnings": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Warnings",
+      "type": "array"
+    },
+    "schema_version": {
+      "const": "resolved-initial-state.v0.2",
+      "default": "resolved-initial-state.v0.2",
+      "title": "Schema Version",
+      "type": "string"
+    }
+  },
+  "required": [
+    "scenario_id",
+    "name",
+    "mode",
+    "seed",
+    "preset_version",
+    "provider_report",
+    "chain_snapshot",
+    "market",
+    "agents",
+    "total_supply"
+  ],
+  "title": "ResolvedInitialState",
+  "type": "object"
+}
