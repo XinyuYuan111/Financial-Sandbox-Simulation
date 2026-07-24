@@ -4,6 +4,8 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from sandbox.contracts.intervention import DirectorAccessScope, InterventionPlanDraftInput, PrivateStateRef
+
 
 class CreateRunRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -26,3 +28,24 @@ class ForkRequest(BaseModel):
 class ExportRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     run_id: str
+
+
+class DraftInterventionPlanRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    client_command_id: str = Field(min_length=1, max_length=256)
+    draft: InterventionPlanDraftInput
+
+
+class InterventionPlanCommandRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    client_command_id: str = Field(min_length=1, max_length=256)
+
+
+class InterpretInterventionPlanRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    client_command_id: str = Field(min_length=1, max_length=256)
+    user_intent: str = Field(min_length=1, max_length=4_000)
+    requested_effective_time_us: int = Field(ge=0)
+    provider: Literal["openai"] = "openai"
+    access_scope: DirectorAccessScope = Field(default_factory=DirectorAccessScope)
+    private_read_refs: list[PrivateStateRef] = Field(default_factory=list, max_length=2_048)

@@ -32,6 +32,11 @@
       "title": "State",
       "type": "object"
     },
+    "control_state": {
+      "additionalProperties": true,
+      "title": "Control State",
+      "type": "object"
+    },
     "runtime_version": {
       "title": "Runtime Version",
       "type": "string"

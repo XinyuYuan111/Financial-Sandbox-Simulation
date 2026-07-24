@@ -6,9 +6,10 @@ import zipfile
 from pathlib import Path
 
 from sandbox.contracts.event import EventEnvelope
+from sandbox.contracts.intervention import InterventionPlan
 from sandbox.contracts.agent import ActionReceipt, AgentDecision, AgentDefinition, DecisionOutcome
 from sandbox.contracts.observation import ObservationPacket
-from sandbox.contracts.planning import LLMRecord, PlanningRequest, StrategyPlan
+from sandbox.contracts.planning import LLMRecord, PlanningRequest, PlanningResultCandidate, StrategyPlan
 from sandbox.contracts.scenario import ResolvedInitialState
 from sandbox.contracts.snapshot import ArchiveManifest
 from sandbox.core.errors import ValidationError
@@ -67,15 +68,37 @@ class ArchiveService:
             files[f"actions/receipts/{branch['branch_id']}.jsonl"] = (
                 "\n".join(row["receipt_json"] for row in receipts) + "\n"
             ).encode()
+            intervention_plans = self.store.connection.execute(
+                "SELECT plan_json FROM intervention_plans WHERE branch_id=? ORDER BY created_branch_seq,plan_id",
+                (branch["branch_id"],),
+            ).fetchall()
+            files[f"interventions/{branch['branch_id']}.jsonl"] = (
+                "\n".join(row["plan_json"] for row in intervention_plans) + "\n"
+            ).encode()
             snapshot = self.store.connection.execute("SELECT checkpoint_id,snapshot_json FROM snapshots WHERE branch_id=? ORDER BY branch_seq DESC LIMIT 1", (branch["branch_id"],)).fetchone()
             if snapshot is None:
                 raise ValidationError(f"branch {branch['branch_id']} must be checkpointed before export")
             files[f"checkpoints/{snapshot['checkpoint_id']}.json"] = str(snapshot["snapshot_json"]).encode()
         llm_rows = self.store.connection.execute(
-            "SELECT DISTINCT lr.record_json FROM llm_records lr JOIN planning_requests pr ON pr.request_id=lr.request_id JOIN branches b ON b.branch_id=pr.branch_id WHERE b.run_id=? ORDER BY lr.request_id,lr.attempt",
-            (run_id,),
+            "SELECT lr.record_json FROM llm_records lr WHERE "
+            "EXISTS (SELECT 1 FROM planning_requests pr JOIN branches b ON b.branch_id=pr.branch_id WHERE pr.request_id=lr.request_id AND b.run_id=?) "
+            "OR EXISTS (SELECT 1 FROM commands c JOIN branches b ON b.branch_id=c.branch_id WHERE c.command_id=lr.request_id AND b.run_id=?) "
+            "ORDER BY lr.request_id,lr.attempt",
+            (run_id, run_id),
         ).fetchall()
         files["llm/records.jsonl"] = ("\n".join(row["record_json"] for row in llm_rows) + "\n").encode()
+        planning_result_rows = self.store.connection.execute(
+            "SELECT pr.request_id,pr.branch_id,pr.result_status,pr.payload_json,pr.applied "
+            "FROM planning_results pr JOIN branches b ON b.branch_id=pr.branch_id WHERE b.run_id=? ORDER BY pr.branch_id,pr.request_id",
+            (run_id,),
+        ).fetchall()
+        files["llm/planning_results.jsonl"] = (
+            "\n".join(canonical_json({
+                "request_id": row["request_id"], "branch_id": row["branch_id"],
+                "result_status": row["result_status"], "payload": json.loads(row["payload_json"]),
+                "applied": bool(row["applied"]),
+            }) for row in planning_result_rows) + "\n"
+        ).encode()
         hashes = {name: "sha256:" + hashlib.sha256(content).hexdigest() for name, content in files.items()}
         manifest = ArchiveManifest(
             runtime_version=self.runtime_version,
@@ -248,6 +271,22 @@ class ArchiveService:
                                 "INSERT INTO action_receipts(receipt_id,action_id,branch_id,agent_id,sim_time_us,receipt_json) VALUES(?,?,?,?,?,?)",
                                 (receipt.receipt_id, receipt.action_id, branch_id, receipt.agent_id, receipt.resolved_sim_time_us, canonical_json(receipt.model_dump(mode="json"))),
                             )
+                    interventions_name = f"interventions/{branch_id}.jsonl"
+                    if interventions_name in archive.namelist():
+                        for line in archive.read(interventions_name).decode().splitlines():
+                            if not line:
+                                continue
+                            plan = InterventionPlan.model_validate(json.loads(line))
+                            if plan.branch_id != branch_id:
+                                raise ValidationError(f"intervention plan ownership mismatch in {interventions_name}")
+                            connection.execute(
+                                "INSERT INTO intervention_plans(plan_id,branch_id,status,base_world_revision,created_branch_seq,plan_json,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?)",
+                                (
+                                    plan.plan_id, branch_id, plan.status, plan.base_world_revision,
+                                    plan.created_branch_seq, canonical_json(plan.model_dump(mode="json")),
+                                    "archive-import", "archive-import",
+                                ),
+                            )
                 llm_name = "llm/records.jsonl"
                 if llm_name in archive.namelist():
                     for line in archive.read(llm_name).decode().splitlines():
@@ -257,5 +296,21 @@ class ArchiveService:
                         connection.execute(
                             "INSERT INTO llm_records(call_id,request_id,agent_id,attempt,provider,model,status,record_json) VALUES(?,?,?,?,?,?,?,?)",
                             (record.call_id, record.request_id, record.agent_id, record.attempt, record.provider, record.model, record.status, canonical_json(record.model_dump(mode="json"))),
+                        )
+                planning_results_name = "llm/planning_results.jsonl"
+                if planning_results_name in archive.namelist():
+                    for line in archive.read(planning_results_name).decode().splitlines():
+                        if not line:
+                            continue
+                        record = json.loads(line)
+                        candidate = record["payload"]
+                        if record["result_status"] == "ready":
+                            PlanningResultCandidate.model_validate(candidate)
+                        connection.execute(
+                            "INSERT INTO planning_results(request_id,branch_id,result_status,payload_json,applied,received_at) VALUES(?,?,?,?,?,?)",
+                            (
+                                record["request_id"], record["branch_id"], record["result_status"],
+                                canonical_json(candidate), int(bool(record["applied"])), "archive-import",
+                            ),
                         )
         return {"run_id": manifest.run_id, "already_present": False, "manifest": manifest.model_dump(mode="json")}

@@ -15,6 +15,7 @@ class Checkpoint(BaseModel):
     event_hash: str
     sim_time_us: int = Field(ge=0)
     state: dict[str, Any]
+    control_state: dict[str, Any] = Field(default_factory=dict)
     runtime_version: str
     schema_version: Literal["checkpoint.v0.2"] = "checkpoint.v0.2"
 

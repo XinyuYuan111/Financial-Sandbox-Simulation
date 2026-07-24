@@ -139,6 +139,30 @@
           "title": "Balances",
           "type": "object"
         },
+        "wallet_permissions": {
+          "additionalProperties": {
+            "items": {
+              "enum": [
+                "observe",
+                "transact"
+              ],
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "title": "Wallet Permissions",
+          "type": "object"
+        },
+        "accessible_wallet_balances": {
+          "additionalProperties": {
+            "additionalProperties": {
+              "$ref": "#/$defs/BalanceView"
+            },
+            "type": "object"
+          },
+          "title": "Accessible Wallet Balances",
+          "type": "object"
+        },
         "positions": {
           "additionalProperties": {
             "type": "integer"
@@ -389,6 +413,42 @@
           ],
           "default": null,
           "title": "Derived From Info Id"
+        },
+        "intervention_plan_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Intervention Plan Id"
+        },
+        "intervention_stage_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Intervention Stage Id"
+        },
+        "effect_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Effect Id"
         }
       },
       "required": [

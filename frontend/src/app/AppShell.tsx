@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { Activity, Boxes, GitFork, Info, LayoutDashboard, Plus, Settings2, Users } from 'lucide-react'
+import { Activity, Boxes, GitFork, Info, LayoutDashboard, Plus, Settings2, SlidersHorizontal, Users } from 'lucide-react'
 import { api } from '../api'
 import type { EventEnvelope, Projection, Run } from '../types'
 import { ErrorBanner, shortId } from '../components/ui'
@@ -9,14 +9,16 @@ import { BranchExplorer } from '../features/branches/BranchExplorer'
 import { EventExplorer } from '../features/run/EventExplorer'
 import { InformationWorkspace, MarketWorkspace } from '../features/run/MarketWorkspace'
 import { RunTopbar } from '../features/run/RunTopbar'
+import { InterventionWorkspace } from '../features/interventions/InterventionWorkspace'
 
-type View = 'market' | 'agents' | 'events' | 'information' | 'branches' | 'scenario'
+type View = 'market' | 'agents' | 'events' | 'information' | 'interventions' | 'branches' | 'scenario'
 
 const navigation: Array<{ id: View; label: string; icon: typeof Activity; group: 'run' | 'manage' }> = [
   { id: 'market', label: '市场工作台', icon: LayoutDashboard, group: 'run' },
   { id: 'agents', label: 'Agent 审计', icon: Users, group: 'run' },
   { id: 'events', label: '事件浏览器', icon: Activity, group: 'run' },
   { id: 'information', label: '信息流', icon: Info, group: 'run' },
+  { id: 'interventions', label: '情景干预', icon: SlidersHorizontal, group: 'run' },
   { id: 'branches', label: '分支与归档', icon: GitFork, group: 'manage' },
   { id: 'scenario', label: '新建场景', icon: Settings2, group: 'manage' },
 ]
@@ -142,6 +144,7 @@ export function AppShell() {
       {view === 'agents' ? <AgentExplorer branchId={branchId} /> : null}
       {view === 'events' ? <EventExplorer events={events} /> : null}
       {view === 'information' ? <InformationWorkspace projection={projection} /> : null}
+      {view === 'interventions' ? <InterventionWorkspace branchId={branchId} branchStatus={activeBranch.status} simTimeUs={projection.sim_time_us} onChanged={refresh} /> : null}
       {view === 'branches' ? <BranchExplorer run={run} activeBranchId={branchId} projection={projection} checkpointId={checkpointId} onSelect={next => { void loadBranch(run, next) }} onFork={fork} onReplay={cursor => { void loadBranch(run, branchId, cursor) }} onExport={exportArchive} onImport={importArchive} /> : null}
       {view === 'scenario' ? <QuickStartPage embedded onRun={acceptRun} /> : null}
     </main>

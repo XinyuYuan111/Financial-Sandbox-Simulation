@@ -79,6 +79,9 @@ export type Projection = {
   parent_branch_id?: string | null
   fork_checkpoint_id?: string | null
   fixture_step?: number
+  world_revision?: number
+  market_status?: 'active' | 'halted'
+  deferred_observation_count?: number
   market: {
     market_id: string
     bids: Order[]
@@ -89,6 +92,31 @@ export type Projection = {
   agents: AgentProjection[]
   information: Array<Record<string, unknown>>
   historical?: boolean
+}
+
+export type InterventionEffect = {
+  effect_id: string
+  effect_type: string
+  [key: string]: unknown
+}
+
+export type InterventionStage = {
+  stage_id: string
+  effective_sim_time_us: number
+  effects: InterventionEffect[]
+  status: 'pending' | 'applied' | 'failed' | 'canceled'
+  failure_reason?: string | null
+}
+
+export type InterventionPlan = {
+  plan_id: string
+  branch_id: string
+  status: 'draft' | 'confirmed' | 'rejected' | 'canceled' | 'completed' | 'failed'
+  base_world_revision: number
+  plan_revision: number
+  director_record: { submitted_intent: string }
+  stages: InterventionStage[]
+  preview: Array<{ effect_id: string; effect_type: string; target_refs: string[]; summary: string; warnings: string[] }>
 }
 
 export type EventEnvelope = {

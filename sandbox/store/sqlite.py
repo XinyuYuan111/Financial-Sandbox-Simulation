@@ -148,7 +148,43 @@ CREATE INDEX IF NOT EXISTS idx_action_receipts_action ON action_receipts(action_
 """
 
 
-MIGRATIONS = (("0001_agent_v0_1", AGENT_V0_1_MIGRATION),)
+INTERVENTION_V0_1_MIGRATION = """
+CREATE TABLE IF NOT EXISTS intervention_plans (
+  plan_id TEXT PRIMARY KEY,
+  branch_id TEXT NOT NULL REFERENCES branches(branch_id),
+  status TEXT NOT NULL,
+  base_world_revision INTEGER NOT NULL,
+  created_branch_seq INTEGER NOT NULL,
+  plan_json TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_intervention_plans_branch
+  ON intervention_plans(branch_id, created_branch_seq, plan_id);
+CREATE INDEX IF NOT EXISTS idx_intervention_plans_due
+  ON intervention_plans(branch_id, status);
+"""
+
+
+DEFERRED_PLANNING_RESULT_MIGRATION = """
+CREATE TABLE IF NOT EXISTS planning_results (
+  request_id TEXT PRIMARY KEY REFERENCES planning_requests(request_id),
+  branch_id TEXT NOT NULL REFERENCES branches(branch_id),
+  result_status TEXT NOT NULL,
+  payload_json TEXT NOT NULL,
+  applied INTEGER NOT NULL DEFAULT 0,
+  received_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_planning_results_pending
+  ON planning_results(branch_id, applied, request_id);
+"""
+
+
+MIGRATIONS = (
+    ("0001_agent_v0_1", AGENT_V0_1_MIGRATION),
+    ("0002_intervention_v0_1", INTERVENTION_V0_1_MIGRATION),
+    ("0003_deferred_planning_result", DEFERRED_PLANNING_RESULT_MIGRATION),
+)
 
 
 class SQLiteStore:

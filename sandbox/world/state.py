@@ -9,10 +9,20 @@ from sandbox.agents.observation import ObservationService
 from sandbox.contracts.agent import ActionReceipt, AgentDefinition, AgentRuntimeState, DecisionTrigger
 from sandbox.contracts.action import ActionContract
 from sandbox.contracts.event import EventDraft
+from sandbox.contracts.intervention import (
+    CreateRelationshipEffect,
+    CreateWorldEntityEffect,
+    InterventionStage,
+    PublishInformationEffect,
+    SetAccountFreezeEffect,
+    SetMarketStatusEffect,
+    SetWalletAccessEffect,
+    TransferAssetEffect,
+)
 from sandbox.contracts.observation import ObservationPacket
 from sandbox.contracts.planning import PlanningRequest, StrategyPlan
 from sandbox.contracts.scenario import ResolvedInitialState
-from sandbox.core.errors import ValidationError
+from sandbox.core.errors import MissingCausalStateError, ValidationError
 from sandbox.core.ids import new_id
 from sandbox.core.numeric import require_int
 from sandbox.core.rng import NamedRandomStreams
@@ -27,6 +37,13 @@ class ActionResult:
     events: list[EventDraft]
     observations: list[ObservationPacket]
     receipts: list[ActionReceipt]
+
+
+@dataclass(slots=True)
+class InterventionResult:
+    world: "SimulationWorld"
+    events: list[EventDraft]
+    observations: list[ObservationPacket]
 
 
 class SimulationWorld:
@@ -49,11 +66,24 @@ class SimulationWorld:
         self.action_reservations: dict[str, dict[str, object]] = {}
         self.planning_requests: dict[str, PlanningRequest] = {}
         self.strategy_plans: dict[str, StrategyPlan] = {}
+        self.world_revision = 0
+        self.world_entities: dict[str, dict[str, object]] = {}
+        self.relationships: dict[str, dict[str, object]] = {}
+        self.wallet_access: dict[str, dict[str, list[str]]] = {}
+        self.frozen_accounts: set[str] = set()
+        self.deferred_observation_ids: list[str] = []
 
     @classmethod
     def from_resolved(cls, resolved: ResolvedInitialState) -> "SimulationWorld":
         world = cls()
         world.market = resolved.market.model_dump(mode="json")
+        world.market["status"] = "active"
+        world.world_entities[resolved.market.market_id] = {
+            "entity_id": resolved.market.market_id,
+            "entity_type": "market",
+            "display_name": resolved.market.market_id,
+            "created_sim_time_us": 0,
+        }
         world.chain_snapshot = deepcopy(resolved.chain_snapshot)
         world.rng = NamedRandomStreams(resolved.seed)
         definitions = {definition.agent_id: definition for definition in resolved.agent_definitions}
@@ -68,6 +98,12 @@ class SimulationWorld:
                 funding_profile=config.funding_profile,
                 capabilities=config.capabilities,
             )
+            world.world_entities[config.agent_id] = {
+                "entity_id": config.agent_id,
+                "entity_type": "agent",
+                "display_name": config.display_name,
+                "created_sim_time_us": 0,
+            }
             world.ledger.credit(config.agent_id, resolved.market.base_asset, config.token_balance, reason="initial_mint")
             world.ledger.credit(config.agent_id, resolved.market.quote_asset, config.usdx_balance, reason="initial_mint")
             definition = definitions.get(config.agent_id)
@@ -88,6 +124,12 @@ class SimulationWorld:
                 )
         background = resolved.background_market_sector
         world.background_market_sector = background.model_dump(mode="json")
+        world.world_entities[background.sector_id] = {
+            "entity_id": background.sector_id,
+            "entity_type": "background_market_sector",
+            "display_name": background.sector_id,
+            "created_sim_time_us": 0,
+        }
         world.ledger.credit(background.sector_id, resolved.market.base_asset, background.token_balance, reason="initial_mint")
         world.ledger.credit(background.sector_id, resolved.market.quote_asset, background.usdx_balance, reason="initial_mint")
         token_remainder = resolved.total_supply[resolved.market.base_asset] - world.ledger.total(resolved.market.base_asset)
@@ -121,6 +163,12 @@ class SimulationWorld:
         world.action_reservations = deepcopy(value.get("action_reservations", {}))
         world.planning_requests = {item["request_id"]: PlanningRequest.model_validate(item) for item in value.get("planning_requests", [])}
         world.strategy_plans = {item["plan_id"]: StrategyPlan.model_validate(item) for item in value.get("strategy_plans", [])}
+        world.world_revision = int(value.get("world_revision", 0))
+        world.world_entities = deepcopy(value.get("world_entities", {}))
+        world.relationships = deepcopy(value.get("relationships", {}))
+        world.wallet_access = deepcopy(value.get("wallet_access", {}))
+        world.frozen_accounts = set(value.get("frozen_accounts", []))
+        world.deferred_observation_ids = list(value.get("deferred_observation_ids", []))
         return world
 
     def clone(self) -> "SimulationWorld":
@@ -154,6 +202,10 @@ class SimulationWorld:
         if action.action_type in {"SubmitLimitOrder", "SubmitProtectedMarketOrder", "CancelOrder", "ReplaceOrder"}:
             if "market.trade" not in capabilities:
                 raise ValidationError("agent does not have market.trade capability")
+            if world.market.get("status", "active") != "active":
+                raise ValidationError("market is halted")
+            if action.agent_id in world.frozen_accounts:
+                raise ValidationError("agent account is frozen")
             events.extend(world._apply_market_action(action))
         elif action.action_type == "PublishInformation":
             if "information.publish" not in capabilities:
@@ -218,6 +270,234 @@ class SimulationWorld:
                 for observation in observations
             )
         return ActionResult(world, events, observations, [receipt])
+
+    def apply_intervention_stage(
+        self,
+        stage: InterventionStage,
+        *,
+        branch_id: str,
+        plan_id: str,
+        world_version: int,
+        defer_observations: bool = True,
+    ) -> InterventionResult:
+        if stage.status != "pending":
+            raise ValidationError("only pending intervention stages can be applied")
+        if stage.effective_sim_time_us != self.sim_time_us:
+            raise ValidationError("current-time intervention stage must match branch sim_time_us")
+        world = self.clone()
+        events: list[EventDraft] = []
+        affected_agents: set[str] = set()
+        triggers_by_agent: dict[str, list[DecisionTrigger]] = {}
+        state_effects = [effect for effect in stage.effects if not isinstance(effect, PublishInformationEffect)]
+        information_effects = [effect for effect in stage.effects if isinstance(effect, PublishInformationEffect)]
+        for effect in state_effects:
+            effect_events, recipients = world._apply_state_intervention_effect(effect, plan_id, stage.stage_id)
+            events.extend(effect_events)
+            affected_agents.update(recipients)
+        for effect in information_effects:
+            if effect.source_id in world.agents:
+                raise ValidationError("information intervention cannot impersonate an Agent source")
+            if effect.source_id != "scenario_director" and not world._entity_exists(effect.source_id):
+                raise MissingCausalStateError(f"information source '{effect.source_id}' does not exist")
+            missing_targets = sorted(set(effect.target_ids) - set(world.agents))
+            if missing_targets:
+                raise MissingCausalStateError(f"information target Agents do not exist: {', '.join(missing_targets)}")
+            item = publish_information(
+                source_id=effect.source_id,
+                channel=effect.channel,
+                content=effect.content,
+                sim_time_us=world.sim_time_us,
+                target_ids=effect.target_ids,
+            )
+            item["intervention_plan_id"] = plan_id
+            item["intervention_stage_id"] = stage.stage_id
+            item["effect_id"] = effect.effect_id
+            world.information_items.append(item)
+            visibility = "agent_private" if item["visibility"] == "agent_private" else "public"
+            events.append(world._intervention_event(
+                plan_id, stage.stage_id, effect.effect_id, "InformationPublished", item,
+                priority=40, visibility=visibility, phase="published",
+            ))
+            recipients = list(item["target_ids"]) if item["visibility"] == "agent_private" else sorted(world.agents)
+            for target in recipients:
+                delivery_type = "PrivateMessageDelivered" if item["visibility"] == "agent_private" else "InformationDelivered"
+                events.append(world._intervention_event(
+                    plan_id, stage.stage_id, effect.effect_id, delivery_type,
+                    {"information_id": item["information_id"], "target_id": target},
+                    priority=41, visibility="agent_private" if visibility == "agent_private" else "participants",
+                    phase=f"delivered:{target}", target_ids=[target],
+                ))
+                if target in world.agents:
+                    affected_agents.add(target)
+                    trigger_type = "private_message" if visibility == "agent_private" else "information"
+                    triggers_by_agent.setdefault(target, []).append(DecisionTrigger(
+                        type=trigger_type,
+                        semantic_key=f"intervention_information:{effect.effect_id}",
+                        source_event_ids=[],
+                        severity=70,
+                        first_sim_time_us=world.sim_time_us,
+                        last_sim_time_us=world.sim_time_us,
+                    ))
+        for agent_id in affected_agents:
+            if agent_id not in triggers_by_agent:
+                triggers_by_agent[agent_id] = [DecisionTrigger(
+                    type="risk",
+                    semantic_key=f"intervention_state:{stage.stage_id}",
+                    source_event_ids=[],
+                    severity=80,
+                    first_sim_time_us=world.sim_time_us,
+                    last_sim_time_us=world.sim_time_us,
+                )]
+        world.world_revision += 1
+        observations = world.create_observations(
+            branch_id,
+            world_version + len(events) + 1,
+            recipient_ids=sorted(affected_agents),
+            triggers_by_agent=triggers_by_agent,
+        ) if affected_agents else []
+        if defer_observations:
+            world.deferred_observation_ids.extend(observation.observation_id for observation in observations)
+        events.extend(
+            world._intervention_event(
+                plan_id, stage.stage_id, "observation", "ObservationCreated",
+                {"agent_id": observation.agent_id, "observation_id": observation.observation_id},
+                priority=50, visibility="agent_private", phase=f"observation:{observation.agent_id}",
+                target_ids=[observation.agent_id], observation_id=observation.observation_id,
+            )
+            for observation in observations
+        )
+        return InterventionResult(world=world, events=events, observations=observations)
+
+    def _apply_state_intervention_effect(
+        self,
+        effect: object,
+        plan_id: str,
+        stage_id: str,
+    ) -> tuple[list[EventDraft], set[str]]:
+        recipients: set[str] = set()
+        if isinstance(effect, CreateWorldEntityEffect):
+            if self._entity_exists(effect.entity_id):
+                raise ValidationError(f"world entity '{effect.entity_id}' already exists")
+            self.world_entities[effect.entity_id] = {
+                "entity_id": effect.entity_id,
+                "entity_type": effect.entity_type,
+                "display_name": effect.display_name,
+                "created_sim_time_us": self.sim_time_us,
+            }
+            if effect.entity_type == "wallet":
+                self.ledger.open_account(
+                    effect.entity_id,
+                    [str(self.market["base_asset"]), str(self.market["quote_asset"])],
+                    reason="intervention_entity_created",
+                )
+            event_type = "WorldEntityCreated"
+            payload = dict(self.world_entities[effect.entity_id])
+        elif isinstance(effect, CreateRelationshipEffect):
+            if effect.relationship_id in self.relationships:
+                raise ValidationError(f"relationship '{effect.relationship_id}' already exists")
+            if not self._entity_exists(effect.source_entity_id) or not self._entity_exists(effect.target_entity_id):
+                raise MissingCausalStateError("relationship endpoints must exist before the stage")
+            self.relationships[effect.relationship_id] = effect.model_dump(mode="json")
+            event_type = "WorldRelationshipCreated"
+            payload = dict(self.relationships[effect.relationship_id])
+            recipients.update({effect.source_entity_id, effect.target_entity_id} & set(self.agents))
+        elif isinstance(effect, TransferAssetEffect):
+            missing = [relationship_id for relationship_id in effect.required_relationship_ids if relationship_id not in self.relationships]
+            if missing:
+                raise MissingCausalStateError(f"required relationships do not exist: {', '.join(missing)}")
+            if not self.ledger.has_account(effect.from_owner_id, effect.asset) or not self.ledger.has_account(effect.to_owner_id, effect.asset):
+                raise MissingCausalStateError("asset transfer requires existing ledger accounts")
+            if effect.from_owner_id in self.frozen_accounts:
+                raise ValidationError("source account is frozen")
+            self.ledger.transfer_free(
+                effect.from_owner_id,
+                effect.to_owner_id,
+                effect.asset,
+                effect.amount,
+                reason=f"intervention:{effect.reason_code}",
+            )
+            event_type = "ExternalAssetTransferred"
+            payload = effect.model_dump(mode="json")
+            recipients.update({effect.from_owner_id, effect.to_owner_id} & set(self.agents))
+        elif isinstance(effect, SetMarketStatusEffect):
+            if effect.market_id != self.market.get("market_id"):
+                raise MissingCausalStateError(f"market '{effect.market_id}' does not exist")
+            self.market["status"] = effect.status
+            event_type = "MarketStatusChanged"
+            payload = effect.model_dump(mode="json")
+            recipients.update(self.agents)
+        elif isinstance(effect, SetAccountFreezeEffect):
+            if not self.ledger.has_owner(effect.owner_id):
+                raise MissingCausalStateError(f"account owner '{effect.owner_id}' does not exist")
+            if effect.frozen:
+                self.frozen_accounts.add(effect.owner_id)
+                canceled_order_ids: list[str] = []
+                for order in list(self.clob.orders.values()):
+                    if order.agent_id == effect.owner_id and order.status in {"open", "partially_filled"}:
+                        self.clob.cancel(
+                            order.order_id,
+                            effect.owner_id,
+                            self.ledger,
+                            base_asset=str(self.market["base_asset"]),
+                            quote_asset=str(self.market["quote_asset"]),
+                        )
+                        canceled_order_ids.append(order.order_id)
+            else:
+                self.frozen_accounts.discard(effect.owner_id)
+                canceled_order_ids = []
+            event_type = "AccountFreezeChanged"
+            payload = {**effect.model_dump(mode="json"), "canceled_order_ids": canceled_order_ids}
+            recipients.update({effect.owner_id} & set(self.agents))
+        elif isinstance(effect, SetWalletAccessEffect):
+            if not self.ledger.has_owner(effect.wallet_owner_id):
+                raise MissingCausalStateError(f"wallet owner '{effect.wallet_owner_id}' does not exist")
+            if effect.grantee_agent_id not in self.agents:
+                raise MissingCausalStateError(f"Agent '{effect.grantee_agent_id}' does not exist")
+            grants = self.wallet_access.setdefault(effect.wallet_owner_id, {})
+            if effect.permissions:
+                grants[effect.grantee_agent_id] = list(effect.permissions)
+            else:
+                grants.pop(effect.grantee_agent_id, None)
+            event_type = "WalletAccessChanged"
+            payload = effect.model_dump(mode="json")
+            recipients.add(effect.grantee_agent_id)
+            recipients.update({effect.wallet_owner_id} & set(self.agents))
+        else:
+            raise ValidationError("unsupported state intervention effect")
+        return [self._intervention_event(
+            plan_id, stage_id, effect.effect_id, event_type, payload,
+            priority=20, visibility="analyst_only", phase=effect.effect_id,
+        )], recipients
+
+    def _entity_exists(self, entity_id: str) -> bool:
+        return entity_id in self.world_entities or self.ledger.has_owner(entity_id)
+
+    def _intervention_event(
+        self,
+        plan_id: str,
+        stage_id: str,
+        effect_id: str,
+        event_type: str,
+        payload: dict[str, object],
+        *,
+        priority: int,
+        visibility: str,
+        phase: str,
+        target_ids: list[str] | None = None,
+        observation_id: str | None = None,
+    ) -> EventDraft:
+        return EventDraft(
+            sim_time_us=self.sim_time_us,
+            priority=priority,
+            tie_break_key=f"intervention:{plan_id}:{stage_id}:{phase}",
+            event_type=event_type,
+            source_id="scenario_director",
+            target_ids=target_ids or [],
+            payload={**payload, "intervention_plan_id": plan_id, "intervention_stage_id": stage_id, "effect_id": effect_id},
+            observation_id=observation_id,
+            correlation_id=plan_id,
+            visibility=visibility,
+        )
 
     def rejection_event(self, action: ActionContract, message: str) -> EventDraft:
         return self._event(action, "ActionRejected", {"action_type": action.action_type, "reason": message}, priority=70, visibility="participants")
@@ -351,6 +631,19 @@ class SimulationWorld:
         open_orders = [order for order in self.clob.to_json()["orders"] if order["agent_id"] == agent_id and order["status"] in {"open", "partially_filled"}]
         return {"agent_id": agent_id, "balances": balances, "open_orders": open_orders}
 
+    def wallet_access_projection(self, agent_id: str) -> dict[str, object]:
+        permissions: dict[str, list[str]] = {}
+        balances: dict[str, dict[str, object]] = {}
+        ledger_balances = self.ledger.to_json()["balances"]
+        for wallet_owner_id, grants in self.wallet_access.items():
+            granted = list(grants.get(agent_id, []))
+            if not granted:
+                continue
+            permissions[wallet_owner_id] = granted
+            if "observe" in granted:
+                balances[wallet_owner_id] = deepcopy(ledger_balances.get(wallet_owner_id, {}))
+        return {"permissions": permissions, "balances": balances}
+
     def market_projection(self) -> dict[str, object]:
         orders = self.clob.to_json()["orders"]
         bids = sorted([item for item in orders if item["side"] == "buy" and item["status"] in {"open", "partially_filled"}], key=lambda item: (-int(item["price"] or 0), int(item["submitted_seq"])))
@@ -386,6 +679,9 @@ class SimulationWorld:
             "agents": [self.agent_projection(agent_id) for agent_id in self.agents],
             "information": self.information_items[-100:],
             "fixture_step": self.fixture_step,
+            "world_revision": self.world_revision,
+            "market_status": self.market.get("status", "active"),
+            "deferred_observation_count": len(self.deferred_observation_ids),
         }
 
     def to_json(self) -> dict[str, object]:
@@ -409,4 +705,10 @@ class SimulationWorld:
             "action_reservations": deepcopy(self.action_reservations),
             "planning_requests": [request.model_dump(mode="json") for request in self.planning_requests.values()],
             "strategy_plans": [plan.model_dump(mode="json") for plan in self.strategy_plans.values()],
+            "world_revision": self.world_revision,
+            "world_entities": deepcopy(self.world_entities),
+            "relationships": deepcopy(self.relationships),
+            "wallet_access": deepcopy(self.wallet_access),
+            "frozen_accounts": sorted(self.frozen_accounts),
+            "deferred_observation_ids": list(self.deferred_observation_ids),
         }

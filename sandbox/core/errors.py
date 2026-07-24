@@ -37,3 +37,11 @@ class ValidationError(SandboxError):
             field_path=field_path,
         )
 
+
+class MissingCausalStateError(SandboxError):
+    def __init__(self, message: str, *, field_path: str | None = None) -> None:
+        super().__init__(
+            error_code="MISSING_CAUSAL_STATE",
+            message=message,
+            field_path=field_path,
+        )

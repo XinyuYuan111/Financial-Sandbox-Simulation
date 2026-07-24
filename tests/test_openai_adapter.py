@@ -5,6 +5,7 @@ from types import SimpleNamespace
 
 from sandbox.agents.providers.openai import OpenAIProviderAdapter
 from sandbox.contracts.agent import DecisionRationale
+from sandbox.contracts.intervention import DirectorPlanCandidate, DirectorProviderRequest
 from sandbox.contracts.planning import PlanningProviderRequest, PlanningResultCandidate
 
 
@@ -27,6 +28,21 @@ class FakeResponses:
         text_format = kwargs["text_format"]
         if getattr(text_format, "__name__", "") == "PlanningPreflightResult":
             return FakeResponse({"ok": True}, "resp_preflight")
+        if getattr(text_format, "__name__", "") == "DirectorPlanCandidate":
+            return FakeResponse(DirectorPlanCandidate(
+                stages=[{
+                    "stage_id": "stage-director",
+                    "effective_sim_time_us": 0,
+                    "effects": [{
+                        "effect_id": "effect-director",
+                        "effect_type": "set_market_status",
+                        "market_id": "TOKEN-USDX",
+                        "status": "halted",
+                        "reason_code": "director_test",
+                    }],
+                }],
+                rationale="Typed venue halt.",
+            ))
         return FakeResponse(
             PlanningResultCandidate(
                 based_on_strategy_revision=0,
@@ -82,6 +98,35 @@ class OpenAIAdapterTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(report["ok"])
         self.assertEqual(report["message"], "OPENAI_API_KEY is not configured")
         self.assertEqual(adapter.profile.key_present, False)
+
+    async def test_scenario_director_returns_only_a_typed_candidate_and_redacts_context(self) -> None:
+        responses = FakeResponses()
+        adapter = OpenAIProviderAdapter(
+            api_key="secret-key-value",
+            model="test-model",
+            max_retries=0,
+            client=SimpleNamespace(responses=responses),
+        )
+        records = []
+        candidate = await adapter.create_intervention_plan(
+            DirectorProviderRequest(
+                request_id="director-request-1",
+                branch_id="branch-1",
+                context_hash="sha256:director-context",
+                user_intent="Halt the market",
+                current_sim_time_us=0,
+                requested_effective_time_us=0,
+                world_context={"market_status": "active"},
+                private_context={},
+                allowed_effect_types=["set_market_status"],
+            ),
+            record_raw=records.append,
+        )
+        self.assertEqual(candidate.stages[0].effects[0].effect_type, "set_market_status")
+        self.assertEqual(records[0].agent_id, "scenario_director")
+        self.assertNotIn("Halt the market", str(records[0].redacted_request))
+        self.assertNotIn("secret-key-value", str(records[0].model_dump()))
+        self.assertTrue(responses.calls[-1]["store"] is False)
 
 
 if __name__ == "__main__":

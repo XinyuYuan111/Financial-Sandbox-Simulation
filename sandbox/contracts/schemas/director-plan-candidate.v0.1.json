@@ -1,0 +1,553 @@
+{
+  "$defs": {
+    "CreateRelationshipEffect": {
+      "additionalProperties": false,
+      "properties": {
+        "effect_id": {
+          "maxLength": 256,
+          "minLength": 1,
+          "title": "Effect Id",
+          "type": "string"
+        },
+        "effect_type": {
+          "const": "create_relationship",
+          "default": "create_relationship",
+          "title": "Effect Type",
+          "type": "string"
+        },
+        "relationship_id": {
+          "maxLength": 256,
+          "minLength": 1,
+          "title": "Relationship Id",
+          "type": "string"
+        },
+        "relationship_type": {
+          "enum": [
+            "wallet_control",
+            "custody",
+            "exposure"
+          ],
+          "title": "Relationship Type",
+          "type": "string"
+        },
+        "source_entity_id": {
+          "maxLength": 256,
+          "minLength": 1,
+          "title": "Source Entity Id",
+          "type": "string"
+        },
+        "target_entity_id": {
+          "maxLength": 256,
+          "minLength": 1,
+          "title": "Target Entity Id",
+          "type": "string"
+        },
+        "asset": {
+          "anyOf": [
+            {
+              "maxLength": 64,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Asset"
+        },
+        "amount": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Amount"
+        }
+      },
+      "required": [
+        "effect_id",
+        "relationship_id",
+        "relationship_type",
+        "source_entity_id",
+        "target_entity_id"
+      ],
+      "title": "CreateRelationshipEffect",
+      "type": "object"
+    },
+    "CreateWorldEntityEffect": {
+      "additionalProperties": false,
+      "properties": {
+        "effect_id": {
+          "maxLength": 256,
+          "minLength": 1,
+          "title": "Effect Id",
+          "type": "string"
+        },
+        "effect_type": {
+          "const": "create_world_entity",
+          "default": "create_world_entity",
+          "title": "Effect Type",
+          "type": "string"
+        },
+        "entity_id": {
+          "maxLength": 256,
+          "minLength": 1,
+          "title": "Entity Id",
+          "type": "string"
+        },
+        "entity_type": {
+          "enum": [
+            "institution",
+            "venue",
+            "wallet"
+          ],
+          "title": "Entity Type",
+          "type": "string"
+        },
+        "display_name": {
+          "maxLength": 256,
+          "minLength": 1,
+          "title": "Display Name",
+          "type": "string"
+        }
+      },
+      "required": [
+        "effect_id",
+        "entity_id",
+        "entity_type",
+        "display_name"
+      ],
+      "title": "CreateWorldEntityEffect",
+      "type": "object"
+    },
+    "InterventionStage": {
+      "additionalProperties": false,
+      "properties": {
+        "stage_id": {
+          "maxLength": 256,
+          "minLength": 1,
+          "title": "Stage Id",
+          "type": "string"
+        },
+        "effective_sim_time_us": {
+          "minimum": 0,
+          "title": "Effective Sim Time Us",
+          "type": "integer"
+        },
+        "effects": {
+          "items": {
+            "discriminator": {
+              "mapping": {
+                "create_relationship": "#/$defs/CreateRelationshipEffect",
+                "create_world_entity": "#/$defs/CreateWorldEntityEffect",
+                "publish_information": "#/$defs/PublishInformationEffect",
+                "set_account_freeze": "#/$defs/SetAccountFreezeEffect",
+                "set_market_status": "#/$defs/SetMarketStatusEffect",
+                "set_wallet_access": "#/$defs/SetWalletAccessEffect",
+                "transfer_asset": "#/$defs/TransferAssetEffect"
+              },
+              "propertyName": "effect_type"
+            },
+            "oneOf": [
+              {
+                "$ref": "#/$defs/PublishInformationEffect"
+              },
+              {
+                "$ref": "#/$defs/TransferAssetEffect"
+              },
+              {
+                "$ref": "#/$defs/SetMarketStatusEffect"
+              },
+              {
+                "$ref": "#/$defs/SetAccountFreezeEffect"
+              },
+              {
+                "$ref": "#/$defs/SetWalletAccessEffect"
+              },
+              {
+                "$ref": "#/$defs/CreateWorldEntityEffect"
+              },
+              {
+                "$ref": "#/$defs/CreateRelationshipEffect"
+              }
+            ]
+          },
+          "maxItems": 64,
+          "minItems": 1,
+          "title": "Effects",
+          "type": "array"
+        },
+        "status": {
+          "default": "pending",
+          "enum": [
+            "pending",
+            "applied",
+            "failed",
+            "canceled"
+          ],
+          "title": "Status",
+          "type": "string"
+        },
+        "failure_reason": {
+          "anyOf": [
+            {
+              "maxLength": 500,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Failure Reason"
+        }
+      },
+      "required": [
+        "stage_id",
+        "effective_sim_time_us",
+        "effects"
+      ],
+      "title": "InterventionStage",
+      "type": "object"
+    },
+    "PrivateStateRef": {
+      "additionalProperties": false,
+      "properties": {
+        "category": {
+          "enum": [
+            "persona",
+            "memory",
+            "belief",
+            "private_messages",
+            "planner_prompt",
+            "provider_response"
+          ],
+          "title": "Category",
+          "type": "string"
+        },
+        "target_id": {
+          "maxLength": 256,
+          "minLength": 1,
+          "title": "Target Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "category",
+        "target_id"
+      ],
+      "title": "PrivateStateRef",
+      "type": "object"
+    },
+    "PublishInformationEffect": {
+      "additionalProperties": false,
+      "properties": {
+        "effect_id": {
+          "maxLength": 256,
+          "minLength": 1,
+          "title": "Effect Id",
+          "type": "string"
+        },
+        "effect_type": {
+          "const": "publish_information",
+          "default": "publish_information",
+          "title": "Effect Type",
+          "type": "string"
+        },
+        "source_id": {
+          "default": "scenario_director",
+          "maxLength": 256,
+          "minLength": 1,
+          "title": "Source Id",
+          "type": "string"
+        },
+        "channel": {
+          "enum": [
+            "PublicFeed",
+            "OfficialAnnouncement",
+            "TradingTerminal",
+            "PrivateChannel"
+          ],
+          "title": "Channel",
+          "type": "string"
+        },
+        "content": {
+          "maxLength": 4000,
+          "minLength": 1,
+          "title": "Content",
+          "type": "string"
+        },
+        "target_ids": {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 1000,
+          "title": "Target Ids",
+          "type": "array"
+        },
+        "depends_on_state_effect_ids": {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 32,
+          "title": "Depends On State Effect Ids",
+          "type": "array"
+        },
+        "private_source_refs": {
+          "items": {
+            "$ref": "#/$defs/PrivateStateRef"
+          },
+          "maxItems": 32,
+          "title": "Private Source Refs",
+          "type": "array"
+        }
+      },
+      "required": [
+        "effect_id",
+        "channel",
+        "content"
+      ],
+      "title": "PublishInformationEffect",
+      "type": "object"
+    },
+    "SetAccountFreezeEffect": {
+      "additionalProperties": false,
+      "properties": {
+        "effect_id": {
+          "maxLength": 256,
+          "minLength": 1,
+          "title": "Effect Id",
+          "type": "string"
+        },
+        "effect_type": {
+          "const": "set_account_freeze",
+          "default": "set_account_freeze",
+          "title": "Effect Type",
+          "type": "string"
+        },
+        "owner_id": {
+          "maxLength": 256,
+          "minLength": 1,
+          "title": "Owner Id",
+          "type": "string"
+        },
+        "frozen": {
+          "title": "Frozen",
+          "type": "boolean"
+        },
+        "reason_code": {
+          "maxLength": 128,
+          "minLength": 1,
+          "title": "Reason Code",
+          "type": "string"
+        }
+      },
+      "required": [
+        "effect_id",
+        "owner_id",
+        "frozen",
+        "reason_code"
+      ],
+      "title": "SetAccountFreezeEffect",
+      "type": "object"
+    },
+    "SetMarketStatusEffect": {
+      "additionalProperties": false,
+      "properties": {
+        "effect_id": {
+          "maxLength": 256,
+          "minLength": 1,
+          "title": "Effect Id",
+          "type": "string"
+        },
+        "effect_type": {
+          "const": "set_market_status",
+          "default": "set_market_status",
+          "title": "Effect Type",
+          "type": "string"
+        },
+        "market_id": {
+          "maxLength": 256,
+          "minLength": 1,
+          "title": "Market Id",
+          "type": "string"
+        },
+        "status": {
+          "enum": [
+            "active",
+            "halted"
+          ],
+          "title": "Status",
+          "type": "string"
+        },
+        "reason_code": {
+          "maxLength": 128,
+          "minLength": 1,
+          "title": "Reason Code",
+          "type": "string"
+        }
+      },
+      "required": [
+        "effect_id",
+        "market_id",
+        "status",
+        "reason_code"
+      ],
+      "title": "SetMarketStatusEffect",
+      "type": "object"
+    },
+    "SetWalletAccessEffect": {
+      "additionalProperties": false,
+      "properties": {
+        "effect_id": {
+          "maxLength": 256,
+          "minLength": 1,
+          "title": "Effect Id",
+          "type": "string"
+        },
+        "effect_type": {
+          "const": "set_wallet_access",
+          "default": "set_wallet_access",
+          "title": "Effect Type",
+          "type": "string"
+        },
+        "wallet_owner_id": {
+          "maxLength": 256,
+          "minLength": 1,
+          "title": "Wallet Owner Id",
+          "type": "string"
+        },
+        "grantee_agent_id": {
+          "maxLength": 256,
+          "minLength": 1,
+          "title": "Grantee Agent Id",
+          "type": "string"
+        },
+        "permissions": {
+          "items": {
+            "enum": [
+              "observe",
+              "transact"
+            ],
+            "type": "string"
+          },
+          "maxItems": 2,
+          "title": "Permissions",
+          "type": "array"
+        },
+        "reason_code": {
+          "maxLength": 128,
+          "minLength": 1,
+          "title": "Reason Code",
+          "type": "string"
+        }
+      },
+      "required": [
+        "effect_id",
+        "wallet_owner_id",
+        "grantee_agent_id",
+        "reason_code"
+      ],
+      "title": "SetWalletAccessEffect",
+      "type": "object"
+    },
+    "TransferAssetEffect": {
+      "additionalProperties": false,
+      "properties": {
+        "effect_id": {
+          "maxLength": 256,
+          "minLength": 1,
+          "title": "Effect Id",
+          "type": "string"
+        },
+        "effect_type": {
+          "const": "transfer_asset",
+          "default": "transfer_asset",
+          "title": "Effect Type",
+          "type": "string"
+        },
+        "from_owner_id": {
+          "maxLength": 256,
+          "minLength": 1,
+          "title": "From Owner Id",
+          "type": "string"
+        },
+        "to_owner_id": {
+          "maxLength": 256,
+          "minLength": 1,
+          "title": "To Owner Id",
+          "type": "string"
+        },
+        "asset": {
+          "maxLength": 64,
+          "minLength": 1,
+          "title": "Asset",
+          "type": "string"
+        },
+        "amount": {
+          "minimum": 1,
+          "title": "Amount",
+          "type": "integer"
+        },
+        "reason_code": {
+          "maxLength": 128,
+          "minLength": 1,
+          "title": "Reason Code",
+          "type": "string"
+        },
+        "required_relationship_ids": {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 32,
+          "title": "Required Relationship Ids",
+          "type": "array"
+        }
+      },
+      "required": [
+        "effect_id",
+        "from_owner_id",
+        "to_owner_id",
+        "asset",
+        "amount",
+        "reason_code"
+      ],
+      "title": "TransferAssetEffect",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "stages": {
+      "items": {
+        "$ref": "#/$defs/InterventionStage"
+      },
+      "maxItems": 32,
+      "minItems": 1,
+      "title": "Stages",
+      "type": "array"
+    },
+    "rationale": {
+      "default": "",
+      "maxLength": 1000,
+      "title": "Rationale",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": "director-plan-candidate.v0.1",
+      "default": "director-plan-candidate.v0.1",
+      "title": "Schema Version",
+      "type": "string"
+    }
+  },
+  "required": [
+    "stages"
+  ],
+  "title": "DirectorPlanCandidate",
+  "type": "object"
+}

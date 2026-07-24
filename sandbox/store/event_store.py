@@ -40,6 +40,8 @@ class EventStore:
         strategy_plans: Iterable[dict[str, object]] = (),
         llm_records: Iterable[dict[str, object]] = (),
         action_receipts: Iterable[dict[str, object]] = (),
+        intervention_plans: Iterable[dict[str, object]] = (),
+        planning_results: Iterable[dict[str, object]] = (),
         expected_branch_version: int | None = None,
     ) -> list[EventEnvelope]:
         drafts = sorted(drafts, key=lambda event: (event.sim_time_us, event.priority, event.tie_break_key))
@@ -52,6 +54,8 @@ class EventStore:
         strategy_plans = [dict(item) for item in strategy_plans]
         llm_records = [dict(item) for item in llm_records]
         action_receipts = [dict(item) for item in action_receipts]
+        intervention_plans = [dict(item) for item in intervention_plans]
+        planning_results = [dict(item) for item in planning_results]
         persisted: list[EventEnvelope] = []
         with self.store.transaction() as connection:
             if run_record is not None:
@@ -211,6 +215,25 @@ class EventStore:
                     (
                         receipt["receipt_id"], receipt["action_id"], branch_id, receipt["agent_id"],
                         receipt["resolved_sim_time_us"], canonical_json(receipt),
+                    ),
+                )
+            for plan in intervention_plans:
+                connection.execute(
+                    "INSERT INTO intervention_plans(plan_id,branch_id,status,base_world_revision,created_branch_seq,plan_json,created_at,updated_at) "
+                    "VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(plan_id) DO UPDATE SET status=excluded.status,plan_json=excluded.plan_json,updated_at=excluded.updated_at",
+                    (
+                        plan["plan_id"], branch_id, plan["status"], plan["base_world_revision"],
+                        plan["created_branch_seq"], canonical_json(plan), utc_now(), utc_now(),
+                    ),
+                )
+            for planning_result in planning_results:
+                connection.execute(
+                    "INSERT INTO planning_results(request_id,branch_id,result_status,payload_json,applied,received_at) VALUES(?,?,?,?,?,?) "
+                    "ON CONFLICT(request_id) DO UPDATE SET result_status=excluded.result_status,payload_json=excluded.payload_json,applied=excluded.applied",
+                    (
+                        planning_result["request_id"], branch_id,
+                        planning_result["result_status"], canonical_json(planning_result["payload"]),
+                        int(bool(planning_result.get("applied", False))), utc_now(),
                     ),
                 )
             if checkpoint is not None:

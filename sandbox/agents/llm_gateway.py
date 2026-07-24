@@ -5,6 +5,7 @@ from dataclasses import dataclass, field
 from typing import Callable, Protocol
 
 from sandbox.contracts.planning import LLMRecord, PlanningProviderRequest, PlanningResultCandidate
+from sandbox.contracts.intervention import DirectorPlanCandidate, DirectorProviderRequest
 from sandbox.core.errors import ValidationError
 
 
@@ -22,6 +23,13 @@ class ProviderAdapter(Protocol):
         *,
         record_raw: RecordCallback | None = None,
     ) -> PlanningResultCandidate: ...
+
+    async def create_intervention_plan(
+        self,
+        request: DirectorProviderRequest,
+        *,
+        record_raw: RecordCallback | None = None,
+    ) -> DirectorPlanCandidate: ...
 
 
 @dataclass(slots=True)
@@ -63,3 +71,19 @@ class LLMGateway:
             raise ValidationError(f"LLM provider '{provider_name}' is not configured")
         async with self._pool():
             return await adapter.create_plan(request, record_raw=record_raw)
+
+    async def direct_intervention(
+        self,
+        provider_name: str,
+        request: DirectorProviderRequest,
+        *,
+        record_raw: RecordCallback | None = None,
+    ) -> DirectorPlanCandidate:
+        adapter = self.adapters.get(provider_name)
+        if adapter is None:
+            raise ValidationError(f"LLM provider '{provider_name}' is not configured")
+        method = getattr(adapter, "create_intervention_plan", None)
+        if method is None:
+            raise ValidationError(f"LLM provider '{provider_name}' does not support Scenario Director output")
+        async with self._pool():
+            return await method(request, record_raw=record_raw)

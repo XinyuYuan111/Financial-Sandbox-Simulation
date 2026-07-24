@@ -19,6 +19,7 @@ class ObservationService:
     ) -> ObservationPacket:
         visible = [item for item in world.information_items if item.get("visibility") == "public" or agent_id in item.get("target_ids", [])]
         portfolio = world.portfolio_projection(agent_id)
+        wallet_access = world.wallet_access_projection(agent_id)
         receipts = [receipt for receipt in world.action_receipts if receipt.agent_id == agent_id]
         return ObservationPacket(
             observation_id=new_id("obs"),
@@ -32,6 +33,8 @@ class ObservationService:
                 agent_id=agent_id,
                 portfolio_revision=world_version,
                 balances=portfolio["balances"],
+                wallet_permissions=wallet_access["permissions"],
+                accessible_wallet_balances=wallet_access["balances"],
                 positions={asset: int(values["free"]) + int(values["locked"]) for asset, values in portfolio["balances"].items()},
                 open_orders=portfolio["open_orders"],
                 pending_action_ids=list(world.pending_action_ids(agent_id)),
@@ -56,5 +59,6 @@ class WorldProjection(Protocol):
 
     def market_projection(self) -> dict[str, object]: ...
     def portfolio_projection(self, agent_id: str) -> dict[str, object]: ...
+    def wallet_access_projection(self, agent_id: str) -> dict[str, object]: ...
     def pending_action_ids(self, agent_id: str) -> list[str]: ...
     def reservation_ids(self, agent_id: str) -> list[str]: ...

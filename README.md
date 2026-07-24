@@ -55,6 +55,20 @@ GET /api/v1/branches/{branch_id}/agents/{agent_id}/plans
 GET /api/v1/branches/{branch_id}/agents/{agent_id}/receipts
 ```
 
+## Paused interventions
+
+World interventions are accepted only while a branch is `Paused`. The command-scoped Scenario Director creates a typed draft with a bounded effect catalog; a separate confirmation is required before current-time stages are committed. State effects are validated on a cloned world and committed atomically before dependent information is published. Future stages remain pending until the running branch reaches their virtual time.
+
+```text
+GET  /api/v1/branches/{branch_id}/intervention-plans
+POST /api/v1/branches/{branch_id}/intervention-plans
+POST /api/v1/branches/{branch_id}/intervention-plans/interpret
+POST /api/v1/branches/{branch_id}/intervention-plans/{plan_id}/confirm
+POST /api/v1/branches/{branch_id}/intervention-plans/{plan_id}/reject
+```
+
+Pause, resume, and run-speed commands are idempotent control-plane audit records. They do not create virtual World events or advance `sim_time_us`. Provider results that return while paused are persisted as non-authoritative material and activated only after resume.
+
 ## Verification
 
 ```powershell

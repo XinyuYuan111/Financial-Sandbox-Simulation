@@ -59,12 +59,17 @@ class ObservedInformation(StrictFrozenModel):
     target_ids: list[str] = Field(default_factory=list)
     visibility: Literal["public", "agent_private"]
     derived_from_info_id: str | None = None
+    intervention_plan_id: str | None = None
+    intervention_stage_id: str | None = None
+    effect_id: str | None = None
 
 
 class AgentAccountSnapshot(StrictFrozenModel):
     agent_id: str
     portfolio_revision: int = Field(ge=0)
     balances: dict[str, BalanceView] = Field(default_factory=dict)
+    wallet_permissions: dict[str, list[Literal["observe", "transact"]]] = Field(default_factory=dict)
+    accessible_wallet_balances: dict[str, dict[str, BalanceView]] = Field(default_factory=dict)
     positions: dict[str, int] = Field(default_factory=dict)
     open_orders: list[OrderView] = Field(default_factory=list)
     pending_action_ids: list[str] = Field(default_factory=list)

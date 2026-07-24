@@ -32,6 +32,20 @@ class Ledger:
     def balance(self, owner: str, asset: str) -> int:
         return self._account(owner, asset).free
 
+    def has_owner(self, owner: str) -> bool:
+        return owner in self.balances
+
+    def has_account(self, owner: str, asset: str) -> bool:
+        return owner in self.balances and asset in self.balances[owner]
+
+    def open_account(self, owner: str, assets: list[str], *, reason: str) -> None:
+        if owner in self.balances:
+            raise ValidationError(f"ledger owner '{owner}' already exists")
+        self.balances[owner] = {}
+        for asset in assets:
+            self.balances[owner][asset] = Account()
+            self.postings.append({"owner": owner, "asset": asset, "amount": 0, "reason": reason, "kind": "open"})
+
     def total(self, asset: str) -> int:
         return sum(account.free + account.locked for assets in self.balances.values() for name, account in assets.items() if name == asset)
 
@@ -76,9 +90,9 @@ class Ledger:
         self.postings.append({"owner": seller, "asset": asset, "amount": -amount, "reason": "trade_delivery", "kind": "locked_transfer"})
         self.postings.append({"owner": buyer, "asset": asset, "amount": amount, "reason": "trade_delivery", "kind": "credit"})
 
-    def transfer_free(self, seller: str, buyer: str, asset: str, amount: int) -> None:
-        self.debit(seller, asset, amount, reason="trade_payment")
-        self.credit(buyer, asset, amount, reason="trade_payment")
+    def transfer_free(self, seller: str, buyer: str, asset: str, amount: int, *, reason: str = "trade_payment") -> None:
+        self.debit(seller, asset, amount, reason=reason)
+        self.credit(buyer, asset, amount, reason=reason)
 
     def settle_trade(
         self,

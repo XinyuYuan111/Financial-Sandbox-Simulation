@@ -1,0 +1,70 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "request_id": {
+      "title": "Request Id",
+      "type": "string"
+    },
+    "branch_id": {
+      "title": "Branch Id",
+      "type": "string"
+    },
+    "context_hash": {
+      "title": "Context Hash",
+      "type": "string"
+    },
+    "user_intent": {
+      "maxLength": 4000,
+      "minLength": 1,
+      "title": "User Intent",
+      "type": "string"
+    },
+    "current_sim_time_us": {
+      "minimum": 0,
+      "title": "Current Sim Time Us",
+      "type": "integer"
+    },
+    "requested_effective_time_us": {
+      "minimum": 0,
+      "title": "Requested Effective Time Us",
+      "type": "integer"
+    },
+    "world_context": {
+      "additionalProperties": true,
+      "title": "World Context",
+      "type": "object"
+    },
+    "private_context": {
+      "additionalProperties": true,
+      "title": "Private Context",
+      "type": "object"
+    },
+    "allowed_effect_types": {
+      "items": {
+        "type": "string"
+      },
+      "maxItems": 32,
+      "minItems": 1,
+      "title": "Allowed Effect Types",
+      "type": "array"
+    },
+    "schema_version": {
+      "const": "director-provider-request.v0.1",
+      "default": "director-provider-request.v0.1",
+      "title": "Schema Version",
+      "type": "string"
+    }
+  },
+  "required": [
+    "request_id",
+    "branch_id",
+    "context_hash",
+    "user_intent",
+    "current_sim_time_us",
+    "requested_effective_time_us",
+    "world_context",
+    "allowed_effect_types"
+  ],
+  "title": "DirectorProviderRequest",
+  "type": "object"
+}

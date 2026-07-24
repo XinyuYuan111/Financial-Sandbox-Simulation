@@ -5,7 +5,15 @@ import json
 from fastapi import APIRouter, File, Query, Request, UploadFile
 from fastapi.responses import FileResponse, StreamingResponse
 
-from sandbox.api.models import CommandRequest, CreateRunRequest, ExportRequest, ForkRequest
+from sandbox.api.models import (
+    CommandRequest,
+    CreateRunRequest,
+    DraftInterventionPlanRequest,
+    ExportRequest,
+    ForkRequest,
+    InterpretInterventionPlanRequest,
+    InterventionPlanCommandRequest,
+)
 from sandbox.contracts.action import ActionContract
 from sandbox.contracts.scenario import ScenarioDraft
 from sandbox.core.ids import new_id
@@ -111,6 +119,44 @@ def agent_plans(branch_id: str, agent_id: str, request: Request, limit: int = Qu
 @router.get("/branches/{branch_id}/agents/{agent_id}/receipts")
 def agent_receipts(branch_id: str, agent_id: str, request: Request, limit: int = Query(default=200, ge=1, le=1_000)) -> dict[str, object]:
     return {"branch_id": branch_id, "agent_id": agent_id, "receipts": manager(request).agent_receipts(branch_id, agent_id, limit=limit)}
+
+
+@router.get("/branches/{branch_id}/intervention-plans")
+def intervention_plans(branch_id: str, request: Request) -> dict[str, object]:
+    return {"branch_id": branch_id, "plans": manager(request).intervention_plans(branch_id)}
+
+
+@router.get("/branches/{branch_id}/intervention-plans/{plan_id}")
+def intervention_plan(branch_id: str, plan_id: str, request: Request) -> dict[str, object]:
+    return manager(request).intervention_plan(branch_id, plan_id)
+
+
+@router.post("/branches/{branch_id}/intervention-plans", status_code=201)
+def draft_intervention_plan(branch_id: str, body: DraftInterventionPlanRequest, request: Request) -> dict[str, object]:
+    return manager(request).create_intervention_plan(branch_id, body.client_command_id, body.draft)
+
+
+@router.post("/branches/{branch_id}/intervention-plans/interpret", status_code=201)
+async def interpret_intervention_plan(branch_id: str, body: InterpretInterventionPlanRequest, request: Request) -> dict[str, object]:
+    return await manager(request).interpret_intervention_plan(
+        branch_id,
+        body.client_command_id,
+        user_intent=body.user_intent,
+        requested_effective_time_us=body.requested_effective_time_us,
+        provider_name=body.provider,
+        access_scope=body.access_scope,
+        private_read_refs=body.private_read_refs,
+    )
+
+
+@router.post("/branches/{branch_id}/intervention-plans/{plan_id}/confirm")
+def confirm_intervention_plan(branch_id: str, plan_id: str, body: InterventionPlanCommandRequest, request: Request) -> dict[str, object]:
+    return manager(request).confirm_intervention_plan(branch_id, plan_id, body.client_command_id)
+
+
+@router.post("/branches/{branch_id}/intervention-plans/{plan_id}/reject")
+def reject_intervention_plan(branch_id: str, plan_id: str, body: InterventionPlanCommandRequest, request: Request) -> dict[str, object]:
+    return manager(request).reject_intervention_plan(branch_id, plan_id, body.client_command_id)
 
 
 @router.post("/branches/{branch_id}/fork", status_code=201)

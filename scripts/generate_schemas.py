@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 
 from sandbox.contracts.action import ActionContract
+from sandbox.contracts.intervention import DirectorPlanCandidate, DirectorProviderRequest, InterventionPlan
 from sandbox.contracts.agent import ActionReceipt, AgentDecision, AgentDefinition, AgentRuntimeState, DecisionOutcome
 from sandbox.contracts.event import EventEnvelope
 from sandbox.contracts.observation import ObservationPacket
@@ -28,6 +29,9 @@ MODELS = {
     "planning-result-candidate.v0.1.json": PlanningResultCandidate,
     "strategy-plan.v0.1.json": StrategyPlan,
     "action-receipt.v0.1.json": ActionReceipt,
+    "intervention-plan.v0.1.json": InterventionPlan,
+    "director-plan-candidate.v0.1.json": DirectorPlanCandidate,
+    "director-provider-request.v0.1.json": DirectorProviderRequest,
 }
 
 root = Path(__file__).resolve().parents[1] / "sandbox" / "contracts" / "schemas"
