@@ -1,0 +1,143 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "request_id": {
+      "title": "Request Id",
+      "type": "string"
+    },
+    "branch_id": {
+      "title": "Branch Id",
+      "type": "string"
+    },
+    "agent_id": {
+      "title": "Agent Id",
+      "type": "string"
+    },
+    "source_decision_id": {
+      "title": "Source Decision Id",
+      "type": "string"
+    },
+    "source_observation_id": {
+      "title": "Source Observation Id",
+      "type": "string"
+    },
+    "requested_sim_time_us": {
+      "minimum": 0,
+      "title": "Requested Sim Time Us",
+      "type": "integer"
+    },
+    "activation_time_us": {
+      "minimum": 0,
+      "title": "Activation Time Us",
+      "type": "integer"
+    },
+    "planner_profile_id": {
+      "title": "Planner Profile Id",
+      "type": "string"
+    },
+    "state": {
+      "default": "Queued",
+      "enum": [
+        "Queued",
+        "Running",
+        "Ready",
+        "Terminal"
+      ],
+      "title": "State",
+      "type": "string"
+    },
+    "terminal_outcome": {
+      "anyOf": [
+        {
+          "enum": [
+            "applied",
+            "rejected",
+            "failed",
+            "timed_out",
+            "canceled"
+          ],
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Terminal Outcome"
+    },
+    "based_on_strategy_revision": {
+      "minimum": 0,
+      "title": "Based On Strategy Revision",
+      "type": "integer"
+    },
+    "memory_revision": {
+      "minimum": 0,
+      "title": "Memory Revision",
+      "type": "integer"
+    },
+    "belief_revision": {
+      "minimum": 0,
+      "title": "Belief Revision",
+      "type": "integer"
+    },
+    "reason_keys": {
+      "items": {
+        "type": "string"
+      },
+      "maxItems": 16,
+      "title": "Reason Keys",
+      "type": "array"
+    },
+    "cognitive_budget_reserved": {
+      "default": 1,
+      "minimum": 0,
+      "title": "Cognitive Budget Reserved",
+      "type": "integer"
+    },
+    "result_plan_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Result Plan Id"
+    },
+    "error_code": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Error Code"
+    },
+    "schema_version": {
+      "const": "planning-request.v0.1",
+      "default": "planning-request.v0.1",
+      "title": "Schema Version",
+      "type": "string"
+    }
+  },
+  "required": [
+    "request_id",
+    "branch_id",
+    "agent_id",
+    "source_decision_id",
+    "source_observation_id",
+    "requested_sim_time_us",
+    "activation_time_us",
+    "planner_profile_id",
+    "based_on_strategy_revision",
+    "memory_revision",
+    "belief_revision"
+  ],
+  "title": "PlanningRequest",
+  "type": "object"
+}

@@ -10,6 +10,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from sandbox.agents.llm_gateway import LLMGateway
+from sandbox.agents.providers.openai import OpenAIProviderAdapter
 from sandbox.api.routes import router
 from sandbox.app.settings import Settings
 from sandbox.control.initialization import Initializer
@@ -27,9 +28,19 @@ async def lifespan(app: FastAPI):
     settings.ensure_directories()
     store = SQLiteStore(settings.database_path)
     archive_service = ArchiveService(store, settings.runtime_version)
-    initializer = Initializer(holder_providers={}, llm_gateway=LLMGateway(adapters={}))
+    openai_adapter = OpenAIProviderAdapter(
+        api_key=settings.openai_api_key,
+        model=settings.openai_model,
+        timeout_seconds=settings.openai_timeout_seconds,
+        max_retries=settings.openai_max_retries,
+        max_in_flight=settings.openai_max_in_flight,
+        max_output_tokens=settings.openai_max_output_tokens,
+    )
+    gateway = LLMGateway(adapters={"openai": openai_adapter}, max_in_flight=settings.openai_max_in_flight)
+    initializer = Initializer(holder_providers={}, llm_gateway=gateway)
     app.state.settings = settings
     app.state.store = store
+    app.state.llm_gateway = gateway
     app.state.manager = RunManager(store, initializer, archive_service, settings.runtime_version)
     app.state.session_token = secrets.token_urlsafe(32)
     yield

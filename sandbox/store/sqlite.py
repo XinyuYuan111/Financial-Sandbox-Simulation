@@ -2,12 +2,13 @@ from __future__ import annotations
 
 import sqlite3
 import threading
+import hashlib
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Iterator
 
 
-SCHEMA = """
+BASE_SCHEMA = """
 PRAGMA foreign_keys = ON;
 CREATE TABLE IF NOT EXISTS scenarios (
   scenario_id TEXT PRIMARY KEY,
@@ -75,9 +76,79 @@ CREATE TABLE IF NOT EXISTS branch_worlds (
   branch_id TEXT PRIMARY KEY REFERENCES branches(branch_id),
   world_json TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS schema_migrations (
+  version TEXT PRIMARY KEY,
+  checksum TEXT NOT NULL,
+  applied_at TEXT NOT NULL
+);
 CREATE INDEX IF NOT EXISTS idx_events_branch_seq ON events(branch_id, branch_seq);
 CREATE INDEX IF NOT EXISTS idx_observations_agent ON observations(branch_id, agent_id, sim_time_us);
 """
+
+
+AGENT_V0_1_MIGRATION = """
+CREATE TABLE IF NOT EXISTS agent_decisions (
+  decision_id TEXT PRIMARY KEY,
+  branch_id TEXT NOT NULL REFERENCES branches(branch_id),
+  agent_id TEXT NOT NULL,
+  observation_id TEXT NOT NULL,
+  sim_time_us INTEGER NOT NULL,
+  agent_revision INTEGER NOT NULL,
+  decision_json TEXT NOT NULL,
+  outcome_json TEXT NOT NULL,
+  UNIQUE(branch_id, agent_id, observation_id)
+);
+CREATE TABLE IF NOT EXISTS planning_requests (
+  request_id TEXT PRIMARY KEY,
+  branch_id TEXT NOT NULL REFERENCES branches(branch_id),
+  agent_id TEXT NOT NULL,
+  state TEXT NOT NULL,
+  terminal_outcome TEXT,
+  activation_time_us INTEGER NOT NULL,
+  request_json TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS strategy_plans (
+  plan_id TEXT PRIMARY KEY,
+  branch_id TEXT NOT NULL REFERENCES branches(branch_id),
+  agent_id TEXT NOT NULL,
+  strategy_revision INTEGER NOT NULL,
+  active INTEGER NOT NULL DEFAULT 0,
+  valid_from_sim_time_us INTEGER NOT NULL,
+  valid_until_sim_time_us INTEGER NOT NULL,
+  plan_json TEXT NOT NULL,
+  UNIQUE(branch_id, agent_id, strategy_revision)
+);
+CREATE TABLE IF NOT EXISTS llm_records (
+  call_id TEXT PRIMARY KEY,
+  request_id TEXT NOT NULL,
+  agent_id TEXT NOT NULL,
+  attempt INTEGER NOT NULL,
+  provider TEXT NOT NULL,
+  model TEXT NOT NULL,
+  status TEXT NOT NULL,
+  record_json TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS action_receipts (
+  receipt_id TEXT PRIMARY KEY,
+  action_id TEXT NOT NULL,
+  branch_id TEXT NOT NULL REFERENCES branches(branch_id),
+  agent_id TEXT NOT NULL,
+  sim_time_us INTEGER NOT NULL,
+  receipt_json TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_agent_decisions_history ON agent_decisions(branch_id, agent_id, sim_time_us);
+CREATE INDEX IF NOT EXISTS idx_planning_requests_state ON planning_requests(branch_id, agent_id, state);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_planning_requests_one_open
+  ON planning_requests(branch_id, agent_id) WHERE state != 'Terminal';
+CREATE INDEX IF NOT EXISTS idx_strategy_plans_history ON strategy_plans(branch_id, agent_id, strategy_revision);
+CREATE INDEX IF NOT EXISTS idx_llm_records_request ON llm_records(request_id, attempt);
+CREATE INDEX IF NOT EXISTS idx_action_receipts_history ON action_receipts(branch_id, agent_id, sim_time_us);
+CREATE INDEX IF NOT EXISTS idx_action_receipts_action ON action_receipts(action_id);
+"""
+
+
+MIGRATIONS = (("0001_agent_v0_1", AGENT_V0_1_MIGRATION),)
 
 
 class SQLiteStore:
@@ -90,8 +161,25 @@ class SQLiteStore:
         self.connection.execute("PRAGMA journal_mode=WAL")
         self.connection.execute("PRAGMA synchronous=FULL")
         self.connection.execute("PRAGMA foreign_keys=ON")
-        self.connection.executescript(SCHEMA)
+        self.connection.executescript(BASE_SCHEMA)
+        self._apply_migrations()
         self.connection.commit()
+
+    def _apply_migrations(self) -> None:
+        for version, script in MIGRATIONS:
+            checksum = "sha256:" + hashlib.sha256(script.encode()).hexdigest()
+            existing = self.connection.execute(
+                "SELECT checksum FROM schema_migrations WHERE version=?", (version,)
+            ).fetchone()
+            if existing is not None:
+                if existing["checksum"] != checksum:
+                    raise RuntimeError(f"database migration checksum mismatch for {version}")
+                continue
+            self.connection.executescript(script)
+            self.connection.execute(
+                "INSERT INTO schema_migrations(version,checksum,applied_at) VALUES(?,?,datetime('now'))",
+                (version, checksum),
+            )
 
     @contextmanager
     def transaction(self) -> Iterator[sqlite3.Connection]:

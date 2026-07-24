@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import asyncio
+import hashlib
 import threading
 from collections import defaultdict
 from datetime import datetime, timezone
@@ -8,11 +10,18 @@ from pathlib import Path
 from typing import Any
 
 from sandbox.agents.strategies import FixtureStrategies
+from sandbox.agents.planning import PlanningCoordinator, fixture_candidate
+from sandbox.agents.runtime import AgentRuntime, RuntimeResult
 from sandbox.contracts.action import ActionContract
+from sandbox.contracts.agent import ActionReceipt, DecisionTrigger
 from sandbox.contracts.event import EventDraft
 from sandbox.contracts.scenario import ResolvedInitialState, ScenarioDraft
+from sandbox.contracts.observation import ObservationPacket
+from sandbox.contracts.planning import PlanningRequest, validate_planning_transition
+from sandbox.contracts.planning import PlanningProviderRequest, PlanningResultCandidate
 from sandbox.contracts.snapshot import Checkpoint
 from sandbox.control.initialization import Initializer
+from sandbox.control.branch_runner import BranchRunner
 from sandbox.core.errors import ConflictError, NotFoundError, SandboxError, ValidationError
 from sandbox.core.ids import deterministic_id, new_id
 from sandbox.store.archive import ArchiveService
@@ -28,6 +37,9 @@ class RunManager:
         self.initializer = initializer
         self.archive_service = archive_service
         self.runtime_version = runtime_version
+        self.agent_runtime = AgentRuntime()
+        self.planning = PlanningCoordinator()
+        self.branch_runner = BranchRunner(self)
         self._locks: defaultdict[str, threading.RLock] = defaultdict(threading.RLock)
 
     def create_scenario(self, draft: ScenarioDraft) -> dict[str, object]:
@@ -66,11 +78,36 @@ class RunManager:
         ]
         observations = world.create_observations(branch_id, len(drafts))
         drafts.extend(self._observation_event(observation, run_id) for observation in observations)
+        decision_records: list[dict[str, object]] = []
+        planning_records: list[dict[str, object]] = []
+        for observation in observations:
+            definition = world.agent_definitions.get(observation.agent_id)
+            state = world.agent_runtime_states.get(observation.agent_id)
+            if definition is None or state is None:
+                continue
+            runtime_result = self.agent_runtime.decide(
+                definition=definition,
+                state=state,
+                observation=observation,
+            )
+            if runtime_result is None:
+                continue
+            world.agent_runtime_states[observation.agent_id] = runtime_result.state
+            if runtime_result.planning_request is not None:
+                world.planning_requests[runtime_result.planning_request.request_id] = runtime_result.planning_request
+                planning_records.append(runtime_result.planning_request.model_dump(mode="json"))
+            decision_records.append({
+                "decision": runtime_result.decision.model_dump(mode="json"),
+                "outcome": runtime_result.outcome.model_dump(mode="json"),
+            })
+            drafts.extend(runtime_result.events)
         created_at = utc_now()
         self.events.append_batch(
             run_id, branch_id, drafts,
             world_state=world.to_json(),
             observations=[item.model_dump(mode="json") for item in observations],
+            agent_decisions=decision_records,
+            planning_requests=planning_records,
             branch_status="Ready",
             run_record={"run_id": run_id, "scenario_id": scenario_id, "name": resolved.name, "status": "Ready", "runtime_version": self.runtime_version, "resolved_state": resolved.model_dump(mode="json"), "created_at": created_at},
             branch_record={"branch_id": branch_id, "run_id": run_id, "status": "Initializing", "created_at": created_at},
@@ -142,6 +179,58 @@ class RunManager:
                 items = [item for item in items if int(item["world_version"]) <= cursor]
             return items
 
+    def provider_profiles(self) -> list[dict[str, object]]:
+        return self.initializer.llm_gateway.profiles()
+
+    async def provider_preflight(self, provider_name: str) -> dict[str, object]:
+        return await self.initializer.llm_gateway.preflight(provider_name)
+
+    def agents(self, branch_id: str) -> list[dict[str, object]]:
+        with self.store.locked():
+            world = self._world(branch_id)
+            return [self._agent_summary(world, agent_id) for agent_id in sorted(world.agents)]
+
+    def agent_detail(self, branch_id: str, agent_id: str) -> dict[str, object]:
+        with self.store.locked():
+            world = self._world(branch_id)
+            if agent_id not in world.agents:
+                raise NotFoundError("agent", agent_id)
+            return self._agent_summary(world, agent_id, include_private=True)
+
+    def agent_decisions(self, branch_id: str, agent_id: str, *, limit: int = 200) -> list[dict[str, object]]:
+        with self.store.locked():
+            rows = self.store.connection.execute(
+                "SELECT decision_json,outcome_json FROM agent_decisions WHERE branch_id=? AND agent_id=? ORDER BY sim_time_us DESC LIMIT ?",
+                (branch_id, agent_id, limit),
+            ).fetchall()
+            return [{"decision": json.loads(row["decision_json"]), "outcome": json.loads(row["outcome_json"])} for row in rows]
+
+    def agent_plans(self, branch_id: str, agent_id: str, *, limit: int = 200) -> list[dict[str, object]]:
+        with self.store.locked():
+            rows = self.store.connection.execute(
+                "SELECT plan_json,active FROM strategy_plans WHERE branch_id=? AND agent_id=? ORDER BY strategy_revision DESC LIMIT ?",
+                (branch_id, agent_id, limit),
+            ).fetchall()
+            return [{"plan": json.loads(row["plan_json"]), "active": bool(row["active"])} for row in rows]
+
+    def agent_receipts(self, branch_id: str, agent_id: str, *, limit: int = 200) -> list[dict[str, object]]:
+        with self.store.locked():
+            rows = self.store.connection.execute(
+                "SELECT receipt_json FROM action_receipts WHERE branch_id=? AND agent_id=? ORDER BY sim_time_us DESC LIMIT ?",
+                (branch_id, agent_id, limit),
+            ).fetchall()
+            return [json.loads(row["receipt_json"]) for row in rows]
+
+    @staticmethod
+    def _agent_summary(world: SimulationWorld, agent_id: str, *, include_private: bool = False) -> dict[str, object]:
+        state = world.agent_runtime_states.get(agent_id)
+        definition = world.agent_definitions.get(agent_id)
+        summary = world.agent_projection(agent_id)
+        if include_private:
+            summary["definition"] = definition.model_dump(mode="json") if definition else None
+            summary["runtime_state"] = state.model_dump(mode="json") if state else None
+        return summary
+
     def submit_action(self, action: ActionContract) -> dict[str, object]:
         with self.store.locked():
             command_key = deterministic_id("cmd", action.branch_id, action.client_command_id)
@@ -194,6 +283,17 @@ class RunManager:
                     agent_id, strategy = decision
                     working = world.clone()
                     working.fixture_step += 1
+                    if agent_id in working.agents:
+                        return self._apply_fixture_agent_action(
+                            branch_id=branch_id,
+                            run_id=run_id,
+                            working=working,
+                            state_version=int(branch["state_version"]),
+                            agent_id=agent_id,
+                            strategy=strategy,
+                            client_command_id=client_command_id,
+                            command_key=command_key,
+                        )
                     action = ActionContract(
                         action_id=new_id("act"), agent_id=agent_id, branch_id=branch_id,
                         submitted_sim_time_us=working.sim_time_us,
@@ -206,9 +306,223 @@ class RunManager:
                     result = self._apply_action(action, working, int(branch["state_version"]), command_key=command_key)
             elif command_type == "save":
                 result = self._checkpoint(branch_id, world, branch, command_key=command_key)
+            elif command_type == "run_for":
+                if status != "Running":
+                    raise ConflictError("run_for requires a Running branch")
+                max_requests = int(payload.get("max_requests", 1))
+                if not 1 <= max_requests <= 100:
+                    raise ValidationError("run_for max_requests must be within 1..100")
+                run_result = asyncio.run(self.branch_runner.run_for(branch_id, max_requests=max_requests))
+                current_branch = self._branch(branch_id)
+                current_world = self._world(branch_id)
+                record = self._command_record(command_key, command_type, {"branch_id": branch_id, **run_result})
+                persisted = self.events.append_batch(
+                    run_id,
+                    branch_id,
+                    [self._system_event("ControlInterventionApplied", branch_id, {"kind": "run_for", **run_result}, sim_time_us=current_world.sim_time_us)],
+                    world_state=current_world.to_json(),
+                    command_record=record,
+                    expected_branch_version=int(current_branch["state_version"]),
+                )
+                result = record["persisted_result"]
             else:
                 raise ValidationError(f"unsupported command '{command_type}'")
             return result
+
+    async def _run_planning_requests(self, branch_id: str, *, max_requests: int) -> dict[str, object]:
+        processed = 0
+        applied = 0
+        failed = 0
+        while processed < max_requests:
+            branch = self._branch(branch_id)
+            world = self._world(branch_id)
+            candidates = sorted(
+                (request for request in world.planning_requests.values() if request.state in {"Queued", "Running"}),
+                key=lambda item: (item.activation_time_us, item.agent_id, item.request_id),
+            )
+            if not candidates:
+                break
+            request = candidates[0]
+            state = world.agent_runtime_states[request.agent_id]
+            definition = world.agent_definitions[request.agent_id]
+            observation = self._latest_observation(branch_id, request.agent_id)
+            if request.state == "Queued":
+                running = request.model_copy(update={"state": "Running"})
+                validate_planning_transition(request, running)
+                world.planning_requests[request.request_id] = running
+                self.events.append_batch(
+                    str(branch["run_id"]),
+                    branch_id,
+                    [EventDraft(
+                        sim_time_us=world.sim_time_us,
+                        priority=58,
+                        tie_break_key=f"planning:{request.request_id}:running",
+                        event_type="PlanningRequestStateChanged",
+                        source_id=request.agent_id,
+                        target_ids=[request.agent_id],
+                        payload={"request_id": request.request_id, "from": "Queued", "to": "Running", "activation_time_us": request.activation_time_us},
+                        visibility="agent_private",
+                    )],
+                    world_state=world.to_json(),
+                    planning_requests=[running.model_dump(mode="json")],
+                    expected_branch_version=int(branch["state_version"]),
+                )
+                request = running
+                branch = self._branch(branch_id)
+            provider_name = definition.planner_profile_id.split(".", 1)[0]
+            context = {
+                "persona": definition.base_persona.model_dump(mode="json"),
+                "observation": observation.model_dump(mode="json"),
+                "cognition": {
+                    "memory": [item.model_dump(mode="json") for item in state.memory_entries if item.accessible],
+                    "beliefs": [item.model_dump(mode="json") for item in state.beliefs],
+                    "revisions": state.component_revisions,
+                },
+                "account_snapshot": observation.account_snapshot.model_dump(mode="json") if observation.account_snapshot else {},
+                "current_strategy": world.strategy_plans[state.active_plan_id].model_dump(mode="json") if state.active_plan_id in world.strategy_plans else None,
+            }
+            context_hash = "sha256:" + hashlib.sha256(canonical_json(context).encode()).hexdigest()
+            provider_request = PlanningProviderRequest(
+                request_id=request.request_id,
+                agent_id=request.agent_id,
+                context_hash=context_hash,
+                planner_instructions="Return one complete bounded candidate StrategyPlan.",
+                **context,
+            )
+
+            def persist_raw(record: Any) -> None:
+                current = self._branch(branch_id)
+                self.events.append_batch(
+                    str(current["run_id"]),
+                    branch_id,
+                    [],
+                    llm_records=[record.model_dump(mode="json")],
+                    expected_branch_version=int(current["state_version"]),
+                )
+
+            try:
+                candidate = await self.initializer.llm_gateway.plan(provider_name, provider_request, record_raw=persist_raw)
+                self._complete_planning_candidate(branch_id, request.request_id, candidate)
+                applied += 1
+            except SandboxError as error:
+                self._fail_planning_request(branch_id, request.request_id, error.error_code)
+                failed += 1
+            processed += 1
+        return {"processed_requests": processed, "applied_requests": applied, "failed_requests": failed}
+
+    def _complete_planning_candidate(
+        self,
+        branch_id: str,
+        request_id: str,
+        candidate: PlanningResultCandidate,
+    ) -> None:
+        branch = self._branch(branch_id)
+        world = self._world(branch_id)
+        request = world.planning_requests[request_id]
+        state = world.agent_runtime_states[request.agent_id]
+        definition = world.agent_definitions[request.agent_id]
+        ready = request.model_copy(update={"state": "Ready"})
+        validate_planning_transition(request, ready)
+        world.sim_time_us = max(world.sim_time_us, request.activation_time_us)
+        observations = world.create_observations(
+            branch_id,
+            int(branch["state_version"]) + 1,
+            recipient_ids=[request.agent_id],
+            triggers_by_agent={request.agent_id: [DecisionTrigger(
+                type="planning_result",
+                semantic_key=f"planning_result:{request.request_id}",
+                source_event_ids=[],
+                severity=80,
+                first_sim_time_us=world.sim_time_us,
+                last_sim_time_us=world.sim_time_us,
+            )]},
+        )
+        observation = observations[0]
+        plan = self.planning.activate_candidate(
+            definition=definition,
+            state=state,
+            observation=observation,
+            request=ready,
+            candidate=candidate,
+        )
+        runtime_result = self.agent_runtime.decide(
+            definition=definition,
+            state=state,
+            observation=observation,
+            activate_plan=plan,
+        )
+        if runtime_result is None:
+            raise ConflictError("planning activation observation was already processed", error_code="DUPLICATE_DECISION")
+        terminal = ready.model_copy(update={"state": "Terminal", "terminal_outcome": "applied", "result_plan_id": plan.plan_id})
+        validate_planning_transition(ready, terminal)
+        next_budget = runtime_result.state.cognitive_budget_state.model_copy(update={
+            "plans_reserved": max(0, runtime_result.state.cognitive_budget_state.plans_reserved - 1)
+        })
+        world.agent_runtime_states[request.agent_id] = runtime_result.state.model_copy(update={"cognitive_budget_state": next_budget})
+        world.planning_requests[request_id] = terminal
+        world.strategy_plans[plan.plan_id] = plan
+        events = [
+            self._observation_event(observation, str(branch["run_id"])),
+            EventDraft(sim_time_us=world.sim_time_us, priority=59, tie_break_key=f"planning:{request_id}:ready", event_type="PlanningRequestStateChanged", source_id=request.agent_id, target_ids=[request.agent_id], payload={"request_id": request_id, "from": "Running", "to": "Ready", "activation_time_us": request.activation_time_us}, visibility="agent_private"),
+            *runtime_result.events,
+            EventDraft(sim_time_us=world.sim_time_us, priority=63, tie_break_key=f"planning:{request_id}:terminal", event_type="PlanningRequestStateChanged", source_id=request.agent_id, target_ids=[request.agent_id], payload={"request_id": request_id, "from": "Ready", "to": "Terminal", "terminal_outcome": "applied", "activation_time_us": request.activation_time_us}, visibility="agent_private"),
+        ]
+        receipts = []
+        action_observations: list[ObservationPacket] = []
+        for proposal in runtime_result.action_proposals:
+            action = ActionContract(
+                action_id=new_id("act"),
+                agent_id=request.agent_id,
+                branch_id=branch_id,
+                submitted_sim_time_us=world.sim_time_us,
+                action_type=proposal.action_type,
+                payload=proposal.payload,
+                expected_execution_time_us=proposal.expected_execution_time_us,
+                validity_window_us=proposal.validity_window_us,
+                parent_observation_id=observation.observation_id,
+                client_command_id=deterministic_id("provider-action", request_id, proposal.proposal_id),
+            )
+            action_result = world.apply_action(
+                action,
+                world_version=int(branch["state_version"]) + len(events),
+                proposal_id=proposal.proposal_id,
+                decision_id=runtime_result.decision.decision_id,
+            )
+            world = action_result.world
+            events.extend(action_result.events)
+            action_observations.extend(action_result.observations)
+            receipts.extend(action_result.receipts)
+        self.events.append_batch(
+            str(branch["run_id"]),
+            branch_id,
+            events,
+            world_state=world.to_json(),
+            observations=[item.model_dump(mode="json") for item in [*observations, *action_observations]],
+            agent_decisions=[{"decision": runtime_result.decision.model_dump(mode="json"), "outcome": runtime_result.outcome.model_dump(mode="json")}],
+            planning_requests=[terminal.model_dump(mode="json")],
+            strategy_plans=[{"plan": plan.model_dump(mode="json"), "active": True}],
+            action_receipts=[item.model_dump(mode="json") for item in receipts],
+            expected_branch_version=int(branch["state_version"]),
+        )
+
+    def _fail_planning_request(self, branch_id: str, request_id: str, error_code: str) -> None:
+        branch = self._branch(branch_id)
+        world = self._world(branch_id)
+        request = world.planning_requests[request_id]
+        terminal = request.model_copy(update={"state": "Terminal", "terminal_outcome": "failed", "error_code": error_code})
+        validate_planning_transition(request, terminal)
+        state = world.agent_runtime_states[request.agent_id]
+        budget = state.cognitive_budget_state.model_copy(update={"plans_reserved": max(0, state.cognitive_budget_state.plans_reserved - 1)})
+        world.agent_runtime_states[request.agent_id] = state.model_copy(update={"planning_request_id": None, "cognitive_budget_state": budget})
+        world.planning_requests[request_id] = terminal
+        self.events.append_batch(
+            str(branch["run_id"]),
+            branch_id,
+            [EventDraft(sim_time_us=world.sim_time_us, priority=63, tie_break_key=f"planning:{request_id}:failed", event_type="PlanningRequestStateChanged", source_id=request.agent_id, target_ids=[request.agent_id], payload={"request_id": request_id, "from": request.state, "to": "Terminal", "terminal_outcome": "failed", "reason": error_code}, visibility="agent_private")],
+            world_state=world.to_json(),
+            planning_requests=[terminal.model_dump(mode="json")],
+            expected_branch_version=int(branch["state_version"]),
+        )
 
     def fork(self, branch_id: str, checkpoint_id: str, client_command_id: str) -> dict[str, object]:
         with self.store.locked():
@@ -225,6 +539,19 @@ class RunManager:
         checkpoint = Checkpoint.model_validate(json.loads(checkpoint_row["snapshot_json"]))
         new_branch_id = new_id("branch")
         world = SimulationWorld.from_json(checkpoint.state)
+        remapped_requests: dict[str, PlanningRequest] = {}
+        request_id_map: dict[str, str] = {}
+        for request in world.planning_requests.values():
+            if request.state == "Terminal":
+                remapped_requests[request.request_id] = request
+                continue
+            next_id = deterministic_id("request", new_branch_id, request.agent_id, request.request_id)
+            request_id_map[request.request_id] = next_id
+            remapped_requests[next_id] = request.model_copy(update={"request_id": next_id, "branch_id": new_branch_id})
+        world.planning_requests = remapped_requests
+        for agent_id, state in list(world.agent_runtime_states.items()):
+            if state.planning_request_id in request_id_map:
+                world.agent_runtime_states[agent_id] = state.model_copy(update={"planning_request_id": request_id_map[state.planning_request_id]})
         observations = world.create_observations(new_branch_id, 1)
         drafts = [self._system_event("BranchCreated", new_branch_id, {"parent_branch_id": branch_id, "fork_checkpoint_id": checkpoint_id}, sim_time_us=checkpoint.sim_time_us)]
         drafts.extend(self._observation_event(observation, new_branch_id) for observation in observations)
@@ -232,6 +559,7 @@ class RunManager:
         self.events.append_batch(
             checkpoint.run_id, new_branch_id, drafts,
             world_state=world.to_json(), observations=[item.model_dump(mode="json") for item in observations], branch_status="Ready", command_record=record,
+            planning_requests=[request.model_dump(mode="json") for request in remapped_requests.values() if request.branch_id == new_branch_id],
             branch_record={"branch_id": new_branch_id, "run_id": checkpoint.run_id, "parent_branch_id": branch_id, "fork_checkpoint_id": checkpoint_id, "status": "Created", "sim_time_us": checkpoint.sim_time_us, "created_at": utc_now()},
         )
         result = record["persisted_result"]
@@ -250,22 +578,229 @@ class RunManager:
     def import_archive(self, path: Path) -> dict[str, object]:
         return self.archive_service.import_run(path)
 
-    def _apply_action(self, action: ActionContract, world: SimulationWorld, state_version: int, *, command_key: str | None = None) -> dict[str, object]:
+    def _apply_fixture_agent_action(
+        self,
+        *,
+        branch_id: str,
+        run_id: str,
+        working: SimulationWorld,
+        state_version: int,
+        agent_id: str,
+        strategy: Any,
+        client_command_id: str,
+        command_key: str,
+    ) -> dict[str, object]:
+        definition = working.agent_definitions[agent_id]
+        state = working.agent_runtime_states[agent_id]
+        decision_records: list[dict[str, object]] = []
+        planning_records: list[dict[str, object]] = []
+        extra_events: list[EventDraft] = []
+        pre_observations: list[ObservationPacket] = []
+
+        request = working.planning_requests.get(state.planning_request_id or "")
+        planning_observation = self._latest_observation(branch_id, agent_id)
+        if request is None:
+            replan_result = self.agent_runtime.decide(
+                definition=definition,
+                state=state,
+                observation=planning_observation,
+                active_plan=None,
+            )
+            if replan_result is None or replan_result.planning_request is None:
+                raise ConflictError("fixture step could not create a planning request", error_code="PLANNING_REQUEST_NOT_CREATED")
+            state = replan_result.state
+            request = replan_result.planning_request
+            working.agent_runtime_states[agent_id] = state
+            working.planning_requests[request.request_id] = request
+            decision_records.append({"decision": replan_result.decision.model_dump(mode="json"), "outcome": replan_result.outcome.model_dump(mode="json")})
+            planning_records.append(request.model_dump(mode="json"))
+            extra_events.extend(replan_result.events)
+
+        running = request.model_copy(update={"state": "Running"})
+        validate_planning_transition(request, running)
+        ready = running.model_copy(update={"state": "Ready"})
+        validate_planning_transition(running, ready)
+        activation_time = max(working.sim_time_us, ready.activation_time_us)
+        working.sim_time_us = activation_time
+        activation_observations = working.create_observations(
+            branch_id,
+            state_version + len(extra_events) + 1,
+            recipient_ids=[agent_id],
+            triggers_by_agent={
+                agent_id: [DecisionTrigger(
+                    type="planning_result",
+                    semantic_key=f"planning_result:{ready.request_id}",
+                    source_event_ids=[],
+                    severity=80,
+                    first_sim_time_us=activation_time,
+                    last_sim_time_us=activation_time,
+                )]
+            },
+        )
+        activation_observation = activation_observations[0]
+        pre_observations.extend(activation_observations)
+        extra_events.extend(self._observation_event(item, run_id) for item in activation_observations)
+        candidate = fixture_candidate(
+            action_type=strategy.action_type,
+            payload=strategy.payload,
+            observation=planning_observation,
+            strategy_revision=state.active_strategy_revision,
+        )
+        plan = self.planning.activate_candidate(
+            definition=definition,
+            state=state,
+            observation=activation_observation,
+            request=ready,
+            candidate=candidate,
+        )
+        activation_result = self.agent_runtime.decide(
+            definition=definition,
+            state=state,
+            observation=activation_observation,
+            activate_plan=plan,
+        )
+        if activation_result is None or not activation_result.action_proposals:
+            raise ConflictError("fixture plan produced no action proposal", error_code="FIXTURE_PLAN_NO_ACTION")
+        terminal = ready.model_copy(update={"state": "Terminal", "terminal_outcome": "applied", "result_plan_id": plan.plan_id})
+        validate_planning_transition(ready, terminal)
+        budget = activation_result.state.cognitive_budget_state
+        next_budget = budget.model_copy(update={"plans_reserved": max(0, budget.plans_reserved - 1)})
+        next_state = activation_result.state.model_copy(update={"cognitive_budget_state": next_budget})
+        working.agent_runtime_states[agent_id] = next_state
+        working.planning_requests[terminal.request_id] = terminal
+        working.strategy_plans[plan.plan_id] = plan
+        decision_records.append({"decision": activation_result.decision.model_dump(mode="json"), "outcome": activation_result.outcome.model_dump(mode="json")})
+        planning_records.append(terminal.model_dump(mode="json"))
+        extra_events.extend([
+            EventDraft(sim_time_us=activation_time, priority=58, tie_break_key=f"planning:{request.request_id}:running", event_type="PlanningRequestStateChanged", source_id=agent_id, target_ids=[agent_id], payload={"request_id": request.request_id, "from": "Queued", "to": "Running", "activation_time_us": request.activation_time_us}, visibility="agent_private"),
+            EventDraft(sim_time_us=activation_time, priority=59, tie_break_key=f"planning:{request.request_id}:ready", event_type="PlanningRequestStateChanged", source_id=agent_id, target_ids=[agent_id], payload={"request_id": request.request_id, "from": "Running", "to": "Ready", "activation_time_us": request.activation_time_us}, visibility="agent_private"),
+            *activation_result.events,
+            EventDraft(sim_time_us=activation_time, priority=63, tie_break_key=f"planning:{request.request_id}:terminal", event_type="PlanningRequestStateChanged", source_id=agent_id, target_ids=[agent_id], payload={"request_id": request.request_id, "from": "Ready", "to": "Terminal", "terminal_outcome": "applied", "activation_time_us": request.activation_time_us}, visibility="agent_private"),
+        ])
+        proposal = activation_result.action_proposals[0]
+        action = ActionContract(
+            action_id=new_id("act"),
+            agent_id=agent_id,
+            branch_id=branch_id,
+            submitted_sim_time_us=activation_time,
+            action_type=proposal.action_type,
+            payload=proposal.payload,
+            expected_execution_time_us=proposal.expected_execution_time_us,
+            validity_window_us=proposal.validity_window_us,
+            parent_observation_id=activation_observation.observation_id,
+            client_command_id=client_command_id,
+        )
+        return self._apply_action(
+            action,
+            working,
+            state_version,
+            command_key=command_key,
+            proposal_id=proposal.proposal_id,
+            decision_id=activation_result.decision.decision_id,
+            extra_events=extra_events,
+            pre_observations=pre_observations,
+            decision_records=decision_records,
+            planning_records=planning_records,
+            strategy_records=[{"plan": plan.model_dump(mode="json"), "active": True}],
+        )
+
+    def _latest_observation(self, branch_id: str, agent_id: str) -> ObservationPacket:
+        row = self.store.connection.execute(
+            "SELECT observation_json FROM observations WHERE branch_id=? AND agent_id=? ORDER BY rowid DESC LIMIT 1",
+            (branch_id, agent_id),
+        ).fetchone()
+        if row is None:
+            raise NotFoundError("agent observation", agent_id)
+        return ObservationPacket.model_validate(json.loads(row["observation_json"]))
+
+    def _apply_action(
+        self,
+        action: ActionContract,
+        world: SimulationWorld,
+        state_version: int,
+        *,
+        command_key: str | None = None,
+        proposal_id: str | None = None,
+        decision_id: str | None = None,
+        extra_events: list[EventDraft] | None = None,
+        pre_observations: list[ObservationPacket] | None = None,
+        decision_records: list[dict[str, object]] | None = None,
+        planning_records: list[dict[str, object]] | None = None,
+        strategy_records: list[dict[str, object]] | None = None,
+    ) -> dict[str, object]:
         branch = self._branch(action.branch_id)
         try:
-            action_result: ActionResult = world.apply_action(action, world_version=state_version)
+            action_result: ActionResult = world.apply_action(
+                action,
+                world_version=state_version,
+                proposal_id=proposal_id,
+                decision_id=decision_id,
+            )
+            all_events = [*(extra_events or []), *action_result.events]
+            all_observations = [*(pre_observations or []), *action_result.observations]
             record = self._command_record(command_key, action.action_type, {"accepted": True, "action_id": action.action_id, "branch_id": action.branch_id}, include_events=True) if command_key else None
             persisted = self.events.append_batch(
-                str(branch["run_id"]), action.branch_id, action_result.events,
+                str(branch["run_id"]), action.branch_id, all_events,
                 world_state=action_result.world.to_json(),
-                observations=[item.model_dump(mode="json") for item in action_result.observations],
+                observations=[item.model_dump(mode="json") for item in all_observations],
+                action_receipts=[item.model_dump(mode="json") for item in action_result.receipts],
+                agent_decisions=decision_records or [],
+                planning_requests=planning_records or [],
+                strategy_plans=strategy_records or [],
                 command_record=record,
+                expected_branch_version=state_version,
             )
             return record["persisted_result"] if record else {"accepted": True, "action_id": action.action_id, "branch_id": action.branch_id, "cursor": persisted[-1].branch_seq, "events": [event.model_dump(mode="json") for event in persisted]}
         except SandboxError as error:
-            rejected = world.rejection_event(action, error.message)
+            working = world.clone()
+            rejected = working.rejection_event(action, error.message)
+            receipt = ActionReceipt(
+                receipt_id=new_id("receipt"),
+                action_id=action.action_id,
+                proposal_id=proposal_id,
+                decision_id=decision_id,
+                agent_id=action.agent_id,
+                branch_id=action.branch_id,
+                outcome="rejected",
+                reason_code=error.error_code.lower(),
+                submitted_sim_time_us=action.submitted_sim_time_us,
+                scheduled_sim_time_us=max(action.submitted_sim_time_us, action.expected_execution_time_us),
+                resolved_sim_time_us=max(working.sim_time_us, action.submitted_sim_time_us),
+                result_state_refs={"portfolio_revision": state_version},
+            )
+            working.action_receipts.append(receipt)
+            observations = []
+            if action.agent_id in working.agents:
+                observations = working.create_observations(
+                    action.branch_id,
+                    state_version + 1,
+                    recipient_ids=[action.agent_id],
+                    triggers_by_agent={
+                        action.agent_id: [DecisionTrigger(
+                            type="own_action_outcome",
+                            semantic_key=f"receipt:{action.action_id}",
+                            source_event_ids=[],
+                            severity=80,
+                            first_sim_time_us=working.sim_time_us,
+                            last_sim_time_us=working.sim_time_us,
+                        )]
+                    },
+                )
+            drafts = [*(extra_events or []), rejected]
+            drafts.extend(self._observation_event(observation, str(branch["run_id"])) for observation in observations)
+            all_observations = [*(pre_observations or []), *observations]
             record = self._command_record(command_key, action.action_type, {"accepted": False, "action_id": action.action_id, "branch_id": action.branch_id, "error": {"error_code": error.error_code, "message": error.message}}) if command_key else None
-            persisted = self.events.append_batch(str(branch["run_id"]), action.branch_id, [rejected], world_state=world.to_json(), command_record=record)
+            persisted = self.events.append_batch(
+                str(branch["run_id"]), action.branch_id, drafts,
+                world_state=working.to_json(),
+                observations=[item.model_dump(mode="json") for item in all_observations],
+                action_receipts=[receipt.model_dump(mode="json")],
+                agent_decisions=decision_records or [],
+                planning_requests=planning_records or [],
+                strategy_plans=strategy_records or [],
+                command_record=record,
+                expected_branch_version=state_version,
+            )
             return record["persisted_result"] if record else {"accepted": False, "action_id": action.action_id, "branch_id": action.branch_id, "cursor": persisted[-1].branch_seq, "error": {"error_code": error.error_code, "message": error.message}}
 
     def _checkpoint(self, branch_id: str, world: SimulationWorld, branch: Any, *, command_key: str | None = None) -> dict[str, object]:

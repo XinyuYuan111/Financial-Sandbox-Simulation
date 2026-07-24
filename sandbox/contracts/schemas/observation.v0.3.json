@@ -1,0 +1,681 @@
+{
+  "$defs": {
+    "ActionReceipt": {
+      "additionalProperties": false,
+      "properties": {
+        "receipt_id": {
+          "title": "Receipt Id",
+          "type": "string"
+        },
+        "action_id": {
+          "title": "Action Id",
+          "type": "string"
+        },
+        "proposal_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Proposal Id"
+        },
+        "decision_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Decision Id"
+        },
+        "agent_id": {
+          "title": "Agent Id",
+          "type": "string"
+        },
+        "branch_id": {
+          "title": "Branch Id",
+          "type": "string"
+        },
+        "outcome": {
+          "enum": [
+            "accepted",
+            "rejected",
+            "queued",
+            "executed",
+            "partial",
+            "failed",
+            "expired",
+            "canceled"
+          ],
+          "title": "Outcome",
+          "type": "string"
+        },
+        "reason_code": {
+          "maxLength": 128,
+          "minLength": 1,
+          "title": "Reason Code",
+          "type": "string"
+        },
+        "submitted_sim_time_us": {
+          "minimum": 0,
+          "title": "Submitted Sim Time Us",
+          "type": "integer"
+        },
+        "scheduled_sim_time_us": {
+          "minimum": 0,
+          "title": "Scheduled Sim Time Us",
+          "type": "integer"
+        },
+        "resolved_sim_time_us": {
+          "minimum": 0,
+          "title": "Resolved Sim Time Us",
+          "type": "integer"
+        },
+        "authoritative_event_ids": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Authoritative Event Ids",
+          "type": "array"
+        },
+        "result_state_refs": {
+          "additionalProperties": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "string"
+              }
+            ]
+          },
+          "title": "Result State Refs",
+          "type": "object"
+        },
+        "schema_version": {
+          "const": "action-receipt.v0.1",
+          "default": "action-receipt.v0.1",
+          "title": "Schema Version",
+          "type": "string"
+        }
+      },
+      "required": [
+        "receipt_id",
+        "action_id",
+        "agent_id",
+        "branch_id",
+        "outcome",
+        "reason_code",
+        "submitted_sim_time_us",
+        "scheduled_sim_time_us",
+        "resolved_sim_time_us"
+      ],
+      "title": "ActionReceipt",
+      "type": "object"
+    },
+    "AgentAccountSnapshot": {
+      "additionalProperties": false,
+      "properties": {
+        "agent_id": {
+          "title": "Agent Id",
+          "type": "string"
+        },
+        "portfolio_revision": {
+          "minimum": 0,
+          "title": "Portfolio Revision",
+          "type": "integer"
+        },
+        "balances": {
+          "additionalProperties": {
+            "$ref": "#/$defs/BalanceView"
+          },
+          "title": "Balances",
+          "type": "object"
+        },
+        "positions": {
+          "additionalProperties": {
+            "type": "integer"
+          },
+          "title": "Positions",
+          "type": "object"
+        },
+        "open_orders": {
+          "items": {
+            "$ref": "#/$defs/OrderView"
+          },
+          "title": "Open Orders",
+          "type": "array"
+        },
+        "pending_action_ids": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Pending Action Ids",
+          "type": "array"
+        },
+        "reservation_ids": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Reservation Ids",
+          "type": "array"
+        },
+        "risk_refs": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Risk Refs",
+          "type": "array"
+        }
+      },
+      "required": [
+        "agent_id",
+        "portfolio_revision"
+      ],
+      "title": "AgentAccountSnapshot",
+      "type": "object"
+    },
+    "AttentionDecision": {
+      "additionalProperties": false,
+      "properties": {
+        "policy": {
+          "title": "Policy",
+          "type": "string"
+        },
+        "selected": {
+          "minimum": 0,
+          "title": "Selected",
+          "type": "integer"
+        },
+        "dropped": {
+          "default": 0,
+          "minimum": 0,
+          "title": "Dropped",
+          "type": "integer"
+        },
+        "reason_code": {
+          "default": "within_capacity",
+          "title": "Reason Code",
+          "type": "string"
+        }
+      },
+      "required": [
+        "policy",
+        "selected"
+      ],
+      "title": "AttentionDecision",
+      "type": "object"
+    },
+    "BalanceView": {
+      "additionalProperties": false,
+      "properties": {
+        "free": {
+          "minimum": 0,
+          "title": "Free",
+          "type": "integer"
+        },
+        "locked": {
+          "minimum": 0,
+          "title": "Locked",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "free",
+        "locked"
+      ],
+      "title": "BalanceView",
+      "type": "object"
+    },
+    "DecisionTrigger": {
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "enum": [
+            "initial_observation",
+            "market_change",
+            "information",
+            "private_message",
+            "own_action_outcome",
+            "planning_result",
+            "directive_wakeup",
+            "risk"
+          ],
+          "title": "Type",
+          "type": "string"
+        },
+        "semantic_key": {
+          "maxLength": 128,
+          "minLength": 1,
+          "title": "Semantic Key",
+          "type": "string"
+        },
+        "source_event_ids": {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 32,
+          "title": "Source Event Ids",
+          "type": "array"
+        },
+        "severity": {
+          "default": 50,
+          "maximum": 100,
+          "minimum": 0,
+          "title": "Severity",
+          "type": "integer"
+        },
+        "first_sim_time_us": {
+          "minimum": 0,
+          "title": "First Sim Time Us",
+          "type": "integer"
+        },
+        "last_sim_time_us": {
+          "minimum": 0,
+          "title": "Last Sim Time Us",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "type",
+        "semantic_key",
+        "first_sim_time_us",
+        "last_sim_time_us"
+      ],
+      "title": "DecisionTrigger",
+      "type": "object"
+    },
+    "MarketObservation": {
+      "additionalProperties": false,
+      "properties": {
+        "market_id": {
+          "title": "Market Id",
+          "type": "string"
+        },
+        "bids": {
+          "items": {
+            "$ref": "#/$defs/OrderView"
+          },
+          "title": "Bids",
+          "type": "array"
+        },
+        "asks": {
+          "items": {
+            "$ref": "#/$defs/OrderView"
+          },
+          "title": "Asks",
+          "type": "array"
+        },
+        "last_trade": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/TradeView"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "trades": {
+          "items": {
+            "$ref": "#/$defs/TradeView"
+          },
+          "title": "Trades",
+          "type": "array"
+        }
+      },
+      "required": [
+        "market_id"
+      ],
+      "title": "MarketObservation",
+      "type": "object"
+    },
+    "ObservedInformation": {
+      "additionalProperties": false,
+      "properties": {
+        "information_id": {
+          "title": "Information Id",
+          "type": "string"
+        },
+        "source_id": {
+          "title": "Source Id",
+          "type": "string"
+        },
+        "channel": {
+          "title": "Channel",
+          "type": "string"
+        },
+        "rendered_content": {
+          "maxLength": 4000,
+          "title": "Rendered Content",
+          "type": "string"
+        },
+        "sim_time_us": {
+          "minimum": 0,
+          "title": "Sim Time Us",
+          "type": "integer"
+        },
+        "target_ids": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Target Ids",
+          "type": "array"
+        },
+        "visibility": {
+          "enum": [
+            "public",
+            "agent_private"
+          ],
+          "title": "Visibility",
+          "type": "string"
+        },
+        "derived_from_info_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Derived From Info Id"
+        }
+      },
+      "required": [
+        "information_id",
+        "source_id",
+        "channel",
+        "rendered_content",
+        "sim_time_us",
+        "visibility"
+      ],
+      "title": "ObservedInformation",
+      "type": "object"
+    },
+    "OrderView": {
+      "additionalProperties": false,
+      "properties": {
+        "order_id": {
+          "title": "Order Id",
+          "type": "string"
+        },
+        "agent_id": {
+          "title": "Agent Id",
+          "type": "string"
+        },
+        "side": {
+          "enum": [
+            "buy",
+            "sell"
+          ],
+          "title": "Side",
+          "type": "string"
+        },
+        "order_type": {
+          "enum": [
+            "limit",
+            "protected_market"
+          ],
+          "title": "Order Type",
+          "type": "string"
+        },
+        "price": {
+          "anyOf": [
+            {
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Price"
+        },
+        "worst_price": {
+          "anyOf": [
+            {
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Worst Price"
+        },
+        "quantity": {
+          "minimum": 1,
+          "title": "Quantity",
+          "type": "integer"
+        },
+        "remaining": {
+          "minimum": 0,
+          "title": "Remaining",
+          "type": "integer"
+        },
+        "status": {
+          "title": "Status",
+          "type": "string"
+        },
+        "submitted_seq": {
+          "minimum": 1,
+          "title": "Submitted Seq",
+          "type": "integer"
+        },
+        "locked_amount": {
+          "default": 0,
+          "minimum": 0,
+          "title": "Locked Amount",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "order_id",
+        "agent_id",
+        "side",
+        "order_type",
+        "quantity",
+        "remaining",
+        "status",
+        "submitted_seq"
+      ],
+      "title": "OrderView",
+      "type": "object"
+    },
+    "TradeView": {
+      "additionalProperties": false,
+      "properties": {
+        "trade_id": {
+          "title": "Trade Id",
+          "type": "string"
+        },
+        "buy_order_id": {
+          "title": "Buy Order Id",
+          "type": "string"
+        },
+        "sell_order_id": {
+          "title": "Sell Order Id",
+          "type": "string"
+        },
+        "buyer_id": {
+          "title": "Buyer Id",
+          "type": "string"
+        },
+        "seller_id": {
+          "title": "Seller Id",
+          "type": "string"
+        },
+        "quantity": {
+          "minimum": 1,
+          "title": "Quantity",
+          "type": "integer"
+        },
+        "price": {
+          "minimum": 1,
+          "title": "Price",
+          "type": "integer"
+        },
+        "buyer_fee": {
+          "minimum": 0,
+          "title": "Buyer Fee",
+          "type": "integer"
+        },
+        "seller_fee": {
+          "minimum": 0,
+          "title": "Seller Fee",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "trade_id",
+        "buy_order_id",
+        "sell_order_id",
+        "buyer_id",
+        "seller_id",
+        "quantity",
+        "price",
+        "buyer_fee",
+        "seller_fee"
+      ],
+      "title": "TradeView",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "observation_id": {
+      "title": "Observation Id",
+      "type": "string"
+    },
+    "agent_id": {
+      "title": "Agent Id",
+      "type": "string"
+    },
+    "branch_id": {
+      "title": "Branch Id",
+      "type": "string"
+    },
+    "sim_time_us": {
+      "minimum": 0,
+      "title": "Sim Time Us",
+      "type": "integer"
+    },
+    "world_version": {
+      "minimum": 0,
+      "title": "World Version",
+      "type": "integer"
+    },
+    "decision_triggers": {
+      "items": {
+        "$ref": "#/$defs/DecisionTrigger"
+      },
+      "maxItems": 32,
+      "title": "Decision Triggers",
+      "type": "array"
+    },
+    "market_view": {
+      "$ref": "#/$defs/MarketObservation"
+    },
+    "account_snapshot": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/AgentAccountSnapshot"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "portfolio_view": {
+      "additionalProperties": true,
+      "title": "Portfolio View",
+      "type": "object"
+    },
+    "information_items": {
+      "items": {
+        "$ref": "#/$defs/ObservedInformation"
+      },
+      "title": "Information Items",
+      "type": "array"
+    },
+    "private_messages": {
+      "items": {
+        "$ref": "#/$defs/ObservedInformation"
+      },
+      "title": "Private Messages",
+      "type": "array"
+    },
+    "action_receipts": {
+      "items": {
+        "$ref": "#/$defs/ActionReceipt"
+      },
+      "title": "Action Receipts",
+      "type": "array"
+    },
+    "chain_view": {
+      "additionalProperties": true,
+      "title": "Chain View",
+      "type": "object"
+    },
+    "missing_fields": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Missing Fields",
+      "type": "array"
+    },
+    "observation_delays": {
+      "additionalProperties": {
+        "type": "integer"
+      },
+      "title": "Observation Delays",
+      "type": "object"
+    },
+    "provenance": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Provenance",
+      "type": "array"
+    },
+    "attention_decisions": {
+      "items": {
+        "$ref": "#/$defs/AttentionDecision"
+      },
+      "title": "Attention Decisions",
+      "type": "array"
+    },
+    "schema_version": {
+      "default": "observation.v0.3",
+      "enum": [
+        "observation.v0.2",
+        "observation.v0.3"
+      ],
+      "title": "Schema Version",
+      "type": "string"
+    }
+  },
+  "required": [
+    "observation_id",
+    "agent_id",
+    "branch_id",
+    "sim_time_us",
+    "world_version",
+    "market_view"
+  ],
+  "title": "ObservationPacket",
+  "type": "object"
+}

@@ -1,0 +1,14 @@
+{
+  "preset_version": "agent.smoke-openai.v0.1",
+  "mode": "live_llm_smoke",
+  "population": "smoke",
+  "agent_count": 4,
+  "funding_profile_counts": {
+    "ordinary": 1,
+    "capital": 1,
+    "liquidity": 1,
+    "information": 1
+  },
+  "max_initial_planning_requests": 4,
+  "max_tool_rounds": 0
+}

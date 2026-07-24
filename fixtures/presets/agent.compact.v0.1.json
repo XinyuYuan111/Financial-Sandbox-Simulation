@@ -1,0 +1,13 @@
+{
+  "preset_version": "agent.compact.v0.1",
+  "mode": "live",
+  "population": "compact",
+  "agent_count": 20,
+  "funding_profile_counts": {
+    "ordinary": 14,
+    "capital": 2,
+    "liquidity": 2,
+    "issuer": 1,
+    "information": 1
+  }
+}

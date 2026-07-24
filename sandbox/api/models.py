@@ -13,7 +13,7 @@ class CreateRunRequest(BaseModel):
 class CommandRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     client_command_id: str = Field(min_length=1, max_length=256)
-    command_type: Literal["start", "pause", "step_fixture", "save"]
+    command_type: Literal["start", "pause", "step_fixture", "run_for", "save"]
     payload: dict[str, Any] = Field(default_factory=dict)
 
 
@@ -26,4 +26,3 @@ class ForkRequest(BaseModel):
 class ExportRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     run_id: str
-

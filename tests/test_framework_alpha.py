@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import zipfile
 import tempfile
 import threading
 import unittest
@@ -94,6 +95,14 @@ class FrameworkAlphaTests(unittest.TestCase):
         exported = self.manager.export_archive(run_id, archive_path)
         self.assertTrue(archive_path.exists())
         self.assertEqual(exported["manifest"]["included_branches"], [branch_id, child_id])
+        with zipfile.ZipFile(archive_path) as archive:
+            names = set(archive.namelist())
+            self.assertIn("agents/definitions.json", names)
+            self.assertIn(f"agents/decisions/{branch_id}.jsonl", names)
+            self.assertIn(f"agents/plans/{branch_id}.jsonl", names)
+            self.assertIn(f"agents/planning_requests/{branch_id}.jsonl", names)
+            self.assertIn(f"actions/receipts/{branch_id}.jsonl", names)
+            self.assertIn("llm/records.jsonl", names)
 
         restored_store = SQLiteStore(self.root / "restored.db")
         try:
@@ -103,6 +112,18 @@ class FrameworkAlphaTests(unittest.TestCase):
             restored_events = __import__("sandbox.store.event_store", fromlist=["EventStore"]).EventStore(restored_store)
             self.assertTrue(restored_events.verify_chain(branch_id))
             self.assertTrue(restored_events.verify_chain(child_id))
+            self.assertGreater(
+                restored_store.connection.execute(
+                    "SELECT COUNT(*) count FROM agent_decisions WHERE branch_id=?", (branch_id,)
+                ).fetchone()["count"],
+                0,
+            )
+            self.assertGreater(
+                restored_store.connection.execute(
+                    "SELECT COUNT(*) count FROM action_receipts WHERE branch_id=?", (branch_id,)
+                ).fetchone()["count"],
+                0,
+            )
         finally:
             restored_store.close()
 

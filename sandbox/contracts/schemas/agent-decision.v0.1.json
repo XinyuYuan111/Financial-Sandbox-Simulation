@@ -1,0 +1,552 @@
+{
+  "$defs": {
+    "ActionProposal": {
+      "additionalProperties": false,
+      "properties": {
+        "proposal_id": {
+          "maxLength": 256,
+          "minLength": 1,
+          "title": "Proposal Id",
+          "type": "string"
+        },
+        "depends_on": {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 32,
+          "title": "Depends On",
+          "type": "array"
+        },
+        "action_type": {
+          "enum": [
+            "SubmitLimitOrder",
+            "SubmitProtectedMarketOrder",
+            "CancelOrder",
+            "ReplaceOrder",
+            "PublishInformation"
+          ],
+          "title": "Action Type",
+          "type": "string"
+        },
+        "payload": {
+          "additionalProperties": true,
+          "title": "Payload",
+          "type": "object"
+        },
+        "expected_execution_time_us": {
+          "minimum": 0,
+          "title": "Expected Execution Time Us",
+          "type": "integer"
+        },
+        "validity_window_us": {
+          "minimum": 0,
+          "title": "Validity Window Us",
+          "type": "integer"
+        },
+        "priority": {
+          "default": 50,
+          "maximum": 100,
+          "minimum": 0,
+          "title": "Priority",
+          "type": "integer"
+        },
+        "required_capabilities": {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 16,
+          "title": "Required Capabilities",
+          "type": "array"
+        }
+      },
+      "required": [
+        "proposal_id",
+        "action_type",
+        "payload",
+        "expected_execution_time_us",
+        "validity_window_us"
+      ],
+      "title": "ActionProposal",
+      "type": "object"
+    },
+    "BeliefProposal": {
+      "additionalProperties": false,
+      "properties": {
+        "proposal_id": {
+          "maxLength": 256,
+          "minLength": 1,
+          "title": "Proposal Id",
+          "type": "string"
+        },
+        "depends_on": {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 32,
+          "title": "Depends On",
+          "type": "array"
+        },
+        "subject": {
+          "maxLength": 256,
+          "minLength": 1,
+          "title": "Subject",
+          "type": "string"
+        },
+        "predicate": {
+          "maxLength": 128,
+          "minLength": 1,
+          "title": "Predicate",
+          "type": "string"
+        },
+        "value": {
+          "maxLength": 1000,
+          "title": "Value",
+          "type": "string"
+        },
+        "confidence_milli": {
+          "maximum": 1000,
+          "minimum": 0,
+          "title": "Confidence Milli",
+          "type": "integer"
+        },
+        "evidence_memory_ids": {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 32,
+          "title": "Evidence Memory Ids",
+          "type": "array"
+        },
+        "stated_reason": {
+          "default": "",
+          "maxLength": 500,
+          "title": "Stated Reason",
+          "type": "string"
+        }
+      },
+      "required": [
+        "proposal_id",
+        "subject",
+        "predicate",
+        "value",
+        "confidence_milli"
+      ],
+      "title": "BeliefProposal",
+      "type": "object"
+    },
+    "DecisionRationale": {
+      "additionalProperties": false,
+      "properties": {
+        "goal_summary": {
+          "default": "",
+          "maxLength": 500,
+          "title": "Goal Summary",
+          "type": "string"
+        },
+        "evidence_ids": {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 64,
+          "title": "Evidence Ids",
+          "type": "array"
+        },
+        "belief_ids": {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 64,
+          "title": "Belief Ids",
+          "type": "array"
+        },
+        "strategy_revision": {
+          "default": 0,
+          "minimum": 0,
+          "title": "Strategy Revision",
+          "type": "integer"
+        },
+        "risk_flags": {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 32,
+          "title": "Risk Flags",
+          "type": "array"
+        },
+        "uncertainty_milli": {
+          "default": 500,
+          "maximum": 1000,
+          "minimum": 0,
+          "title": "Uncertainty Milli",
+          "type": "integer"
+        },
+        "proposal_ids": {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 128,
+          "title": "Proposal Ids",
+          "type": "array"
+        },
+        "stated_reason": {
+          "default": "",
+          "maxLength": 1000,
+          "title": "Stated Reason",
+          "type": "string"
+        }
+      },
+      "title": "DecisionRationale",
+      "type": "object"
+    },
+    "DecisionTrigger": {
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "enum": [
+            "initial_observation",
+            "market_change",
+            "information",
+            "private_message",
+            "own_action_outcome",
+            "planning_result",
+            "directive_wakeup",
+            "risk"
+          ],
+          "title": "Type",
+          "type": "string"
+        },
+        "semantic_key": {
+          "maxLength": 128,
+          "minLength": 1,
+          "title": "Semantic Key",
+          "type": "string"
+        },
+        "source_event_ids": {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 32,
+          "title": "Source Event Ids",
+          "type": "array"
+        },
+        "severity": {
+          "default": 50,
+          "maximum": 100,
+          "minimum": 0,
+          "title": "Severity",
+          "type": "integer"
+        },
+        "first_sim_time_us": {
+          "minimum": 0,
+          "title": "First Sim Time Us",
+          "type": "integer"
+        },
+        "last_sim_time_us": {
+          "minimum": 0,
+          "title": "Last Sim Time Us",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "type",
+        "semantic_key",
+        "first_sim_time_us",
+        "last_sim_time_us"
+      ],
+      "title": "DecisionTrigger",
+      "type": "object"
+    },
+    "MemoryProposal": {
+      "additionalProperties": false,
+      "properties": {
+        "proposal_id": {
+          "maxLength": 256,
+          "minLength": 1,
+          "title": "Proposal Id",
+          "type": "string"
+        },
+        "depends_on": {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 32,
+          "title": "Depends On",
+          "type": "array"
+        },
+        "kind": {
+          "enum": [
+            "write",
+            "forget"
+          ],
+          "title": "Kind",
+          "type": "string"
+        },
+        "summary": {
+          "default": "",
+          "maxLength": 1000,
+          "title": "Summary",
+          "type": "string"
+        },
+        "source_ids": {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 32,
+          "title": "Source Ids",
+          "type": "array"
+        },
+        "confidence_milli": {
+          "default": 500,
+          "maximum": 1000,
+          "minimum": 0,
+          "title": "Confidence Milli",
+          "type": "integer"
+        },
+        "salience": {
+          "default": 0,
+          "maximum": 100,
+          "minimum": 0,
+          "title": "Salience",
+          "type": "integer"
+        },
+        "memory_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Memory Id"
+        }
+      },
+      "required": [
+        "proposal_id",
+        "kind"
+      ],
+      "title": "MemoryProposal",
+      "type": "object"
+    },
+    "PlanningRequestProposal": {
+      "additionalProperties": false,
+      "properties": {
+        "proposal_id": {
+          "maxLength": 256,
+          "minLength": 1,
+          "title": "Proposal Id",
+          "type": "string"
+        },
+        "depends_on": {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 32,
+          "title": "Depends On",
+          "type": "array"
+        },
+        "reason_keys": {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 16,
+          "minItems": 1,
+          "title": "Reason Keys",
+          "type": "array"
+        },
+        "requested_planner_profile_id": {
+          "maxLength": 128,
+          "minLength": 1,
+          "title": "Requested Planner Profile Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "proposal_id",
+        "reason_keys",
+        "requested_planner_profile_id"
+      ],
+      "title": "PlanningRequestProposal",
+      "type": "object"
+    },
+    "StrategyPlanProposal": {
+      "additionalProperties": false,
+      "properties": {
+        "proposal_id": {
+          "maxLength": 256,
+          "minLength": 1,
+          "title": "Proposal Id",
+          "type": "string"
+        },
+        "depends_on": {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 32,
+          "title": "Depends On",
+          "type": "array"
+        },
+        "planning_request_id": {
+          "title": "Planning Request Id",
+          "type": "string"
+        },
+        "plan_id": {
+          "title": "Plan Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "proposal_id",
+        "planning_request_id",
+        "plan_id"
+      ],
+      "title": "StrategyPlanProposal",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "decision_id": {
+      "title": "Decision Id",
+      "type": "string"
+    },
+    "branch_id": {
+      "title": "Branch Id",
+      "type": "string"
+    },
+    "agent_id": {
+      "title": "Agent Id",
+      "type": "string"
+    },
+    "observation_id": {
+      "title": "Observation Id",
+      "type": "string"
+    },
+    "sim_time_us": {
+      "minimum": 0,
+      "title": "Sim Time Us",
+      "type": "integer"
+    },
+    "decision_triggers": {
+      "items": {
+        "$ref": "#/$defs/DecisionTrigger"
+      },
+      "maxItems": 32,
+      "title": "Decision Triggers",
+      "type": "array"
+    },
+    "base_agent_revision": {
+      "minimum": 0,
+      "title": "Base Agent Revision",
+      "type": "integer"
+    },
+    "component_dependencies": {
+      "additionalProperties": {
+        "type": "integer"
+      },
+      "propertyNames": {
+        "enum": [
+          "memory",
+          "belief",
+          "planning",
+          "strategy",
+          "cursor",
+          "budget",
+          "attention"
+        ]
+      },
+      "title": "Component Dependencies",
+      "type": "object"
+    },
+    "memory_proposals": {
+      "items": {
+        "$ref": "#/$defs/MemoryProposal"
+      },
+      "maxItems": 64,
+      "title": "Memory Proposals",
+      "type": "array"
+    },
+    "belief_proposals": {
+      "items": {
+        "$ref": "#/$defs/BeliefProposal"
+      },
+      "maxItems": 64,
+      "title": "Belief Proposals",
+      "type": "array"
+    },
+    "planning_request_proposal": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/PlanningRequestProposal"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "strategy_plan_proposal": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/StrategyPlanProposal"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "action_proposals": {
+      "items": {
+        "$ref": "#/$defs/ActionProposal"
+      },
+      "maxItems": 32,
+      "title": "Action Proposals",
+      "type": "array"
+    },
+    "rationale": {
+      "$ref": "#/$defs/DecisionRationale"
+    },
+    "original_decision_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Original Decision Id"
+    },
+    "planning_request_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Planning Request Id"
+    },
+    "schema_version": {
+      "const": "agent-decision.v0.1",
+      "default": "agent-decision.v0.1",
+      "title": "Schema Version",
+      "type": "string"
+    }
+  },
+  "required": [
+    "decision_id",
+    "branch_id",
+    "agent_id",
+    "observation_id",
+    "sim_time_us",
+    "base_agent_revision"
+  ],
+  "title": "AgentDecision",
+  "type": "object"
+}

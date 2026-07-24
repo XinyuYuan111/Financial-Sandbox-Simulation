@@ -1,9 +1,9 @@
 # 加密金融平行市场沙盒：Grilling 决策检查点
 
-> 状态：Checkpoint 23
-> 覆盖范围：从设计初版审阅开始，至 Q146 已回答
+> 状态：Checkpoint 29
+> 覆盖范围：从设计初版审阅开始，至 Q176 已回答
 > 建立日期：2026-07-20  
-> 最近增量更新：2026-07-23  
+> 最近增量更新：2026-07-24
 > 原始设计稿：`docs/加密金融平行市场沙盒_基础设施设计方案_v0.1.docx`
 
 ## 1. 文档目的与记录规则
@@ -16,7 +16,7 @@
 - `已澄清`：用户纠正了问题前提，并形成了新的边界。
 - `部分接受/待补充`：只确认了部分内容，仍有子问题未冻结。
 - `未解决`：用户尚未回答，或讨论转向后没有得到最终选择。
-- 对话中 Q12、Q103 和 Q118 都因前提澄清而拆分为 A/B：Q12-A/Q12-B 均为有效问题；Q103-A 与 Q118-A 是撤回的重复提问，Q103-B 与 Q118-B 是对应编号下的有效新问题。因此截至本检查点共有 141 个编号位置、144 条实际提问记录；撤回的重复问题保留审计记录但不计入五题批次。
+- 对话中 Q12、Q103 和 Q118 都因前提澄清而拆分为 A/B：Q12-A/Q12-B 均为有效问题；Q103-A 与 Q118-A 是撤回的重复提问，Q103-B 与 Q118-B 是对应编号下的有效新问题。因此截至本检查点共有 171 个编号位置、174 条实际提问记录；撤回的重复问题保留审计记录但不计入五题批次。
 - 本文是决策日志，不代表已经修改原始设计稿或实现代码。
 
 ## 2. 当前顶层共识
@@ -1509,12 +1509,42 @@
 127. 每个世界事件都唤醒所有 Agent，或通过不可见事件的唤醒行为泄露其存在。
 128. 一次 Agent 决策只保存 Action，而不保存其记忆、信念、策略和预算提案。
 129. 任一内部提案失败就连带拒绝全部独立合法提案，或允许部分提交但不原子记录完整结果。
+130. 同一 Agent 并发运行多个 Strategic Planner 请求，或在等待规划时停止 Reactive Controller。
+131. 让现实 Provider 返回时刻决定 Strategy Plan 的虚拟生效时间。
+132. 因出现任何更新 Observation 就自动废弃计划，或无条件采用已经明确失效的旧计划。
+133. 规划失败后返还已消耗的 CognitiveBudget，或让技术重试重复消耗 Agent 的认知规划次数。
+134. 用一个组件无关的总版本号校验全部 Agent 提案，或发生版本冲突时采用最后写入者获胜。
+135. 强制每次 Agent Decision 恰好产生一个 Action，或用无界通用原子动作批次表达任意行为组合。
+136. 多个 Action 对同一原始可用余额分别校验，或依赖数组位置、随机 UUID 决定资源竞争顺序，而不建立资源预留。
+137. Strategy Plan 更新时静默撤销已经排队的 Action 或已经进入 World 的订单。
+138. 允许同一 Agent Decision 内部使用隐式、循环、缺失或逆向的提案依赖。
+139. 要求保存完整自由文本思维链、无限理由文本，或完全不保存结构化决策依据。
+140. 强制 Planner 一次提示即返回、允许无界工具循环，或让规划工具直接修改 World 和越权读取其他 Agent 或全局真值。
+141. 信任 Provider 输出并直接执行、由宿主静默猜测或改写非法字段，或把提案语义拒绝伪装成技术修复重试。
+142. 等待异步 Planner 后回写原 Agent Decision、让原决定长期保持可变，或让规划结果绕过 Agent Decision 直接修改 Strategy Plan。
+143. 在同一 Observation Packet 上因普通触发与规划结果分别重复运行 Agent，或为内部规划结果伪造世界观察。
+144. 为 Planning Request 的每种结束原因建立独立实体或混用执行阶段与结果，并允许迟到响应重新打开终态请求。
+145. 把计划失效、Provider 失败和超时统统记为 canceled，或让普通观察和保存所需的 Quiescing 自动取消运行中请求。
+146. 为每个重规划触发器创建一个请求、只保留单一 replan 布尔值，或事后把新触发器补写进不可变 Planning Request。
+147. 让 Strategy Plan 使用角色专属类型、自由 JSON、自然语言控制流、动态表达式或可执行代码。
+148. 同一 Agent 同时维护多个活跃计划栈，或通过隐式字段合并、局部 Patch 和最后写入者获胜更新计划。
+149. 允许 Provider 绕过 Reactive Controller 直接输出 World Action Proposal，或在 Planning Result 中夹带 Memory 和 Belief 提案。
+150. 无有效计划时继续增加风险或建立新承诺、把过期计划或角色默认当作隐藏计划，或静默删除 Pending Action 和开放订单。
+151. 把计划采用、Directive guard、动作约束和重规划条件混为通用 conditions，或允许自然语言与隐藏全局状态参与条件判断。
+152. Directive 条件持续成立时在每个观察无条件重复动作，或用现实循环和进程重启控制发射次数而不保存执行游标。
+153. 让发起 Agent 的 Action Receipt 受社交注意力过滤、Receipt 直接修改本地余额、所有普通确认都单独唤醒 Agent，或向其他 Agent 泄露私有执行原因。
+154. 在 Agent 内维护可写影子账本、根据 Memory 或 Receipt 推算可用余额，或账户快照缺失和 revision 冲突时继续建立资源承诺。
+155. 禁止 Agent 创作信息，或允许其把通信内容伪装为系统真值、控制指令或其他主体的真实作者身份。
+156. 让 Planner 读取尚未提交的候选 Memory/Belief，或在依赖提案被拒绝后仍启动请求并保留投机状态。
+157. 任何后续认知 revision 都自动废弃规划，或把任意 Memory 原文复制进 Strategy Plan 以绕过遗忘。
+158. 在首次合法 Observation 前预置显式 Agent 动作，或首个 Planning Request 失败时静默启用隐藏默认计划。
+159. Strategy Plan 预展开并长期排队未来 Action，或让 LLM 决定任意未来执行时间而不在 Wakeup 时重新观察。
 
 ## 18. 尚未解决的问题
 
 ### 18.1 已经提出但尚未回答
 
-当前没有已经提出但尚未回答的问题。Agent 设计 grilling 已恢复并完成 Q142-Q146；如继续逐题质询，从 Q147 开始。
+当前没有已经提出但尚未回答的问题。Agent 设计 grilling 已完成 Q142-Q176；如继续逐题质询，从 Q177 开始。
 
 ### 18.2 已经讨论但尚未冻结
 
@@ -1596,6 +1626,36 @@
 57. **独立 Agent 决策**依赖固定 Agent Decision Pipeline、Agent 私有状态隔离和只由 Observation Packet 触发的确定性 Decision Opportunity；不可见事件不能直接唤醒 Agent。
 58. **Agent 决策审计**依赖不可变 Agent Decision 关联 Observation 和 Agent 状态版本，并完整记录认知、策略、动作与预算提案。
 59. **局部提案失败语义**依赖整体边界先校验、状态所有者分别校验内部提案、失败沿显式依赖传播，并原子保存完整 Decision Outcome。
+60. **单 Agent 规划串行性**依赖每个 branch/Agent 只有一个未结 Planning Request；等待期间 Reactive Controller 使用最后有效计划，新触发器合并等待后续规划。
+61. **规划虚拟时间语义**依赖请求创建时确定 Planning Activation Time；现实返回速度只能改变计算耗时，不能改变虚拟生效顺序。
+62. **计划适用性**依赖显式取消、超时、战略版本替代、有效期和必要前提冲突；普通世界变化和更新 Observation 不自动使计划失效。
+63. **规划预算记账**依赖开始前预留、开始后消耗 CognitiveBudget，以及按实际调用独立计算 ProviderBudget；同一认知决策的技术重试不重复消耗认知次数。
+64. **Agent 状态冲突校验**依赖整体 Agent Revision 用于审计、组件 revision 用于真实依赖；无关组件更新不得制造伪冲突。
+65. **一次决策的动作集合**依赖有界、零到多个且顺序无语义的 Action Proposal Set；跨动作原子性只能由明确领域动作定义，不能由通用数组隐式获得。
+66. **动作资源竞争**依赖确定性准入顺序和按 `action_id` 关联的 Action Reservation；后续动作必须看到已经减少的可用资源。
+67. **Pending Action 生命周期**独立于后续 Strategy Plan；终止依赖显式取消、有效期或声明的 strategy revision，而已经进入 World 的订单必须通过领域动作撤销。
+68. **同一决策内的局部失败传播**依赖带 ID 的 Proposal Dependency 和固定正向阶段顺序；循环、缺失或逆向依赖属于整体结构错误。
+69. **决策可解释审计**依赖有界结构化 Decision Rationale，并与 Provider 原始请求/响应记录和 Agent Memory 分离；三者不能互相替代或自动转化。
+70. **规划期主动查询**依赖同一 Planning Request 内有界、只读且受权限和预算约束的 Planning Tool Loop；中间调用不能产生 World 动作或额外 Agent Decision。
+71. **Planner 输出信任边界**依赖原始响应留存、确定性结构校验和有限修复；成功解析后的提案语义仍由状态所有者校验，宿主不得静默纠正业务含义。
+72. **异步规划审计**依赖原始 Agent Decision 立即关闭且保持不可变；规划成功在生效边界形成引用原决定、请求和相关观察的新 Agent Decision。
+73. **同一观察的决策去重**依赖先完成 World 事件并冻结版本，再聚合普通、定时、风险和规划结果触发器；同一 Agent 与 Observation Packet 最多运行一次 Runtime。
+74. **Planning Request 状态恢复**依赖 `Queued -> Running -> Ready -> Terminal` 的事件化阶段和独立终态 outcome；迟到响应只能记录，不能重开请求。
+75. **Planning Request 取消语义**依赖排队前合并替代或显式授权终止；失败、超时、适用性拒绝和保存 Quiescing 均有不同语义，不能复用 canceled。
+76. **重规划请求抑制**依赖 Agent 规划状态中的有界 Replan Trigger Accumulator、确定性同类合并和触发器快照的原子转移；权威事件日志保留原始事实。
+77. **跨 Agent 统一策略接口**依赖公共 Strategy Plan Envelope、版本化类型 Directive 和 Capability 校验；自由文本不能参与 Reactive Controller 控制流。
+78. **单一策略真值**依赖每个 Agent 只有一个活跃 Strategy Plan revision，并通过声明基线的完整自包含新计划原子替换；历史 revision 不可变。
+79. **规划与动作职责分离**依赖 Provider 只输出候选 Strategy Plan 和 Rationale，Agent Runtime 在生效边界校验后由确定性 Reactive Controller 生成 Action Proposal。
+80. **无计划降级**依赖 Reactive Controller 的版本化 `hold_and_protect` 配置、显式撤销动作和不新增承诺；Background Market Sector 继续提供初始化盘口。
+81. **计划条件确定性**依赖 activation precondition、directive guard、constraint 和 replan condition 的分离语义，以及只引用 Agent 合法观察和私有状态的版本化谓词。
+82. **Directive 去重与节流**依赖声明式 emission mode、稳定 action ID 和按 plan revision 隔离的 Directive Execution Cursor；动作结果不能反向重置已记录发射尝试。
+83. **自身动作反馈**依赖 World 生成不可变 Action Receipt、保证进入发起 Agent 的下一观察，并把异常和状态变化按观察屏障聚合；Receipt 不成为第二状态源。
+84. **Agent 资源决策**依赖 Observation Packet 中保证可见的 Agent Account Snapshot；权威余额、预留、持仓和订单状态仍由 World 所有，缺失或不一致时采用 hold_and_protect。
+85. **Agent 信息创作**依赖通信 Capability、类型化 CommunicationDirective 和 World 校验；Agent-Authored Information 可传播但不成为系统真值或自动信念。
+86. **规划认知输入一致性**依赖 PlanningRequestProposal 先等待所依赖 Memory/Belief 提案提交，再记录实际认知 revision；不采用推测状态。
+87. **认知更新与计划适用性**依赖默认审计引用和显式 activation precondition 的区分；普通认知变化触发后续重规划，不自动废弃当前候选。
+88. **开盘 Agent 公平性**依赖 `sim_time = 0` 首次 Observation 触发每个显式 Agent 的首个规划、统一容量预检和生效前 hold_and_protect；背景部门不进入 Agent Pipeline。
+89. **未来行为重评估**依赖 Directive Wakeup 而非未来 Action 脚本；Wakeup 时重新冻结世界、构造观察并由 Controller 形成动作，已准入 Pending Action 仍遵循独立承诺语义。
 
 ## 20. 潜在矛盾与需要修订的旧表述
 
@@ -1654,6 +1714,45 @@
    - Q143 已澄清：Agent 对外是统一组件边界，对内所有显式 Agent 采用固定决策骨架；差异来自各环节的实现和参数，而不是任意拓扑或角色专属生命周期。
    - Agent Runtime 只协调单个 Agent 的决策循环，不表示 Agent 之间存在 Supervisor、Manager 或 Sub-Agent 管理层级。
 
+13. **现实 LLM 等待与虚拟计划生效的时间冲突**
+   - Q25 已冻结现实 LLM 响应时间不改变虚拟时间，Q147 又允许等待 Planner 时由 Reactive Controller 继续运行旧计划。
+   - Q148 将既有原则细化为 Planning Activation Time：请求创建时确定虚拟生效时刻，提前返回不得提前生效，迟到只增加现实等待或进入超时降级。
+   - Q149 进一步规定计划只在明确失效条件下淘汰，不能因为世界一般性变化或出现更新 Observation 就自动废弃。
+
+14. **Provider 记录与“不保存思维链”的表述冲突**
+   - 既有设计要求 LLM 请求与结构化响应进入不可变运行记录，Q156 又拒绝要求或保存完整自由文本思维链。
+   - 两者对象不同：实际发送的 Provider 请求和实际收到的结构化响应是回放、成本和故障诊断所需的基础设施记录；Decision Rationale 是 Agent 对决定依据的有界结构化说明。
+   - 两者都不自动写入 Agent Memory，也不得借“审计”名义要求 Provider 暴露隐藏思维链；其他 Agent 不能直接访问这些记录。
+
+15. **异步 Planner 与“一次观察一次不可变决定”的边界冲突**
+   - Q145 要求 Agent Decision 不可变，Q147 又允许 Planner 等待期间继续产生即时决定；因此异步结果不能回写仍在等待的原决定。
+   - Q159 规定原决定立即关闭，规划完成后形成引用原决定和 Planning Request 的新 Agent Decision；规划失败只结束请求。
+   - Q144 原先只允许实际 Observation Packet 触发决策，Q160 进一步规定规划结果必须使用最新已保存的合法 Observation Packet，并与同一观察屏障内其他触发器合并；不得伪造观察或对同一 Agent 与 Observation Packet 重复决策。
+
+16. **Q38 的 LLM 动作提案与固定 Planner/Controller 职责冲突**
+   - Q38 为排除任意代码而笼统允许 LLM 输出“声明式策略和动作提案”，可能被解释为 Provider 可以直接构造 World Action Proposal。
+   - Q143 后续冻结了 `Strategic Planner -> Reactive Controller -> Action Proposal` 的固定职责顺序；Q166 据此将旧表述收窄为 Provider 只能输出候选 Strategy Plan、Rationale 和类型化行动意图。
+   - 真正的 Action Proposal 必须由 Reactive Controller 在 Planning Activation Time 基于最新合法观察确定性形成；这属于职责细化，不重新允许任意代码。
+
+17. **“无计划时 Reactive Controller 仍运行”的行为歧义**
+   - Q62 已规定没有有效计划时仍运行 Reactive Controller，但只说明不产生新战略动作，没有明确是否可以交易、发消息或撤销已有承诺。
+   - Q167 将其细化为版本化 `hold_and_protect`：允许认知更新和请求规划，不增加风险或建立新承诺；保护已有承诺必须通过显式 Action 和事件完成。
+   - 这不会静默撤销 Q154 所保护的 Pending Action 或开放订单，也不会把 Background Market Sector 伪装成 Agent 的默认计划。
+
+18. **注意力过滤与自身操作事实的保证可见性**
+   - 既有 Observation Pipeline 要求信息先经过权限、送达和 AttentionProfile，可能被误解为 Agent 也能忽略自己的动作结果、余额和订单状态。
+   - Q170-Q171 将 Action Receipt 和 Agent Account Snapshot 定义为控制者保证可见的私有操作输入；它们不受社交注意力选择，但仍只能通过 Observation Packet 进入 Agent Runtime。
+   - 保证可见不表示自动写入 Memory 或 Belief，也不把 Agent 变成账本状态所有者；World 的 PortfolioState、订单簿和事件日志仍是唯一权威。
+
+19. **信息创作与事实/信念分层的边界**
+   - Q60 允许派生、改写和错误来源标注，Q172 进一步允许 Agent 创作全新信息，容易被误解为内容可以成为系统事实或作者必然相信的信念。
+   - Agent-Authored Information 是由 World 执行后形成的不可变传播对象；真实作者、频道和来源引用可审计，但内容没有真值特权，也不自动进入作者的 Memory 或 Belief。
+   - OfficialPublisher 只表达可验证发布权限，不能为内容提供全局真实性担保；所有接收者仍依据局部观察形成自己的信念。
+
+20. **“声明式计划”与未来行为脚本的边界**
+   - Q38 已拒绝 LLM 可执行代码，Q144 已允许定时唤醒，Q154 又允许已准入 Action 保持独立承诺；三者若未连接，可能误把 Strategy Plan 当作预先排队的动作清单。
+   - Q176 确认既有原则并细化：Plan 只能注册下一次 Directive Wakeup；Wakeup 时重新观察和决定，不能预展开未来 Action；已进入 PendingAction 的动作仍按 Q154 管理。
+
 ## 21. 上下文完整性检查
 
 本次增量更新前，当前会话已经发生过一次上下文压缩，位置在 Q99 之后。Q01-Q99 的完整讨论已在 Checkpoint 12 持久化，因此这些决策可以可靠恢复；Q100-Q109 的语义由压缩后的结构化续接摘要和压缩后用户可见消息恢复，能够可靠恢复最终决策，但无法保证保留每一句原始问答的逐字措辞。
@@ -1675,6 +1774,18 @@ Q135-Q139 的讨论发生在当前可见上下文中，并已由 Checkpoint 21 �
 Q140-Q141 的讨论发生在当前可见上下文中，并因用户决定转入 v0.2 实现规范编制而由 Checkpoint 22 提前持久化。Q140 冻结置信度是 Agent 内部主观尺度而非客观概率；Q141 冻结信念可以在证据遗忘后存续，但不得通过证据引用、BeliefState 或 Archive 绕过遗忘。该提前检查点只包含两题，不伪装为完整五题批次。
 
 Q142-Q146 的讨论发生在当前可见上下文中，并已由 Checkpoint 23 完整持久化。用户先澄清每个初始化 Agent 必须相互独立且 Agent 是待配置组件，随后接受 Agent 对外作为统一组件边界、对内采用固定但实现可替换的决策骨架。Decision Opportunity、Agent Decision 和局部提案失败的原子记录语义均在同一可见上下文中逐题确认。
+
+Q147-Q151 的讨论发生在当前可见上下文中，并已由 Checkpoint 24 完整持久化。Q148 与 Q25 的原则重叠，但新增并冻结了 Planning Activation Time 的可执行语义，因此保留为实现细化而非重新开启既有选择。单 Agent 规划串行性、明确计划失效条件、预算消耗和组件 revision 均逐题确认。
+
+Q152-Q156 的讨论发生在当前可见上下文中，并已由 Checkpoint 25 完整持久化。有界零到多个动作、确定性资源准入和预留、Pending Action 与 Strategy Plan 的独立生命周期、固定正向提案依赖，以及不要求完整思维链的结构化 Decision Rationale 均逐题确认。
+
+Q157-Q161 的讨论发生在当前可见上下文中，并已由 Checkpoint 26 完整持久化。用户在 Q160 先明确确认冻结世界版本绝对正确，随后进一步确认同一 `agent_id + observation_packet_id` 最多产生一次 Agent Decision。其余问题逐题冻结 Planning Tool Loop、Planner 输出校验、异步规划形成关联新决定，以及四阶段 Planning Request 生命周期和独立终态结果。
+
+Q162-Q167 的讨论发生在当前可见上下文中，并已由 Checkpoint 27 完整持久化。Q162-Q166 构成一个完整五题批次；在写入检查点前 Q167 已经提出并回答，因此本检查点一并保存 Q167，但下一正常五题批次仍按 Q167-Q171 计算。Planning Request 取消、重规划触发器聚合、统一 Strategy Plan Schema、完整计划替换、Planner 与 Reactive Controller 职责，以及无计划降级行为均已确认。
+
+Q167-Q171 构成一个完整五题批次，并已由 Checkpoint 28 完整持久化。Q167 已在上一检查点提前保存，本次补齐 Q168-Q171；没有重复计入编号或实际提问总数。四类 Plan Condition、Directive Execution Cursor、Action Receipt 和 Agent Account Snapshot 均逐题确认。
+
+Q172-Q176 的讨论发生在当前可见上下文中，并已由 Checkpoint 29 完整持久化。Agent 可以在通信 Capability 边界内创作不具真值特权的信息；规划只读取已提交的认知状态，认知变化仅在显式前提下影响计划采用；首次观察触发初始规划；Q176 经回查被确认为既有声明式计划、定时触发和独立 Pending Action 原则的实现细化，而非新的架构重复选择。
 
 已知的非上下文限制：最初读取 Word 设计稿时，当前环境缺少 LibreOffice，无法做逐页视觉渲染；正文、标题、49 个表格、页眉页脚和嵌入对象计数已通过结构化方式读取。这不影响本决策日志对当前对话的恢复，但原设计稿的页面视觉布局未被核验。
 
@@ -1703,11 +1814,17 @@ Q142-Q146 的讨论发生在当前可见上下文中，并已由 Checkpoint 23 �
 - Checkpoint 21：Q135-Q139 均已回答并写入；冻结 Agent 对自身记忆的受限主动检索、CognitiveBudget 检索消耗、不泄露遗忘状态的失败语义、Memory 与 Belief 分离，以及竞争信念并存和仅对完备互斥集合归一化的规则。
 - Checkpoint 22（提前检查点）：Q140-Q141 均已回答并写入；冻结 BeliefState 置信度的主观、不可跨 Agent 直接比较语义，以及证据记忆遗忘后信念可存续但不得恢复已遗忘证据的边界。由于用户决定开始生成 v0.2 实现规范，本检查点在两题后提前建立。
 - Checkpoint 23：Q142-Q146 均已回答并写入；冻结 Agent 的独立可配置组件边界、固定但实现可替换的 Agent Decision Pipeline、Observation Packet 驱动的确定性 Decision Opportunity、统一可回放的 Agent Decision，以及内部提案独立校验、依赖失败局部传播和完整 Decision Outcome 原子记录。
+- Checkpoint 24：Q147-Q151 均已回答并写入；冻结单 Agent 单 Planning Request、等待期间继续使用旧 Strategy Plan、请求时确定 Planning Activation Time、按明确失效条件判断计划适用性、规划开始后的预算消耗，以及整体 Agent Revision 与组件 revision 分工。
+- Checkpoint 25：Q152-Q156 均已回答并写入；冻结有界零到多个 Action Proposal、确定性资源准入与 Action Reservation、Pending Action 的独立承诺语义、固定正向 Proposal Dependency，以及与 Provider 原始记录和 Memory 分离的结构化 Decision Rationale。
+- Checkpoint 26：Q157-Q161 均已回答并写入；冻结同一请求内有界只读的 Planning Tool Loop、不可信 Planner 输出的确定性校验和有限修复、异步规划完成后形成关联的新 Agent Decision、同一 Observation Packet 的触发聚合与单次决策，以及四阶段 Planning Request 生命周期和独立终态 outcome。
+- Checkpoint 27：Q162-Q166 完成正常五题批次，Q167 作为下一批首题也已回答并一并写入；冻结 Planning Request 的明确取消边界、有界 Replan Trigger Accumulator、统一版本化 Strategy Plan Envelope、单一活跃 revision 的完整替换、Provider 只产出候选计划而由 Reactive Controller 形成 Action，以及无计划时的 `hold_and_protect`。
+- Checkpoint 28：Q167-Q171 完成正常五题批次；Q167 已由上一检查点提前保存，本次补齐四类 Plan Condition、Directive emission policy 与执行游标、发起 Agent 保证可见的 Action Receipt，以及不复制 World 账本的 Agent Account Snapshot。
+- Checkpoint 29：Q172-Q176 均已回答并写入；冻结受通信 Capability 约束的 Agent-Authored Information、规划只读取已提交认知状态、认知 revision 的审计与显式采用前提边界、首次 Observation 的初始规划触发，以及以 Directive Wakeup 而非未来 Action 脚本表达策略节奏。Q176 同时确认是既有原则的实现细化。
 
 ## 23. 后续增量更新节奏
 
 - Agent 设计 grilling 当前进行中，一次只问一个问题。
-- 下一题从 Q147 继续。
+- 下一题从 Q177 继续。
 - 正常情况下每完成 5 个有效问题的回答就增量更新本文；因阶段切换或用户明确要求，可以建立未满五题的提前检查点，并必须显式标注。
 
 ## 24. Agent 组件与决策流水线
@@ -1757,3 +1874,287 @@ Q142-Q146 的讨论发生在当前可见上下文中，并已由 Checkpoint 23 �
 - **状态**：`已接受`
 - **被拒方案**：任一内部提案失败就拒绝全部其他提案；或允许部分提案生效但不保存完整的接受与拒绝结果。
 - **拒绝原因**：前者会让次要认知错误阻断独立合法行为，后者会产生无法解释和无法恢复的部分决策状态。
+
+## 25. Agent 规划并发、时间、适用性与版本
+
+### Q147：同一个 Agent 是否允许同时进行多个战略规划请求？
+
+- **问题**：Agent 等待一次 LLM Strategic Planner 返回时又出现价格、私聊或公告触发器，是否并发启动更多 Planner 请求、完全暂停 Agent，还是聚合后续重规划需求？
+- **推荐答案**：同一 `branch_id + agent_id` 最多只有一个未结 Strategic Planner 请求；等待期间 Reactive Controller 继续使用最后有效 Strategy Plan。新增触发器合并为待处理重规划原因，当前请求完成或失败后再决定是否立即启动下一次规划。不同 Agent 仍可并发等待 Provider。
+- **用户最终回答**：“我确认。”
+- **状态**：`已接受`
+- **被拒方案**：同一 Agent 并发规划并竞争修改 Memory、Belief 或 Strategy Plan；等待 Planner 时停止该 Agent 的全部即时反应。
+- **拒绝原因**：前者会产生自我状态竞争和不可解释覆盖，后者会把现实 Provider 延迟错误映射为 Agent 在虚拟世界中完全失去反应能力。
+
+### Q148：现实 Planner 返回时间是否决定 Strategy Plan 的虚拟生效时间？
+
+- **问题**：同一规划请求在不同 Provider 延迟下返回时，能否按现实返回时刻立即生效？
+- **推荐答案**：Planning Request 创建时根据请求虚拟时间和 Agent 的 planning latency 确定 Planning Activation Time。提前返回的结果等待该时刻；到达该时刻仍未返回时，虚拟时间停在相应决策边界等待现实结果或超时，现实等待不推进虚拟时间；超时后记录降级并继续旧计划。
+- **用户最终回答**：接受，并指出该原则此前应已提及，要求核对当前仓库是否实现。
+- **回查结果**：Q25 已冻结现实 LLM 响应时间不能改变虚拟时间，Q26/Q27/Q62 分别覆盖观察版本、动作排序和超时降级；本题新增的是请求时确定 Planning Activation Time 的实现语义。当前代码没有 Agent Runtime、Planning Request、Strategy Plan 状态、生效屏障或对应测试，仍由 FixtureStrategies 直接产生动作。
+- **状态**：`已确认既有原则并细化；代码未实现`
+- **被拒方案**：Provider 提前返回就提前生效，或现实延迟直接推后虚拟事件顺序。
+- **拒绝原因**：会让网络和模型速度改变市场路径，违反既有虚拟时间契约。
+
+### Q149：预定生效时刻到达后，如何判断旧观察产生的计划是否仍可采用？
+
+- **问题**：等待 Planner 期间世界已经变化，是否只要出现更新 Observation 就作废旧计划，还是无条件接受返回结果？
+- **推荐答案**：只按明确条件淘汰：请求已取消、超时或不再是当前请求；战略状态版本已被替代；计划有效期结束；或计划必要前提与 Agent 最新合法 Observation 明确冲突。普通市场变化或存在更新 Observation 本身不自动使计划失效；有效计划在预定虚拟时刻生效，等待期间积累的触发器可启动下一轮规划。
+- **用户最终回答**：“我接受。”
+- **状态**：`已接受`
+- **被拒方案**：任何新观察都令计划失效；或无视取消、超时、版本、有效期和前提冲突而采用旧计划。
+- **拒绝原因**：前者会使高频市场中的 LLM 计划几乎永远无法生效，后者会执行已经明确不适用的战略状态。
+
+### Q150：规划失败、超时或过期时是否消耗 CognitiveBudget？
+
+- **问题**：未得到可采用计划时是否返还 Agent 的规划额度，技术性重试是否再次消耗认知次数？
+- **推荐答案**：Planning Request 入队时预留预算；实际规划开始前取消或合并则释放预留，开始后无论成功、失败、超时或过期都消耗 CognitiveBudget。同一 ObservationPacket 的技术性重试不额外消耗 Agent 规划次数，但每次真实 Provider 调用都按实际 Token 和费用消耗 ProviderBudget。全部预留、消耗、释放和失败原因进入 Decision Outcome。
+- **用户最终回答**：“是的我接受。”
+- **状态**：`已接受`
+- **被拒方案**：失败或被拒后返还已经使用的认知机会；技术重试同时重复扣除 CognitiveBudget；把 Provider 实际成本混入 Agent 认知预算。
+- **拒绝原因**：退款会产生实际上无限的规划机会，重复扣除会把基础设施故障解释为 Agent 进行了多次独立认知决策。
+
+### Q151：Agent 状态使用单一版本，还是组件独立版本？
+
+- **问题**：Planner 等待期间的 Memory 或即时动作变化，是否应因为一个总版本号变化而让仅依赖 Strategy 状态的计划发生冲突？
+- **推荐答案**：使用整体 Agent Revision 作为审计游标，同时由 Memory、Belief、Strategy、Attention 和 Budget 等可变认知组件维护自己的 revision。Agent Decision 只声明实际依赖和准备修改的组件版本；无关组件变化不制造冲突，组件版本不匹配时只拒绝对应提案及其依赖项；禁止最后写入者获胜。整体 revision 用于历史、Checkpoint 和 Agent View，不成为第二套状态真值。
+- **用户最终回答**：“我确认。”
+- **状态**：`已接受`
+- **被拒方案**：用单一总版本校验所有提案；完全不做版本校验；发生冲突时覆盖较新的组件状态。
+- **拒绝原因**：单一版本会造成大量伪冲突，无版本或最后写入者获胜则会丢失已经提交的认知变化。
+
+## 26. 动作集合、资源承诺、提案依赖与决策理由
+
+### Q152：一次 Agent Decision 可以提出多少个 Action？
+
+- **问题**：Reactive Controller 在同一次决策中只能产生一个动作、可以任意产生无限动作，还是应输出一个受预算和 Schema 约束的动作集合？
+- **推荐答案**：一个 Agent Decision 包含有界的零到多个独立 Action Proposal；不行动是合法决定。列表顺序没有执行语义，每个 Action 都有自己的 ID、预期执行时间、有效期和依赖。通用 Agent 层不提供任意动作批次原子性；确实需要原子语义时，由领域动作明确表达，例如 `ReplaceOrder`，而不是给 Action 数组附加通用 `all_or_nothing`。
+- **用户最终回答**：“我确认。”
+- **状态**：`已接受`
+- **被拒方案**：强制每次恰好一个 Action；允许无界动作列表；把任意多个动作包装为通用原子批次。
+- **拒绝原因**：恰好一个动作不能表达合法的不行动或多个独立意图，无界列表无法约束预算和负载，通用原子批次会把不同状态所有者和执行时刻错误地绑成一个事务。
+
+### Q153：同一次决策中的多个 Action 竞争同一资源时如何裁决？
+
+- **问题**：多个买单或转账都可能单独通过余额校验、合计却超过可用资产时，World 应按什么顺序准入并避免重复占用？
+- **推荐答案**：按 `(expected_execution_time, priority, stable_tie_break_key)` 形成确定性准入顺序。每个动作在准入时按最大可能敞口建立与 `action_id` 关联的 Action Reservation，后续动作看到扣除预留后的可用资源；执行时重新校验并消耗实际金额，取消、过期或失败时释放剩余预留。预留、消费和释放全部事件化并可审计。
+- **用户最终回答**：“我确认。”
+- **状态**：`已接受`
+- **被拒方案**：每个动作都针对同一原始余额独立校验；按数组位置、到达先后或随机 UUID 决定资源竞争；不保存预留生命周期。
+- **拒绝原因**：会产生超额承诺、现实并发竞态或不可复现结果，也无法解释资源为何暂时不可用。
+
+### Q154：Strategy Plan 更新时，已经排队的 Action 是否自动取消？
+
+- **问题**：新计划替代旧计划后，由旧计划产生但尚未执行的动作，以及已经进入订单簿的订单，应否被系统静默撤销？
+- **推荐答案**：不得因为 Strategy Plan 变化而隐式取消。Pending Action 是独立承诺，只能由它声明的 strategy revision 依赖、显式取消或有效期终止；没有声明该依赖的动作继续按自身条件调度。已经成为 World 事实的开放订单不再是 Pending Action，必须通过 `CancelOrder` 等领域动作撤销。Agent View 明确区分待执行动作、开放订单和已完成事实。
+- **用户最终回答**：“我确认。”
+- **状态**：`已接受`
+- **被拒方案**：计划替换时静默清空该 Agent 的全部待执行动作或开放订单；把订单簿中的订单继续视为 Agent 内部计划状态。
+- **拒绝原因**：会在没有动作和事件的情况下修改 World，破坏审计、回放和市场参与者可观察到的承诺语义。
+
+### Q155：同一 Agent Decision 内部的提案如何声明依赖？
+
+- **问题**：Memory、Belief、StrategyPlan 和 Action 提案之间是依靠数组顺序、隐式推断，还是使用可验证的显式依赖图？
+- **推荐答案**：每个提案具有稳定 ID 和显式 dependency IDs，并只允许沿固定阶段正向依赖：`MemoryProposal -> BeliefProposal -> StrategyPlanProposal -> ActionProposal`。阶段可以没有提案，独立提案无需虚构依赖；循环、缺失引用或逆向依赖属于整个 Agent Decision 的结构错误。合法图中某个提案失败时，只沿显式依赖向下游传播，其他独立提案继续校验。
+- **用户最终回答**：“我接受。”
+- **状态**：`已接受`
+- **被拒方案**：依靠数组位置或运行时猜测依赖；允许循环、跨阶段逆向依赖；任一局部失败无条件拒绝全部提案。
+- **拒绝原因**：隐式或任意依赖使结果受实现遍历顺序影响，循环无法形成清晰提交语义，全局连带失败则违背 Q146 已冻结的局部传播边界。
+
+### Q156：是否保存 Agent 的完整思维链来解释决定？
+
+- **问题**：为了回放和审计，是否要求 LLM 或规则 Agent 输出并保存完整自由文本推理过程，还是只保存结构化的决定依据？
+- **推荐答案**：不要求也不保存完整自由文本思维链。Agent Decision 保存有界、结构化的 Decision Rationale，包括目标摘要、evidence IDs、belief IDs、strategy revision、风险标记、不确定性、action proposal IDs 和简短 `stated_reason`。实际 Provider 请求与结构化响应另行保存，用于回放、成本和故障诊断，但不自动写入 Memory，也不向其他 Agent 暴露。规则、Replay 和 LLM 实现都使用同一 Rationale Schema。
+- **用户最终回答**：“我确认。”
+- **状态**：`已接受`
+- **被拒方案**：要求或持久化完整隐藏思维链；允许无限自由文本理由替代结构化引用；只保存 Action 而没有任何决策依据。
+- **拒绝原因**：完整思维链不是稳定接口，会增加敏感信息、存储和 Provider 耦合；无限文本不可可靠校验；完全没有结构化依据又无法解释行为与可见证据、信念和策略的关系。
+
+## 27. 规划工具、输出校验、异步完成与请求生命周期
+
+### Q157：一次 Planning Request 内，Strategic Planner 能否进行多轮记忆检索？
+
+- **问题**：Planner 必须用一次 Prompt 和一次 Response 完成规划，还是可以在同一 Planning Request 中多轮查询自身记忆和状态？
+- **推荐答案**：允许有界 Planning Tool Loop。工具只读，并且只能返回该 Agent 原本有权访问的 Memory、Belief、Strategy、账户和观察状态；不得读取 Archive、其他 Agent 私有状态或全局真值，也不得直接提交 Action 或修改 World。每次检索消耗相应 CognitiveBudget，每次真实 Provider 调用消耗 ProviderBudget；轮数、调用数和返回量均有硬上限。中间调用不产生 Decision Opportunity 或 Agent Decision，最终结构化输出才形成一次规划结果，全部请求与工具结果进入审计记录。
+- **用户最终回答**：“我接受。”
+- **状态**：`已接受`
+- **被拒方案**：强制所有规划一次提示完成；允许无界自主工具循环；让规划工具越权读取或直接执行世界动作。
+- **拒绝原因**：一次提示不足以按需使用有限记忆，无界循环使成本与终止不可控，越权工具则绕过 Observation 和 World 执行边界。
+
+### Q158：LLM Planner 返回格式错误或引用不存在对象时如何处理？
+
+- **问题**：Provider 输出是否可以被信任并直接执行，宿主是否可以自动修正非法字段，还是必须建立显式校验和失败边界？
+- **推荐答案**：Provider 原始响应先原样保存，再经过确定性的 Planner Output Validation。无法解析、整体 Schema 错误、禁止字段或未闭合工具调用不得形成 Agent Decision；同一 Planning Request 内只允许有限格式修复，并向 Provider 提供机器可读错误。修复不重复消耗 CognitiveBudget，但每次实际调用继续消耗 ProviderBudget，且不改变 Planning Activation Time。仍无效则请求失败并沿用最后有效计划。成功解析后的各提案再按 Q146 分别进行语义校验；提案被拒绝不得触发 LLM 偷偷改写。宿主禁止补造 ID、删除非法字段、替换金额或猜测 Action。
+- **用户最终回答**：“我接受。”
+- **状态**：`已接受`
+- **被拒方案**：直接信任 Provider；宿主静默纠错或丢弃非法字段后继续；无限修复；把业务提案拒绝伪装为技术重试。
+- **拒绝原因**：会让不可验证的猜测进入权威状态，掩盖真实模型输出与失败成本，并破坏相同输入下的基础设施确定性。
+
+### Q159：异步规划结果应回写原 Agent Decision，还是形成新的 Agent Decision？
+
+- **问题**：原始决策触发 Planner 后，Reactive Controller 仍会继续产生其他决定；Planner 完成时是否修改原记录、直接改写 Strategy Plan，还是建立一个关联的新决定？
+- **推荐答案**：原始 Decision Opportunity 立即产生并关闭第一个不可变 Agent Decision，其中可以包含即时认知和动作提案以及 PlanningRequestProposal。请求中间查询和修复不产生额外决定。到达 Planning Activation Time 且结果通过校验后，基于 Agent 当时最新合法 Observation Packet 产生第二个 Agent Decision，引用 `planning_request_id`、原始 `decision_id`、规划所用观察和生效时采用的观察；它可以包含 StrategyPlanProposal 和明确依赖该计划的 Action Proposal。失败、超时或失效只记录请求终态和预算，不伪造空决定。
+- **用户最终回答**：“我接受。”
+- **状态**：`已接受`
+- **被拒方案**：在 Provider 返回后回写或补丁修改原 Agent Decision；让原决定在现实等待期间保持可变；规划结果绕过 Agent Decision 直接修改 Strategy Plan。
+- **拒绝原因**：会破坏不可变审计和 Decision Outcome 原子性，也无法与等待期间产生的后续决定建立明确顺序。
+
+### Q160：规划结果生效时与普通观察触发相遇，Agent 运行一次还是两次？
+
+- **问题**：同一观察屏障既有价格、消息或风险触发器，又有 Planning Request 生效结果时，是否分别运行 Agent Runtime？
+- **推荐答案**：先完成当前优先级阶段的 World 事件并冻结世界版本，再为 Agent 保存最新合法 Observation Packet；普通观察、定时、风险和规划结果等触发器聚合为有序、可审计的 `decision_triggers`。同一 `agent_id + observation_packet_id` 最多运行一次 Runtime 并产生一个 Agent Decision。没有其他触发时规划结果可以触发该决定，但仍使用实际 Observation Packet。后续动作若改变 World，必须形成新世界版本和 Observation Packet 后才能再次决策，即使虚拟时间戳相同。
+- **用户最终回答**：先确认“冻结世界版本绝对是正确的”；在进一步区分输入冻结与调用去重后，确认“同一 `agent_id + observation_packet_id` 最多产生一次 Agent Decision”。
+- **状态**：`已澄清并接受`
+- **被拒方案**：对同一 Agent 和 Observation Packet 分别运行普通决策与规划完成决策；按 Provider 返回顺序运行；为内部规划结果制造虚假世界观察。
+- **拒绝原因**：会让同一世界输入多次修改 Agent 状态和预算，重新引入隐含执行顺序，或破坏 Observation 的事实语义。
+
+### Q161：Planning Request 应采用什么生命周期？
+
+- **问题**：请求执行阶段和结束原因应混在大量状态中，还是以最小正交模型分别表达？
+- **推荐答案**：生命周期采用 `Queued -> Running -> Ready -> Terminal`。Queued 表示请求已接受并预留 CognitiveBudget；Running 表示 Provider 或工具循环已开始且认知预算正式消耗；Ready 表示已保存通过结构校验的结果但尚未到 Planning Activation Time；Terminal 表示状态不再变化。Terminal 独立记录 `applied`、`rejected`、`failed`、`timed_out` 或 `canceled` outcome。所有转换事件化；终态后的迟到响应只记录为 `late_ignored`，不能重新打开请求或修改 Agent 状态。
+- **用户最终回答**：“我接受这个更改。”
+- **状态**：`已接受`
+- **被拒方案**：为每种失败原因建立 Planning Request 子实体；把执行阶段和结束原因混成互斥状态；允许迟到响应重开终态请求。
+- **拒绝原因**：状态爆炸会重复相同生命周期语义，混合阶段与结果不利于查询和恢复，终态重开则破坏确定性和预算记账。
+
+## 28. 规划取消与聚合、计划结构及 Controller 边界
+
+### Q162：谁可以取消 Planning Request，什么情况下允许取消？
+
+- **问题**：普通新观察、保存、计划失效、Provider 失败和明确终止是否都应使用同一种取消语义？
+- **推荐答案**：Queued 请求可以在实际开始前被更新规划需求确定性合并替代，旧请求以 `Terminal/canceled` 和 `coalesced_before_start` 原因结束、释放预留预算，替代请求引用旧请求。Running 或 Ready 请求不因普通观察和新触发器自动取消；只有授权的 `CancelPlanningRequest`、Agent 终止或分支终止可以明确取消。保存所需 Quiescing 等待已有请求结算；revision 冲突或计划过期使用 `rejected`，Provider 故障使用 `failed`，超时使用 `timed_out`。取消记录请求者、原因、虚拟时间和 request ID；已开始规划不返还 CognitiveBudget，迟到响应只记为 `late_ignored`。
+- **用户最终回答**：“我接受。”
+- **状态**：`已接受`
+- **被拒方案**：普通新观察自动取消运行中请求；保存时取消请求；把失效、失败、超时和明确取消统一记成 canceled；让迟到响应改变终态。
+- **拒绝原因**：会混淆业务适用性、基础设施故障和授权控制行为，也可能破坏 Q46 的静止保存与预算审计。
+
+### Q163：Planning Request 运行期间的新重规划触发器如何合并？
+
+- **问题**：市场事件洪峰期间，是为每个触发器创建请求、只保存一个布尔标记，还是维护有界且可解释的待处理原因？
+- **推荐答案**：在 Agent 规划状态中维护有界 Replan Trigger Accumulator，不创建新服务。每项记录 trigger type、semantic key、来源事件、首次与最近时间、最近 Observation Packet、严重度、次数和过期时间；相同语义键确定性合并，不同原因并存。超限时按确定性规则合并低严重度同类项，原始事实仍在权威事件日志。当前请求终止后按最新合法观察重新检查，预算允许时至多创建一个新请求，并将采用的触发器快照原子转移；只有创建成功才移除，过期或不成立则记录 dismissal reason，新请求创建后到达的触发器留给下一轮。
+- **用户最终回答**：“我接受。”
+- **状态**：`已接受`
+- **被拒方案**：每个触发器立即创建独立请求；只保存 `replan_pending=true`；无界累积原始事件；创建失败时丢失触发器；事后补写不可变请求。
+- **拒绝原因**：分别会制造请求风暴、丢失原因、造成无界状态、静默漏掉规划需求或破坏请求审计边界。
+
+### Q164：Strategy Plan 是自由 JSON，还是版本化声明式结构？
+
+- **问题**：Q38 所称“声明式策略”是否允许自由字段和自然语言控制流，不同角色是否需要不同计划类型？
+- **推荐答案**：所有 Agent 使用统一、版本化 Strategy Plan Envelope，至少包含 plan、schema、agent 和 strategy revision、来源 Observation Packet、有效范围、目标、必要前提、约束、Directive 与重规划条件。所有行为字段必须结构化；自然语言只进入 Decision Rationale。Directive 是版本化的带标签封闭联合，能力由 Capability 校验，Reactive Controller 只解释已注册类型。未知类型、字段错误或 Capability 不匹配拒绝 StrategyPlanProposal；新增 Directive 必须升级 Schema，禁止自由 JSON、动态表达式、脚本和角色专属计划类。
+- **用户最终回答**：“我接受。”
+- **状态**：`已接受`
+- **被拒方案**：自由 JSON；自然语言条件参与控制流；动态表达式或脚本；每种角色一套 Strategy Plan 类；遇到未知 Directive 时由宿主猜测。
+- **拒绝原因**：会绕过类型、权限和版本边界，并把统一 Agent Pipeline 重新分裂成无法稳定回放的角色实现。
+
+### Q165：一个 Agent 可以同时拥有多个活跃 Strategy Plan 吗？新计划如何更新旧计划？
+
+- **问题**：不同领域分别维护计划栈并做隐式合并，还是用一个包含多种 Directive 的完整权威计划？
+- **推荐答案**：每个分支中的每个 Agent 只有一个活跃 Strategy Plan revision。新 StrategyPlanProposal 声明 `based_on_strategy_revision` 并输出完整、自包含计划；要保留的旧 Directive 必须显式复制，未出现的 Directive 在新 revision 生效后失效。新计划通过校验后于 Planning Activation Time 原子替换，失败时最后有效旧计划继续；禁止隐式字段合并、局部 Patch 和最后写入者获胜。历史 revision 不可变；计划替换不自动取消 Pending Action 或开放订单。
+- **用户最终回答**：“我接受。”
+- **状态**：`已接受`
+- **被拒方案**：同一 Agent 多个活跃计划栈；宿主合并新旧字段；局部 Patch；最后写入字段获胜；计划替换时静默撤销既有承诺。
+- **拒绝原因**：会要求额外的计划优先级、覆盖和冲突体系，制造多个策略真值，并违背版本和 Q154 的独立承诺语义。
+
+### Q166：Strategic Planner 的 Provider 能否直接输出 Action Proposal？
+
+- **问题**：Q38 曾笼统允许 LLM 输出策略和动作提案，是否意味着 Provider 可以绕过 Q143 冻结的 Reactive Controller 职责？
+- **推荐答案**：不能。Provider 只输出包含完整候选 Strategy Plan、结构化 Rationale 和引用的 Planning Result；它可以通过类型化 Directive 表达行动意图，但不得决定 action ID、调度、预留或 World Action 参数。Planner Output Validation 先验证候选结果；到达生效边界后 Agent Runtime 使用最新合法观察检查适用性，再由确定性 Reactive Controller 生成 Action Proposal，并显式依赖 StrategyPlanProposal。Memory 和 Belief 提案也不得夹带在 Planning Result 中。Q38 收窄为允许结构化策略和行动意图，不允许 LLM 直出 World Action。
+- **用户最终回答**：“我同意。”
+- **状态**：`已接受并收窄 Q38`
+- **被拒方案**：Provider 直接输出完整 Agent Decision 或 World Action Proposal；Provider 决定资源预留与调度；规划结果夹带 Memory 或 Belief 提案。
+- **拒绝原因**：会绕过固定 Pipeline、最新观察、确定性动作生成和各状态所有者的提案校验边界。
+
+### Q167：没有有效 Strategy Plan 时，Reactive Controller 可以做什么？
+
+- **问题**：Q62 所称“无计划时仍运行 Controller”是否允许继续交易、通信或采用角色默认行为？
+- **推荐答案**：采用 Reactive Controller 的版本化 `hold_and_protect` 配置，不伪造默认 Strategy Plan。Agent 仍可更新 Memory、Belief 并请求规划，但不得新建风险敞口、转移资产、发布信息、主动通信或建立其他新承诺。Controller 可以通过正式 `CancelOrder` 撤销自身不再受有效策略支持的开放订单，也可正式取消显式 strategy revision 依赖失效的 Pending Action；不得静默删除。每个无计划动作记录 fallback policy 版本、原因和 Decision Rationale。首个计划生效前显式 Agent 不自主交易，初始盘口仍由 Background Market Sector 提供。
+- **用户最终回答**：“我接受。”
+- **状态**：`已接受`
+- **被拒方案**：无计划时继续增加风险或建立新承诺；沿用过期计划、Provider 自由文本或角色默认作为隐藏策略；静默清除待执行动作和开放订单。
+- **拒绝原因**：会引入未审计的第二策略来源，或通过无事件状态修改破坏市场承诺、回放和 Q154。
+
+## 29. 计划条件、Directive 执行状态与 Action 反馈
+
+### Q168：Strategy Plan 中不同“条件”分别在什么时候生效？
+
+- **问题**：计划采用、Directive 执行、动作安全和重规划是否共用一个含糊的 conditions 数组？
+- **推荐答案**：分成四种版本化类型。`activation_preconditions` 只在 Planning Activation Time 基于最新合法 Observation Packet 检查，失败则拒绝 StrategyPlanProposal；`directive_guards` 每次 Decision Opportunity 检查，不成立只跳过对应 Directive；`constraints` 限制 Controller 可以提出的 Action，并由 World 在准入和执行时独立重验权威规则，单个动作违反只拒绝动作；`replan_conditions` 只向 Replan Trigger Accumulator 加入原因，不自动取消当前计划。`valid_until` 由确定性虚拟时间事件处理，到期后采用 hold_and_protect。Capability 撤销使不兼容 Directive 不能产生动作并触发重规划，但不改写计划历史。所有谓词只能引用 Agent 合法观察和私有状态，禁止自然语言和隐藏全局状态。
+- **用户最终回答**：“我接受。”
+- **状态**：`已接受`
+- **被拒方案**：四类条件共用通用数组；guard 不成立就废弃整个计划；replan condition 自动取消计划；自然语言或全局隐藏状态参与判断。
+- **拒绝原因**：会混淆采用、执行、安全和重规划的不同生命周期，并绕过局部观察和确定性解释边界。
+
+### Q169：同一 Directive 在连续多个观察中满足条件时，是否每次都产生 Action？
+
+- **问题**：如何区分“策略持续成立”和“应该再次执行动作”，并防止重复挂单？
+- **推荐答案**：Directive 必须声明 `directive_id`、emission mode、cooldown/interval 和 max emissions。第一版只支持 `once`、`on_guard_transition`、`periodic` 和受 cooldown 限制的 `while_guarded`。Reactive Controller 另行维护按 `plan_revision + directive_id` 隔离的 Directive Execution Cursor，记录最近观察、guard 状态、发射次数、最近与下次可用虚拟时间和 action IDs；它进入 revision、checkpoint、branch 和 replay，但不修改不可变 Plan。同一 Observation Packet 不重复评估；action ID 由 decision、directive 和 emission ordinal 确定生成。结构合法的决定中一旦发射提案就推进 cursor，World 后续拒绝不触发即时无限重试；整个决定结构失败时不推进。新 plan revision 使用新游标命名空间。
+- **用户最终回答**：“我接受。”
+- **状态**：`已接受`
+- **被拒方案**：guard 持续成立就每次观察重复发射；由现实循环次数或进程生命周期控制次数；进程重启清零；计划替换后沿用旧 cursor。
+- **拒绝原因**：会产生重复动作、重启依赖和不可回放行为，也会把不可变 Strategy Plan 变成隐藏可变状态。
+
+### Q170：Action 的执行结果怎样返回给发起 Agent？
+
+- **问题**：动作确认、拒绝、成交和失败是否通过普通社交注意力过滤，或者直接修改 Agent 的本地状态？
+- **推荐答案**：World 为每个 Action 生成不可变 Action Receipt，关联 action、proposal、decision、outcome、reason、调度与执行时间、权威事件和结果状态引用，并保证进入发起 Agent 的下一份 Observation Packet。它不自动写入 Memory/Belief，也不是第二套状态。普通 accepted/queued 确认不单独唤醒 Agent；rejected、failed、expired、canceled、成交、部分成交和余额/风险变化以 `own_action_outcome` 触发器按观察屏障聚合。其他 Agent 只能看到正常公开后果，看不到私有拒绝、预留和 Receipt；无计划时 Receipt 也只能触发 hold_and_protect 范围内的动作。
+- **用户最终回答**：“我接受。”
+- **状态**：`已接受`
+- **被拒方案**：自身结果受社交 AttentionProfile 丢弃；Receipt 直接改写 Agent 本地余额；每个普通确认单独唤醒；向其他 Agent 暴露私有原因和预留。
+- **拒绝原因**：前者使 Agent 无法管理自身承诺，直接改写绕过 Observation，过度唤醒造成负载，而私有泄露破坏信息边界。
+
+### Q171：Agent 是否维护自己的余额、持仓和订单副本？
+
+- **问题**：Agent 为了快速决策是否需要一份可写私有账本，还是每次从 World 的权威状态获得只读快照？
+- **推荐答案**：World 的 PortfolioState 和订单状态是唯一权威，Agent 不维护可写影子账本。ObservationService 在每个 Decision Opportunity 把 Agent 所控制钱包的 portfolio revision、可用和预留余额、持仓、开放订单、Pending Action 与风险状态引用写入 Agent Account Snapshot；对控制者保证可见且不受 AttentionProfile 过滤。Planner 和 Controller 只能依赖该快照，不能用旧 Memory、Receipt 或自算余额下单。Receipt 与快照不一致时以 World 为准并产生 `state_reconciliation_failure`；快照缺失或版本不一致时采用 hold_and_protect。其他 Agent 只见正常公开状态。
+- **用户最终回答**：“我接受。”
+- **状态**：`已接受`
+- **被拒方案**：Agent 内维护可写余额与订单副本；从历史 Receipt 或 Memory 推算当前可用资源；快照失败时继续承诺；向其他 Agent 暴露私有账户快照。
+- **拒绝原因**：会创建与 World 分叉的第二账本、导致超额承诺，并破坏权限与隐私边界。
+
+## 30. 信息创作、规划认知输入与策略节奏
+
+### Q172：Agent 能否创作新信息，还是只能转发已观察到的 InformationItem？
+
+- **问题**：Agent 的通信行为是否只能转发既有信息，还是可以产生新的公告、观点或私聊内容？
+- **推荐答案**：允许具备通信 Capability 的 Agent 通过类型化 CommunicationDirective 创作有界 `message_payload`；它只是内容数据而不是控制代码。Reactive Controller 将其转为 `PublishInfo` 或 `SendDirectMessage` Action Proposal，World 校验频道权限、接收关系、频率、长度、预算和调度。成功后创建不可变 Agent-Authored Information，记录真实作者、虚拟时间、频道和可选 `derived_from_info_ids`。内容可未经证实、错误或偏向，但系统不向普通 Agent 注入真值标签；OfficialPublisher 只提供可验证发布标记，不能伪造他人的真实作者。发送不自动写入作者 Memory/Belief，无有效计划时 hold_and_protect 禁止主动通信。
+- **用户最终回答**：“我接受。”
+- **状态**：`已接受`
+- **被拒方案**：只允许转发；允许内容成为系统事实或控制指令；发送即自动成为作者信念；伪造其他 Agent 的真实作者身份。
+- **拒绝原因**：前者不能表达信息参与者和发行方，后者会打破事实/信息/信念分层及身份审计。
+
+### Q173：Strategic Planner 读取候选认知更新，还是只读取已提交状态？
+
+- **问题**：同一决策中的 Memory/Belief 提案尚未校验时，Planner 能否先假定它们会成功并据此开始规划？
+- **推荐答案**：只读取已提交的 Memory/Belief。PlanningRequestProposal 显式依赖它所需的 Memory/Belief 提案；只有依赖被状态所有者接受后才进入 Queued 并记录实际读取的 memory、belief、strategy revision 和 Observation Packet。任一依赖被拒绝则请求不启动、预留释放并在 Decision Outcome 记录。Provider 不得读取投机上下文或驱动部分回滚；后续认知更新仍可发生，计划采用时按 Q149 和当前合法观察检查。Q157 的工具循环同样只能读已提交 Memory。
+- **用户最终回答**：“我接受。”
+- **状态**：`已接受`
+- **被拒方案**：根据候选 Memory/Belief 提前规划；依赖失败后仍保留请求；Provider 读取可回滚状态；为此建立投机提交和回滚机制。
+- **拒绝原因**：会让规划输入、Decision Outcome 和回放无法对应真实状态，并引入不必要的认知事务复杂度。
+
+### Q174：等待规划期间的新 Memory 或 Belief 更新是否自动使候选计划失效？
+
+- **问题**：Planning Request 已记录的认知 revision 与当前 revision 不同时，是否一律拒绝候选 Strategy Plan？
+- **推荐答案**：默认不失效。请求创建时的 Memory/Belief revision 是审计依据，普通后续更新进入 Replan Trigger Accumulator，等待当前请求终态后处理。只有候选计划显式声明的 activation precondition 才能要求特定 `belief_id + revision` 仍匹配，或指定 Memory 引用仍可访问；条件仅保存稳定引用和版本，不复制 Memory 原文。前提不成立则 StrategyPlanProposal 为 `rejected/not_applicable`，依赖动作同时拒绝。Agent 只看到通用未采用结果，不能借此区分遗忘、无权限、引用不存在或信念版本变化；详细原因留在审计记录。
+- **用户最终回答**：“我接受。”
+- **状态**：`已接受`
+- **被拒方案**：任意认知 revision 变化都自动废弃计划；无视已声明认知前提；把任意 Memory 内容嵌入 Strategy Plan；向 Agent 泄露前提失效的具体内部原因。
+- **拒绝原因**：会让高频认知更新导致规划饥饿、绕过遗忘边界，或向 Agent 泄露其不可访问的状态。
+
+### Q175：首次 Observation Packet 后是否立即请求首个 Strategy Plan？
+
+- **问题**：显式 Agent 是否可以在开盘前预置行为，或者在首次观察后仍等待不确定的后续触发器才开始规划？
+- **推荐答案**：`sim_time = 0` 开盘屏障完成、背景初始订单簿冻结并发放首次合法 Observation Packet 后，每个可运行显式 Agent 运行一次初始 Decision Opportunity。必要 Memory/Belief 更新提交后创建首个 Planning Request；跨 Agent 可受容量池并发，但受启动前容量预检、单 Agent 单请求和 CognitiveBudget 约束。Activation Time 仍由虚拟 planning latency 确定；首个计划生效前采用 hold_and_protect。预算不足、依赖拒绝或 Provider 失败时保持保守状态并等待下一机会，不启动隐藏默认计划。Fixture、Replay 或规则模式保持同样时序但替换 Planner 实现；Background Market Sector 不进入该 Pipeline。
+- **用户最终回答**：“理应如此。”
+- **状态**：`已接受`
+- **被拒方案**：首次观察前预置显式 Agent 动作；首次规划失败后静默启用默认策略；让 Background Market Sector 冒充显式 Agent 规划。
+- **拒绝原因**：会破坏开盘公平性、可审计的独立认知起点和环境/Agent 分层。
+
+### Q176：Strategy Plan 能否预先生成并排队一串未来 Action？
+
+- **问题**：Strategy Plan 的 periodic、时间条件和 deadline 是否可被解释为在计划生效时直接展开未来 Action 队列？
+- **推荐答案**：不能。Provider 只能在 Directive 中声明时间条件、period、cooldown 或 deadline；Plan 生效时 Runtime 最多向现有事件队列注册下一次 Directive Wakeup。Wakeup 到达时重新冻结世界、构造最新 Observation Packet，并由 Reactive Controller 重验 guard、constraint、Capability 和账户快照后再形成 Action Proposal。`expected_execution_time` 仅由当前虚拟时间、版本化 Agent/action latency 和 World 调度规则确定，不由 LLM 任意指定。Periodic Directive 一次只安排下一 Wakeup，替换或过期后未触发 Wakeup 显式失效；已经成为 Pending Action 的动作仍依 Q154 独立管理。
+- **用户最终回答**：“我接受，并且这个问题在之前似乎已有讨论。”
+- **回查结果**：用户的提醒正确。Q38 已拒绝可执行策略脚本，Q144 已允许定时唤醒，Q154 已规定 Pending Action 独立于后续计划，Q169 已冻结 periodic/cooldown 与执行游标。本题没有重新选择架构，而是把这些原则细化为 Wakeup 与未来 Action 的实现边界。
+- **状态**：`已确认既有原则并细化`
+- **被拒方案**：预展开长期未来 Action 队列；由 LLM 指定任意未来执行时刻；计划生效时提前提交未来消息或订单而不再观察。
+- **拒绝原因**：会让策略脱离执行前世界状态，重引入脚本化控制，并与定时重新观察和独立 Pending Action 语义冲突。

@@ -1,0 +1,120 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "receipt_id": {
+      "title": "Receipt Id",
+      "type": "string"
+    },
+    "action_id": {
+      "title": "Action Id",
+      "type": "string"
+    },
+    "proposal_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Proposal Id"
+    },
+    "decision_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Decision Id"
+    },
+    "agent_id": {
+      "title": "Agent Id",
+      "type": "string"
+    },
+    "branch_id": {
+      "title": "Branch Id",
+      "type": "string"
+    },
+    "outcome": {
+      "enum": [
+        "accepted",
+        "rejected",
+        "queued",
+        "executed",
+        "partial",
+        "failed",
+        "expired",
+        "canceled"
+      ],
+      "title": "Outcome",
+      "type": "string"
+    },
+    "reason_code": {
+      "maxLength": 128,
+      "minLength": 1,
+      "title": "Reason Code",
+      "type": "string"
+    },
+    "submitted_sim_time_us": {
+      "minimum": 0,
+      "title": "Submitted Sim Time Us",
+      "type": "integer"
+    },
+    "scheduled_sim_time_us": {
+      "minimum": 0,
+      "title": "Scheduled Sim Time Us",
+      "type": "integer"
+    },
+    "resolved_sim_time_us": {
+      "minimum": 0,
+      "title": "Resolved Sim Time Us",
+      "type": "integer"
+    },
+    "authoritative_event_ids": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Authoritative Event Ids",
+      "type": "array"
+    },
+    "result_state_refs": {
+      "additionalProperties": {
+        "anyOf": [
+          {
+            "type": "integer"
+          },
+          {
+            "type": "string"
+          }
+        ]
+      },
+      "title": "Result State Refs",
+      "type": "object"
+    },
+    "schema_version": {
+      "const": "action-receipt.v0.1",
+      "default": "action-receipt.v0.1",
+      "title": "Schema Version",
+      "type": "string"
+    }
+  },
+  "required": [
+    "receipt_id",
+    "action_id",
+    "agent_id",
+    "branch_id",
+    "outcome",
+    "reason_code",
+    "submitted_sim_time_us",
+    "scheduled_sim_time_us",
+    "resolved_sim_time_us"
+  ],
+  "title": "ActionReceipt",
+  "type": "object"
+}

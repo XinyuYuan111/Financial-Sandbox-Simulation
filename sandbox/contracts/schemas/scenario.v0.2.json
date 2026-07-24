@@ -15,6 +15,7 @@
           "enum": [
             "rule",
             "replay",
+            "openai",
             "background"
           ],
           "title": "Strategy",
@@ -119,6 +120,38 @@
       },
       "title": "MarketConfig",
       "type": "object"
+    },
+    "PopulationConfig": {
+      "additionalProperties": false,
+      "properties": {
+        "preset": {
+          "default": "fixture",
+          "enum": [
+            "fixture",
+            "smoke",
+            "compact",
+            "standard"
+          ],
+          "title": "Preset",
+          "type": "string"
+        },
+        "agent_count": {
+          "anyOf": [
+            {
+              "maximum": 10000,
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Agent Count"
+        }
+      },
+      "title": "PopulationConfig",
+      "type": "object"
     }
   },
   "additionalProperties": false,
@@ -134,6 +167,7 @@
       "default": "test_fixture",
       "enum": [
         "test_fixture",
+        "live_llm_smoke",
         "live"
       ],
       "title": "Mode",
@@ -174,10 +208,12 @@
       "title": "Llm Provider"
     },
     "preset_version": {
-      "const": "framework-alpha.default.v0.2",
       "default": "framework-alpha.default.v0.2",
       "title": "Preset Version",
       "type": "string"
+    },
+    "population": {
+      "$ref": "#/$defs/PopulationConfig"
     },
     "market": {
       "$ref": "#/$defs/MarketConfig"

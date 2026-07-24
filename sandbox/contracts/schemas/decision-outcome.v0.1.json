@@ -1,0 +1,164 @@
+{
+  "$defs": {
+    "BudgetChange": {
+      "additionalProperties": false,
+      "properties": {
+        "budget_kind": {
+          "enum": [
+            "cognitive",
+            "attention",
+            "provider"
+          ],
+          "title": "Budget Kind",
+          "type": "string"
+        },
+        "operation": {
+          "enum": [
+            "reserve",
+            "consume",
+            "release",
+            "reset",
+            "modifier"
+          ],
+          "title": "Operation",
+          "type": "string"
+        },
+        "delta": {
+          "title": "Delta",
+          "type": "integer"
+        },
+        "remaining": {
+          "minimum": 0,
+          "title": "Remaining",
+          "type": "integer"
+        },
+        "reason_code": {
+          "title": "Reason Code",
+          "type": "string"
+        }
+      },
+      "required": [
+        "budget_kind",
+        "operation",
+        "delta",
+        "remaining",
+        "reason_code"
+      ],
+      "title": "BudgetChange",
+      "type": "object"
+    },
+    "ProposalResult": {
+      "additionalProperties": false,
+      "properties": {
+        "proposal_id": {
+          "title": "Proposal Id",
+          "type": "string"
+        },
+        "accepted": {
+          "title": "Accepted",
+          "type": "boolean"
+        },
+        "reason_code": {
+          "maxLength": 128,
+          "minLength": 1,
+          "title": "Reason Code",
+          "type": "string"
+        },
+        "depends_on": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Depends On",
+          "type": "array"
+        },
+        "resulting_ref": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Resulting Ref"
+        }
+      },
+      "required": [
+        "proposal_id",
+        "accepted",
+        "reason_code"
+      ],
+      "title": "ProposalResult",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "decision_id": {
+      "title": "Decision Id",
+      "type": "string"
+    },
+    "accepted": {
+      "title": "Accepted",
+      "type": "boolean"
+    },
+    "proposal_results": {
+      "items": {
+        "$ref": "#/$defs/ProposalResult"
+      },
+      "title": "Proposal Results",
+      "type": "array"
+    },
+    "resulting_agent_revision": {
+      "minimum": 0,
+      "title": "Resulting Agent Revision",
+      "type": "integer"
+    },
+    "resulting_component_revisions": {
+      "additionalProperties": {
+        "type": "integer"
+      },
+      "propertyNames": {
+        "enum": [
+          "memory",
+          "belief",
+          "planning",
+          "strategy",
+          "cursor",
+          "budget",
+          "attention"
+        ]
+      },
+      "title": "Resulting Component Revisions",
+      "type": "object"
+    },
+    "budget_changes": {
+      "items": {
+        "$ref": "#/$defs/BudgetChange"
+      },
+      "title": "Budget Changes",
+      "type": "array"
+    },
+    "recorded_event_ids": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Recorded Event Ids",
+      "type": "array"
+    },
+    "schema_version": {
+      "const": "decision-outcome.v0.1",
+      "default": "decision-outcome.v0.1",
+      "title": "Schema Version",
+      "type": "string"
+    }
+  },
+  "required": [
+    "decision_id",
+    "accepted",
+    "resulting_agent_revision"
+  ],
+  "title": "DecisionOutcome",
+  "type": "object"
+}

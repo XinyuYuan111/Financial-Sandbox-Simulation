@@ -28,6 +28,16 @@ def list_runs(request: Request) -> list[dict[str, object]]:
     return manager(request).list_runs()
 
 
+@router.get("/providers")
+def providers(request: Request) -> list[dict[str, object]]:
+    return manager(request).provider_profiles()
+
+
+@router.post("/providers/{provider_name}/preflight")
+async def provider_preflight(provider_name: str, request: Request) -> dict[str, object]:
+    return await manager(request).provider_preflight(provider_name)
+
+
 @router.post("/scenarios", status_code=201)
 def create_scenario(draft: ScenarioDraft, request: Request) -> dict[str, object]:
     return manager(request).create_scenario(draft)
@@ -76,6 +86,31 @@ def branch_events(branch_id: str, request: Request, after: int = Query(default=0
 @router.get("/branches/{branch_id}/agents/{agent_id}/observations")
 def agent_observations(branch_id: str, agent_id: str, request: Request, cursor: int | None = Query(default=None, ge=0), limit: int = Query(default=200, ge=1, le=1_000)) -> dict[str, object]:
     return {"branch_id": branch_id, "agent_id": agent_id, "observations": manager(request).observations(branch_id, agent_id, cursor=cursor, limit=limit)}
+
+
+@router.get("/branches/{branch_id}/agents")
+def branch_agents(branch_id: str, request: Request) -> dict[str, object]:
+    return {"branch_id": branch_id, "agents": manager(request).agents(branch_id)}
+
+
+@router.get("/branches/{branch_id}/agents/{agent_id}")
+def agent_detail(branch_id: str, agent_id: str, request: Request) -> dict[str, object]:
+    return manager(request).agent_detail(branch_id, agent_id)
+
+
+@router.get("/branches/{branch_id}/agents/{agent_id}/decisions")
+def agent_decisions(branch_id: str, agent_id: str, request: Request, limit: int = Query(default=200, ge=1, le=1_000)) -> dict[str, object]:
+    return {"branch_id": branch_id, "agent_id": agent_id, "decisions": manager(request).agent_decisions(branch_id, agent_id, limit=limit)}
+
+
+@router.get("/branches/{branch_id}/agents/{agent_id}/plans")
+def agent_plans(branch_id: str, agent_id: str, request: Request, limit: int = Query(default=200, ge=1, le=1_000)) -> dict[str, object]:
+    return {"branch_id": branch_id, "agent_id": agent_id, "plans": manager(request).agent_plans(branch_id, agent_id, limit=limit)}
+
+
+@router.get("/branches/{branch_id}/agents/{agent_id}/receipts")
+def agent_receipts(branch_id: str, agent_id: str, request: Request, limit: int = Query(default=200, ge=1, le=1_000)) -> dict[str, object]:
+    return {"branch_id": branch_id, "agent_id": agent_id, "receipts": manager(request).agent_receipts(branch_id, agent_id, limit=limit)}
 
 
 @router.post("/branches/{branch_id}/fork", status_code=201)

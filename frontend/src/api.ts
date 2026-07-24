@@ -23,6 +23,13 @@ export const api = {
   state: <T>(branchId: string, cursor?: number) => request<T>(`/api/v1/branches/${branchId}/state${cursor === undefined ? '' : `?cursor=${cursor}`}`),
   events: <T>(branchId: string, after = 0) => request<T>(`/api/v1/branches/${branchId}/events?after=${after}&limit=500`),
   observations: <T>(branchId: string, agentId: string, cursor?: number) => request<T>(`/api/v1/branches/${branchId}/agents/${agentId}/observations${cursor === undefined ? '' : `?cursor=${cursor}`}`),
+  providers: <T>() => request<T>('/api/v1/providers'),
+  providerPreflight: <T>(name: string) => request<T>(`/api/v1/providers/${name}/preflight`, { method: 'POST' }),
+  agents: <T>(branchId: string) => request<T>(`/api/v1/branches/${branchId}/agents`),
+  agent: <T>(branchId: string, agentId: string) => request<T>(`/api/v1/branches/${branchId}/agents/${agentId}`),
+  decisions: <T>(branchId: string, agentId: string) => request<T>(`/api/v1/branches/${branchId}/agents/${agentId}/decisions`),
+  plans: <T>(branchId: string, agentId: string) => request<T>(`/api/v1/branches/${branchId}/agents/${agentId}/plans`),
+  receipts: <T>(branchId: string, agentId: string) => request<T>(`/api/v1/branches/${branchId}/agents/${agentId}/receipts`),
   createScenario: <T>(body: unknown) => request<T>('/api/v1/scenarios', { method: 'POST', headers: jsonHeaders, body: JSON.stringify(body) }),
   resolveScenario: <T>(scenarioId: string) => request<T>(`/api/v1/scenarios/${scenarioId}/resolve`, { method: 'POST' }),
   createRun: <T>(scenarioId: string) => request<T>('/api/v1/runs', { method: 'POST', headers: jsonHeaders, body: JSON.stringify({ scenario_id: scenarioId }) }),
@@ -35,4 +42,3 @@ export const api = {
     return request<T>('/api/v1/archives/import', { method: 'POST', body: form })
   },
 }
-

@@ -1,0 +1,895 @@
+{
+  "$defs": {
+    "AllOfCondition": {
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "const": "all_of",
+          "default": "all_of",
+          "title": "Type",
+          "type": "string"
+        },
+        "conditions": {
+          "items": {
+            "discriminator": {
+              "mapping": {
+                "all_of": "#/$defs/AllOfCondition",
+                "any_of": "#/$defs/AnyOfCondition",
+                "compare": "#/$defs/CompareCondition",
+                "not": "#/$defs/NotCondition"
+              },
+              "propertyName": "type"
+            },
+            "oneOf": [
+              {
+                "$ref": "#/$defs/CompareCondition"
+              },
+              {
+                "$ref": "#/$defs/AllOfCondition"
+              },
+              {
+                "$ref": "#/$defs/AnyOfCondition"
+              },
+              {
+                "$ref": "#/$defs/NotCondition"
+              }
+            ]
+          },
+          "maxItems": 16,
+          "minItems": 1,
+          "title": "Conditions",
+          "type": "array"
+        }
+      },
+      "required": [
+        "conditions"
+      ],
+      "title": "AllOfCondition",
+      "type": "object"
+    },
+    "AnyOfCondition": {
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "const": "any_of",
+          "default": "any_of",
+          "title": "Type",
+          "type": "string"
+        },
+        "conditions": {
+          "items": {
+            "discriminator": {
+              "mapping": {
+                "all_of": "#/$defs/AllOfCondition",
+                "any_of": "#/$defs/AnyOfCondition",
+                "compare": "#/$defs/CompareCondition",
+                "not": "#/$defs/NotCondition"
+              },
+              "propertyName": "type"
+            },
+            "oneOf": [
+              {
+                "$ref": "#/$defs/CompareCondition"
+              },
+              {
+                "$ref": "#/$defs/AllOfCondition"
+              },
+              {
+                "$ref": "#/$defs/AnyOfCondition"
+              },
+              {
+                "$ref": "#/$defs/NotCondition"
+              }
+            ]
+          },
+          "maxItems": 16,
+          "minItems": 1,
+          "title": "Conditions",
+          "type": "array"
+        }
+      },
+      "required": [
+        "conditions"
+      ],
+      "title": "AnyOfCondition",
+      "type": "object"
+    },
+    "CancelDirective": {
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "const": "cancel",
+          "default": "cancel",
+          "title": "Type",
+          "type": "string"
+        },
+        "directive_key": {
+          "maxLength": 128,
+          "minLength": 1,
+          "title": "Directive Key",
+          "type": "string"
+        },
+        "order_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Order Id"
+        },
+        "side": {
+          "anyOf": [
+            {
+              "enum": [
+                "buy",
+                "sell"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Side"
+        },
+        "plan_revision": {
+          "anyOf": [
+            {
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Plan Revision"
+        },
+        "guard": {
+          "anyOf": [
+            {
+              "discriminator": {
+                "mapping": {
+                  "all_of": "#/$defs/AllOfCondition",
+                  "any_of": "#/$defs/AnyOfCondition",
+                  "compare": "#/$defs/CompareCondition",
+                  "not": "#/$defs/NotCondition"
+                },
+                "propertyName": "type"
+              },
+              "oneOf": [
+                {
+                  "$ref": "#/$defs/CompareCondition"
+                },
+                {
+                  "$ref": "#/$defs/AllOfCondition"
+                },
+                {
+                  "$ref": "#/$defs/AnyOfCondition"
+                },
+                {
+                  "$ref": "#/$defs/NotCondition"
+                }
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Guard"
+        },
+        "emission": {
+          "$ref": "#/$defs/EmissionPolicy"
+        }
+      },
+      "required": [
+        "directive_key",
+        "emission"
+      ],
+      "title": "CancelDirective",
+      "type": "object"
+    },
+    "CommunicationDirective": {
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "const": "communication",
+          "default": "communication",
+          "title": "Type",
+          "type": "string"
+        },
+        "directive_key": {
+          "maxLength": 128,
+          "minLength": 1,
+          "title": "Directive Key",
+          "type": "string"
+        },
+        "channel": {
+          "enum": [
+            "PublicFeed",
+            "OfficialAnnouncement",
+            "TradingTerminal",
+            "PrivateChannel"
+          ],
+          "title": "Channel",
+          "type": "string"
+        },
+        "message_payload": {
+          "maxLength": 4000,
+          "minLength": 1,
+          "title": "Message Payload",
+          "type": "string"
+        },
+        "target_ids": {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 64,
+          "title": "Target Ids",
+          "type": "array"
+        },
+        "guard": {
+          "anyOf": [
+            {
+              "discriminator": {
+                "mapping": {
+                  "all_of": "#/$defs/AllOfCondition",
+                  "any_of": "#/$defs/AnyOfCondition",
+                  "compare": "#/$defs/CompareCondition",
+                  "not": "#/$defs/NotCondition"
+                },
+                "propertyName": "type"
+              },
+              "oneOf": [
+                {
+                  "$ref": "#/$defs/CompareCondition"
+                },
+                {
+                  "$ref": "#/$defs/AllOfCondition"
+                },
+                {
+                  "$ref": "#/$defs/AnyOfCondition"
+                },
+                {
+                  "$ref": "#/$defs/NotCondition"
+                }
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Guard"
+        },
+        "emission": {
+          "$ref": "#/$defs/EmissionPolicy"
+        }
+      },
+      "required": [
+        "directive_key",
+        "channel",
+        "message_payload",
+        "emission"
+      ],
+      "title": "CommunicationDirective",
+      "type": "object"
+    },
+    "CompareCondition": {
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "const": "compare",
+          "default": "compare",
+          "title": "Type",
+          "type": "string"
+        },
+        "path": {
+          "enum": [
+            "market.last_price_tick",
+            "market.spread_bps",
+            "market.recent_volume",
+            "account.free_base",
+            "account.free_quote",
+            "account.position_base",
+            "belief.confidence_milli",
+            "observation.has_information_tag",
+            "own_action_outcome.code",
+            "sim_time_us"
+          ],
+          "title": "Path",
+          "type": "string"
+        },
+        "op": {
+          "enum": [
+            "lt",
+            "lte",
+            "eq",
+            "neq",
+            "gte",
+            "gt",
+            "contains"
+          ],
+          "title": "Op",
+          "type": "string"
+        },
+        "value": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "string"
+            },
+            {
+              "type": "boolean"
+            }
+          ],
+          "title": "Value"
+        }
+      },
+      "required": [
+        "path",
+        "op",
+        "value"
+      ],
+      "title": "CompareCondition",
+      "type": "object"
+    },
+    "Constraint": {
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "enum": [
+            "max_order_notional",
+            "max_position_base",
+            "min_free_quote",
+            "allowed_action_count"
+          ],
+          "title": "Kind",
+          "type": "string"
+        },
+        "amount": {
+          "minimum": 0,
+          "title": "Amount",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "kind",
+        "amount"
+      ],
+      "title": "Constraint",
+      "type": "object"
+    },
+    "DecisionRationale": {
+      "additionalProperties": false,
+      "properties": {
+        "goal_summary": {
+          "default": "",
+          "maxLength": 500,
+          "title": "Goal Summary",
+          "type": "string"
+        },
+        "evidence_ids": {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 64,
+          "title": "Evidence Ids",
+          "type": "array"
+        },
+        "belief_ids": {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 64,
+          "title": "Belief Ids",
+          "type": "array"
+        },
+        "strategy_revision": {
+          "default": 0,
+          "minimum": 0,
+          "title": "Strategy Revision",
+          "type": "integer"
+        },
+        "risk_flags": {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 32,
+          "title": "Risk Flags",
+          "type": "array"
+        },
+        "uncertainty_milli": {
+          "default": 500,
+          "maximum": 1000,
+          "minimum": 0,
+          "title": "Uncertainty Milli",
+          "type": "integer"
+        },
+        "proposal_ids": {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 128,
+          "title": "Proposal Ids",
+          "type": "array"
+        },
+        "stated_reason": {
+          "default": "",
+          "maxLength": 1000,
+          "title": "Stated Reason",
+          "type": "string"
+        }
+      },
+      "title": "DecisionRationale",
+      "type": "object"
+    },
+    "EmissionPolicy": {
+      "additionalProperties": false,
+      "properties": {
+        "mode": {
+          "enum": [
+            "once",
+            "on_guard_transition",
+            "periodic",
+            "while_guarded"
+          ],
+          "title": "Mode",
+          "type": "string"
+        },
+        "max_emissions": {
+          "default": 1,
+          "maximum": 10000,
+          "minimum": 1,
+          "title": "Max Emissions",
+          "type": "integer"
+        },
+        "interval_us": {
+          "anyOf": [
+            {
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Interval Us"
+        },
+        "cooldown_us": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Cooldown Us"
+        }
+      },
+      "required": [
+        "mode"
+      ],
+      "title": "EmissionPolicy",
+      "type": "object"
+    },
+    "Goal": {
+      "additionalProperties": false,
+      "properties": {
+        "goal_key": {
+          "maxLength": 128,
+          "minLength": 1,
+          "title": "Goal Key",
+          "type": "string"
+        },
+        "priority": {
+          "maximum": 100,
+          "minimum": 0,
+          "title": "Priority",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "goal_key",
+        "priority"
+      ],
+      "title": "Goal",
+      "type": "object"
+    },
+    "NotCondition": {
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "const": "not",
+          "default": "not",
+          "title": "Type",
+          "type": "string"
+        },
+        "condition": {
+          "discriminator": {
+            "mapping": {
+              "all_of": "#/$defs/AllOfCondition",
+              "any_of": "#/$defs/AnyOfCondition",
+              "compare": "#/$defs/CompareCondition",
+              "not": "#/$defs/NotCondition"
+            },
+            "propertyName": "type"
+          },
+          "oneOf": [
+            {
+              "$ref": "#/$defs/CompareCondition"
+            },
+            {
+              "$ref": "#/$defs/AllOfCondition"
+            },
+            {
+              "$ref": "#/$defs/AnyOfCondition"
+            },
+            {
+              "$ref": "#/$defs/NotCondition"
+            }
+          ],
+          "title": "Condition"
+        }
+      },
+      "required": [
+        "condition"
+      ],
+      "title": "NotCondition",
+      "type": "object"
+    },
+    "QuoteDirective": {
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "const": "quote",
+          "default": "quote",
+          "title": "Type",
+          "type": "string"
+        },
+        "directive_key": {
+          "maxLength": 128,
+          "minLength": 1,
+          "title": "Directive Key",
+          "type": "string"
+        },
+        "side": {
+          "default": "both",
+          "enum": [
+            "both",
+            "buy",
+            "sell"
+          ],
+          "title": "Side",
+          "type": "string"
+        },
+        "target_spread_bps": {
+          "maximum": 10000,
+          "minimum": 0,
+          "title": "Target Spread Bps",
+          "type": "integer"
+        },
+        "max_quantity_per_side": {
+          "minimum": 1,
+          "title": "Max Quantity Per Side",
+          "type": "integer"
+        },
+        "inventory_target": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Inventory Target"
+        },
+        "refresh_interval_us": {
+          "minimum": 1,
+          "title": "Refresh Interval Us",
+          "type": "integer"
+        },
+        "guard": {
+          "anyOf": [
+            {
+              "discriminator": {
+                "mapping": {
+                  "all_of": "#/$defs/AllOfCondition",
+                  "any_of": "#/$defs/AnyOfCondition",
+                  "compare": "#/$defs/CompareCondition",
+                  "not": "#/$defs/NotCondition"
+                },
+                "propertyName": "type"
+              },
+              "oneOf": [
+                {
+                  "$ref": "#/$defs/CompareCondition"
+                },
+                {
+                  "$ref": "#/$defs/AllOfCondition"
+                },
+                {
+                  "$ref": "#/$defs/AnyOfCondition"
+                },
+                {
+                  "$ref": "#/$defs/NotCondition"
+                }
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Guard"
+        },
+        "emission": {
+          "$ref": "#/$defs/EmissionPolicy"
+        }
+      },
+      "required": [
+        "directive_key",
+        "target_spread_bps",
+        "max_quantity_per_side",
+        "refresh_interval_us",
+        "emission"
+      ],
+      "title": "QuoteDirective",
+      "type": "object"
+    },
+    "TradeDirective": {
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "const": "trade",
+          "default": "trade",
+          "title": "Type",
+          "type": "string"
+        },
+        "directive_key": {
+          "maxLength": 128,
+          "minLength": 1,
+          "title": "Directive Key",
+          "type": "string"
+        },
+        "side": {
+          "enum": [
+            "buy",
+            "sell"
+          ],
+          "title": "Side",
+          "type": "string"
+        },
+        "style": {
+          "enum": [
+            "passive",
+            "aggressive",
+            "protected_market"
+          ],
+          "title": "Style",
+          "type": "string"
+        },
+        "max_quantity": {
+          "minimum": 1,
+          "title": "Max Quantity",
+          "type": "integer"
+        },
+        "max_notional": {
+          "anyOf": [
+            {
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Max Notional"
+        },
+        "price_offset_bps": {
+          "default": 0,
+          "maximum": 10000,
+          "minimum": -10000,
+          "title": "Price Offset Bps",
+          "type": "integer"
+        },
+        "guard": {
+          "anyOf": [
+            {
+              "discriminator": {
+                "mapping": {
+                  "all_of": "#/$defs/AllOfCondition",
+                  "any_of": "#/$defs/AnyOfCondition",
+                  "compare": "#/$defs/CompareCondition",
+                  "not": "#/$defs/NotCondition"
+                },
+                "propertyName": "type"
+              },
+              "oneOf": [
+                {
+                  "$ref": "#/$defs/CompareCondition"
+                },
+                {
+                  "$ref": "#/$defs/AllOfCondition"
+                },
+                {
+                  "$ref": "#/$defs/AnyOfCondition"
+                },
+                {
+                  "$ref": "#/$defs/NotCondition"
+                }
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Guard"
+        },
+        "emission": {
+          "$ref": "#/$defs/EmissionPolicy"
+        }
+      },
+      "required": [
+        "directive_key",
+        "side",
+        "style",
+        "max_quantity",
+        "emission"
+      ],
+      "title": "TradeDirective",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "based_on_strategy_revision": {
+      "minimum": 0,
+      "title": "Based On Strategy Revision",
+      "type": "integer"
+    },
+    "valid_for_us": {
+      "minimum": 1,
+      "title": "Valid For Us",
+      "type": "integer"
+    },
+    "goals": {
+      "items": {
+        "$ref": "#/$defs/Goal"
+      },
+      "maxItems": 16,
+      "title": "Goals",
+      "type": "array"
+    },
+    "activation_preconditions": {
+      "items": {
+        "discriminator": {
+          "mapping": {
+            "all_of": "#/$defs/AllOfCondition",
+            "any_of": "#/$defs/AnyOfCondition",
+            "compare": "#/$defs/CompareCondition",
+            "not": "#/$defs/NotCondition"
+          },
+          "propertyName": "type"
+        },
+        "oneOf": [
+          {
+            "$ref": "#/$defs/CompareCondition"
+          },
+          {
+            "$ref": "#/$defs/AllOfCondition"
+          },
+          {
+            "$ref": "#/$defs/AnyOfCondition"
+          },
+          {
+            "$ref": "#/$defs/NotCondition"
+          }
+        ]
+      },
+      "maxItems": 16,
+      "title": "Activation Preconditions",
+      "type": "array"
+    },
+    "constraints": {
+      "items": {
+        "$ref": "#/$defs/Constraint"
+      },
+      "maxItems": 16,
+      "title": "Constraints",
+      "type": "array"
+    },
+    "directives": {
+      "items": {
+        "discriminator": {
+          "mapping": {
+            "cancel": "#/$defs/CancelDirective",
+            "communication": "#/$defs/CommunicationDirective",
+            "quote": "#/$defs/QuoteDirective",
+            "trade": "#/$defs/TradeDirective"
+          },
+          "propertyName": "type"
+        },
+        "oneOf": [
+          {
+            "$ref": "#/$defs/TradeDirective"
+          },
+          {
+            "$ref": "#/$defs/QuoteDirective"
+          },
+          {
+            "$ref": "#/$defs/CancelDirective"
+          },
+          {
+            "$ref": "#/$defs/CommunicationDirective"
+          }
+        ]
+      },
+      "maxItems": 32,
+      "title": "Directives",
+      "type": "array"
+    },
+    "replan_conditions": {
+      "items": {
+        "discriminator": {
+          "mapping": {
+            "all_of": "#/$defs/AllOfCondition",
+            "any_of": "#/$defs/AnyOfCondition",
+            "compare": "#/$defs/CompareCondition",
+            "not": "#/$defs/NotCondition"
+          },
+          "propertyName": "type"
+        },
+        "oneOf": [
+          {
+            "$ref": "#/$defs/CompareCondition"
+          },
+          {
+            "$ref": "#/$defs/AllOfCondition"
+          },
+          {
+            "$ref": "#/$defs/AnyOfCondition"
+          },
+          {
+            "$ref": "#/$defs/NotCondition"
+          }
+        ]
+      },
+      "maxItems": 16,
+      "title": "Replan Conditions",
+      "type": "array"
+    },
+    "rationale": {
+      "$ref": "#/$defs/DecisionRationale"
+    },
+    "schema_version": {
+      "const": "planning-result-candidate.v0.1",
+      "default": "planning-result-candidate.v0.1",
+      "title": "Schema Version",
+      "type": "string"
+    }
+  },
+  "required": [
+    "based_on_strategy_revision",
+    "valid_for_us",
+    "rationale"
+  ],
+  "title": "PlanningResultCandidate",
+  "type": "object"
+}

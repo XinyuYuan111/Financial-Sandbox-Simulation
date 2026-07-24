@@ -6,7 +6,9 @@ import zipfile
 from pathlib import Path
 
 from sandbox.contracts.event import EventEnvelope
+from sandbox.contracts.agent import ActionReceipt, AgentDecision, AgentDefinition, DecisionOutcome
 from sandbox.contracts.observation import ObservationPacket
+from sandbox.contracts.planning import LLMRecord, PlanningRequest, StrategyPlan
 from sandbox.contracts.scenario import ResolvedInitialState
 from sandbox.contracts.snapshot import ArchiveManifest
 from sandbox.core.errors import ValidationError
@@ -28,15 +30,52 @@ class ArchiveService:
         files["config/resolved_scenario.json"] = str(run["resolved_state_json"]).encode()
         branch_records = [dict(branch) for branch in branches]
         files["branches.json"] = canonical_json(branch_records).encode()
+        resolved = ResolvedInitialState.model_validate_json(str(run["resolved_state_json"]))
+        files["agents/definitions.json"] = canonical_json(
+            [item.model_dump(mode="json") for item in resolved.agent_definitions]
+        ).encode()
         for branch in branches:
             rows = self.store.connection.execute("SELECT event_json FROM events WHERE branch_id=? ORDER BY branch_seq", (branch["branch_id"],)).fetchall()
             files[f"events/branch_{branch['branch_id']}.jsonl"] = ("\n".join(row["event_json"] for row in rows) + "\n").encode()
             observations = self.store.connection.execute("SELECT observation_json FROM observations WHERE branch_id=? ORDER BY sim_time_us, observation_id", (branch["branch_id"],)).fetchall()
             files[f"observations/branch_{branch['branch_id']}.jsonl"] = ("\n".join(row["observation_json"] for row in observations) + "\n").encode()
+            decisions = self.store.connection.execute(
+                "SELECT decision_json,outcome_json FROM agent_decisions WHERE branch_id=? ORDER BY sim_time_us,decision_id",
+                (branch["branch_id"],),
+            ).fetchall()
+            files[f"agents/decisions/{branch['branch_id']}.jsonl"] = (
+                "\n".join(canonical_json({"decision": json.loads(row["decision_json"]), "outcome": json.loads(row["outcome_json"])}) for row in decisions) + "\n"
+            ).encode()
+            plans = self.store.connection.execute(
+                "SELECT plan_json,active FROM strategy_plans WHERE branch_id=? ORDER BY agent_id,strategy_revision",
+                (branch["branch_id"],),
+            ).fetchall()
+            files[f"agents/plans/{branch['branch_id']}.jsonl"] = (
+                "\n".join(canonical_json({"plan": json.loads(row["plan_json"]), "active": bool(row["active"])}) for row in plans) + "\n"
+            ).encode()
+            requests = self.store.connection.execute(
+                "SELECT request_json FROM planning_requests WHERE branch_id=? ORDER BY agent_id,activation_time_us,request_id",
+                (branch["branch_id"],),
+            ).fetchall()
+            files[f"agents/planning_requests/{branch['branch_id']}.jsonl"] = (
+                "\n".join(row["request_json"] for row in requests) + "\n"
+            ).encode()
+            receipts = self.store.connection.execute(
+                "SELECT receipt_json FROM action_receipts WHERE branch_id=? ORDER BY sim_time_us,receipt_id",
+                (branch["branch_id"],),
+            ).fetchall()
+            files[f"actions/receipts/{branch['branch_id']}.jsonl"] = (
+                "\n".join(row["receipt_json"] for row in receipts) + "\n"
+            ).encode()
             snapshot = self.store.connection.execute("SELECT checkpoint_id,snapshot_json FROM snapshots WHERE branch_id=? ORDER BY branch_seq DESC LIMIT 1", (branch["branch_id"],)).fetchone()
             if snapshot is None:
                 raise ValidationError(f"branch {branch['branch_id']} must be checkpointed before export")
             files[f"checkpoints/{snapshot['checkpoint_id']}.json"] = str(snapshot["snapshot_json"]).encode()
+        llm_rows = self.store.connection.execute(
+            "SELECT DISTINCT lr.record_json FROM llm_records lr JOIN planning_requests pr ON pr.request_id=lr.request_id JOIN branches b ON b.branch_id=pr.branch_id WHERE b.run_id=? ORDER BY lr.request_id,lr.attempt",
+            (run_id,),
+        ).fetchall()
+        files["llm/records.jsonl"] = ("\n".join(row["record_json"] for row in llm_rows) + "\n").encode()
         hashes = {name: "sha256:" + hashlib.sha256(content).hexdigest() for name, content in files.items()}
         manifest = ArchiveManifest(
             runtime_version=self.runtime_version,
@@ -71,6 +110,9 @@ class ArchiveService:
                 actual = "sha256:" + hashlib.sha256(archive.read(name)).hexdigest()
                 if actual != expected:
                     raise ValidationError(f"hash mismatch for {name}")
+                lowered = archive.read(name).lower()
+                if b"openai_api_key" in lowered or b"authorization:" in lowered or b"bearer sk-" in lowered:
+                    raise ValidationError(f"archive member {name} contains secret material")
             for branch_id in manifest.included_branches:
                 event_name = f"events/branch_{branch_id}.jsonl"
                 if event_name not in names:
@@ -111,6 +153,9 @@ class ArchiveService:
             return {"run_id": manifest.run_id, "already_present": True, "manifest": manifest.model_dump(mode="json")}
         with zipfile.ZipFile(path) as archive:
             resolved = ResolvedInitialState.model_validate(json.loads(archive.read("config/resolved_scenario.json")))
+            definitions_name = "agents/definitions.json"
+            if definitions_name in archive.namelist():
+                [AgentDefinition.model_validate(item) for item in json.loads(archive.read(definitions_name))]
             branches = json.loads(archive.read("branches.json"))
             checkpoints: dict[str, dict[str, object]] = {}
             for name in archive.namelist():
@@ -160,4 +205,57 @@ class ArchiveService:
                                 "INSERT INTO observations(observation_id,branch_id,agent_id,sim_time_us,observation_json) VALUES(?,?,?,?,?)",
                                 (observation.observation_id, branch_id, observation.agent_id, observation.sim_time_us, canonical_json(observation.model_dump(mode="json"))),
                             )
+                    decisions_name = f"agents/decisions/{branch_id}.jsonl"
+                    if decisions_name in archive.namelist():
+                        for line in archive.read(decisions_name).decode().splitlines():
+                            if not line:
+                                continue
+                            record = json.loads(line)
+                            decision = AgentDecision.model_validate(record["decision"])
+                            outcome = DecisionOutcome.model_validate(record["outcome"])
+                            connection.execute(
+                                "INSERT INTO agent_decisions(decision_id,branch_id,agent_id,observation_id,sim_time_us,agent_revision,decision_json,outcome_json) VALUES(?,?,?,?,?,?,?,?)",
+                                (decision.decision_id, branch_id, decision.agent_id, decision.observation_id, decision.sim_time_us, outcome.resulting_agent_revision, canonical_json(decision.model_dump(mode="json")), canonical_json(outcome.model_dump(mode="json"))),
+                            )
+                    requests_name = f"agents/planning_requests/{branch_id}.jsonl"
+                    if requests_name in archive.namelist():
+                        for line in archive.read(requests_name).decode().splitlines():
+                            if not line:
+                                continue
+                            planning = PlanningRequest.model_validate(json.loads(line))
+                            connection.execute(
+                                "INSERT INTO planning_requests(request_id,branch_id,agent_id,state,terminal_outcome,activation_time_us,request_json,updated_at) VALUES(?,?,?,?,?,?,?,?)",
+                                (planning.request_id, branch_id, planning.agent_id, planning.state, planning.terminal_outcome, planning.activation_time_us, canonical_json(planning.model_dump(mode="json")), "archive-import"),
+                            )
+                    plans_name = f"agents/plans/{branch_id}.jsonl"
+                    if plans_name in archive.namelist():
+                        for line in archive.read(plans_name).decode().splitlines():
+                            if not line:
+                                continue
+                            record = json.loads(line)
+                            plan = StrategyPlan.model_validate(record["plan"])
+                            connection.execute(
+                                "INSERT INTO strategy_plans(plan_id,branch_id,agent_id,strategy_revision,active,valid_from_sim_time_us,valid_until_sim_time_us,plan_json) VALUES(?,?,?,?,?,?,?,?)",
+                                (plan.plan_id, branch_id, plan.agent_id, plan.strategy_revision, int(bool(record["active"])), plan.valid_from_sim_time_us, plan.valid_until_sim_time_us, canonical_json(plan.model_dump(mode="json"))),
+                            )
+                    receipts_name = f"actions/receipts/{branch_id}.jsonl"
+                    if receipts_name in archive.namelist():
+                        for line in archive.read(receipts_name).decode().splitlines():
+                            if not line:
+                                continue
+                            receipt = ActionReceipt.model_validate(json.loads(line))
+                            connection.execute(
+                                "INSERT INTO action_receipts(receipt_id,action_id,branch_id,agent_id,sim_time_us,receipt_json) VALUES(?,?,?,?,?,?)",
+                                (receipt.receipt_id, receipt.action_id, branch_id, receipt.agent_id, receipt.resolved_sim_time_us, canonical_json(receipt.model_dump(mode="json"))),
+                            )
+                llm_name = "llm/records.jsonl"
+                if llm_name in archive.namelist():
+                    for line in archive.read(llm_name).decode().splitlines():
+                        if not line:
+                            continue
+                        record = LLMRecord.model_validate(json.loads(line))
+                        connection.execute(
+                            "INSERT INTO llm_records(call_id,request_id,agent_id,attempt,provider,model,status,record_json) VALUES(?,?,?,?,?,?,?,?)",
+                            (record.call_id, record.request_id, record.agent_id, record.attempt, record.provider, record.model, record.status, canonical_json(record.model_dump(mode="json"))),
+                        )
         return {"run_id": manifest.run_id, "already_present": False, "manifest": manifest.model_dump(mode="json")}

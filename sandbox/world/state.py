@@ -6,9 +6,11 @@ from typing import Any, Literal
 
 from sandbox.agents.entities import AgentState
 from sandbox.agents.observation import ObservationService
+from sandbox.contracts.agent import ActionReceipt, AgentDefinition, AgentRuntimeState, DecisionTrigger
 from sandbox.contracts.action import ActionContract
 from sandbox.contracts.event import EventDraft
 from sandbox.contracts.observation import ObservationPacket
+from sandbox.contracts.planning import PlanningRequest, StrategyPlan
 from sandbox.contracts.scenario import ResolvedInitialState
 from sandbox.core.errors import ValidationError
 from sandbox.core.ids import new_id
@@ -24,6 +26,7 @@ class ActionResult:
     world: "SimulationWorld"
     events: list[EventDraft]
     observations: list[ObservationPacket]
+    receipts: list[ActionReceipt]
 
 
 class SimulationWorld:
@@ -31,6 +34,9 @@ class SimulationWorld:
         self.sim_time_us = 0
         self.market: dict[str, Any] = {}
         self.agents: dict[str, AgentState] = {}
+        self.agent_definitions: dict[str, AgentDefinition] = {}
+        self.agent_runtime_states: dict[str, AgentRuntimeState] = {}
+        self.background_market_sector: dict[str, object] = {"sector_id": "background", "token_balance": 0, "usdx_balance": 0}
         self.ledger = Ledger()
         self.clob = CLOB()
         self.information_items: list[dict[str, object]] = []
@@ -38,6 +44,11 @@ class SimulationWorld:
         self.rng = NamedRandomStreams(0)
         self.fixture_step = 0
         self.latest_observation_ids: dict[str, str] = {}
+        self.action_receipts: list[ActionReceipt] = []
+        self.pending_actions: dict[str, dict[str, object]] = {}
+        self.action_reservations: dict[str, dict[str, object]] = {}
+        self.planning_requests: dict[str, PlanningRequest] = {}
+        self.strategy_plans: dict[str, StrategyPlan] = {}
 
     @classmethod
     def from_resolved(cls, resolved: ResolvedInitialState) -> "SimulationWorld":
@@ -45,7 +56,10 @@ class SimulationWorld:
         world.market = resolved.market.model_dump(mode="json")
         world.chain_snapshot = deepcopy(resolved.chain_snapshot)
         world.rng = NamedRandomStreams(resolved.seed)
+        definitions = {definition.agent_id: definition for definition in resolved.agent_definitions}
         for config in resolved.agents:
+            if config.strategy == "background":
+                continue
             world.agents[config.agent_id] = AgentState(
                 agent_id=config.agent_id,
                 display_name=config.display_name,
@@ -56,6 +70,26 @@ class SimulationWorld:
             )
             world.ledger.credit(config.agent_id, resolved.market.base_asset, config.token_balance, reason="initial_mint")
             world.ledger.credit(config.agent_id, resolved.market.quote_asset, config.usdx_balance, reason="initial_mint")
+            definition = definitions.get(config.agent_id)
+            if definition is not None:
+                world.agent_definitions[config.agent_id] = definition
+                world.agent_runtime_states[config.agent_id] = AgentRuntimeState(
+                    agent_id=config.agent_id,
+                    cognitive_budget_state={
+                        "window_started_sim_time_us": 0,
+                        "plans_remaining": definition.cognitive_profile.max_plans_per_window,
+                        "plans_reserved": 0,
+                        "searches_remaining": definition.cognitive_profile.memory_search_limit,
+                    },
+                    attention_budget_state={
+                        "window_started_sim_time_us": 0,
+                        "items_remaining": definition.attention_profile.information_capacity,
+                    },
+                )
+        background = resolved.background_market_sector
+        world.background_market_sector = background.model_dump(mode="json")
+        world.ledger.credit(background.sector_id, resolved.market.base_asset, background.token_balance, reason="initial_mint")
+        world.ledger.credit(background.sector_id, resolved.market.quote_asset, background.usdx_balance, reason="initial_mint")
         token_remainder = resolved.total_supply[resolved.market.base_asset] - world.ledger.total(resolved.market.base_asset)
         usdx_remainder = resolved.total_supply[resolved.market.quote_asset] - world.ledger.total(resolved.market.quote_asset)
         world.ledger.credit("inactive_reserve", resolved.market.base_asset, token_remainder, reason="initial_mint")
@@ -70,6 +104,9 @@ class SimulationWorld:
         world.sim_time_us = int(value["sim_time_us"])
         world.market = deepcopy(value["market"])
         world.agents = {item["agent_id"]: AgentState.model_validate(item) for item in value["agents"]}
+        world.agent_definitions = {item["agent_id"]: AgentDefinition.model_validate(item) for item in value.get("agent_definitions", [])}
+        world.agent_runtime_states = {item["agent_id"]: AgentRuntimeState.model_validate(item) for item in value.get("agent_runtime_states", [])}
+        world.background_market_sector = deepcopy(value.get("background_market_sector", {"sector_id": "background", "token_balance": 0, "usdx_balance": 0}))
         world.ledger = Ledger(value["ledger"]["balances"])
         world.ledger.postings = deepcopy(value["ledger"].get("postings", []))
         world.clob = CLOB(value["clob"]["orders"], value["clob"]["trades"])
@@ -79,18 +116,34 @@ class SimulationWorld:
         world.rng = NamedRandomStreams(int(value["root_seed"]), deepcopy(value.get("rng_streams", {})))
         world.fixture_step = int(value.get("fixture_step", 0))
         world.latest_observation_ids = deepcopy(value.get("latest_observation_ids", {}))
+        world.action_receipts = [ActionReceipt.model_validate(item) for item in value.get("action_receipts", [])]
+        world.pending_actions = deepcopy(value.get("pending_actions", {}))
+        world.action_reservations = deepcopy(value.get("action_reservations", {}))
+        world.planning_requests = {item["request_id"]: PlanningRequest.model_validate(item) for item in value.get("planning_requests", [])}
+        world.strategy_plans = {item["plan_id"]: StrategyPlan.model_validate(item) for item in value.get("strategy_plans", [])}
         return world
 
     def clone(self) -> "SimulationWorld":
         return self.from_json(self.to_json())
 
-    def apply_action(self, action: ActionContract, *, world_version: int) -> ActionResult:
+    def apply_action(
+        self,
+        action: ActionContract,
+        *,
+        world_version: int,
+        proposal_id: str | None = None,
+        decision_id: str | None = None,
+    ) -> ActionResult:
         world = self.clone()
         if action.branch_id == "":
             raise ValidationError("branch_id is required")
         agent = world.agents.get(action.agent_id)
-        if agent is None:
+        background_id = str(world.background_market_sector.get("sector_id", "background"))
+        if agent is None and action.agent_id != background_id:
             raise ValidationError("unknown agent")
+        capabilities = agent.capabilities if agent is not None else ["market.trade", "information.read"]
+        if action.expected_execution_time_us < action.submitted_sim_time_us:
+            raise ValidationError("action execution time cannot precede submission")
         if action.expected_execution_time_us > action.submitted_sim_time_us + action.validity_window_us:
             raise ValidationError("action expires before its expected execution time")
         world.sim_time_us = max(world.sim_time_us, action.expected_execution_time_us)
@@ -99,16 +152,61 @@ class SimulationWorld:
         token_before = world.ledger.total(world.market["base_asset"])
         quote_before = world.ledger.total(world.market["quote_asset"])
         if action.action_type in {"SubmitLimitOrder", "SubmitProtectedMarketOrder", "CancelOrder", "ReplaceOrder"}:
-            if "market.trade" not in agent.capabilities:
+            if "market.trade" not in capabilities:
                 raise ValidationError("agent does not have market.trade capability")
             events.extend(world._apply_market_action(action))
         elif action.action_type == "PublishInformation":
-            if "information.publish" not in agent.capabilities:
+            if "information.publish" not in capabilities:
                 raise ValidationError("agent does not have information.publish capability")
             events.extend(world._apply_information_action(action))
         if world.ledger.total(world.market["base_asset"]) != token_before or world.ledger.total(world.market["quote_asset"]) != quote_before:
             raise ValidationError("asset conservation invariant failed")
-        observations = world.create_observations(action.branch_id, world_version + len(events))
+        receipt = ActionReceipt(
+            receipt_id=new_id("receipt"),
+            action_id=action.action_id,
+            proposal_id=proposal_id,
+            decision_id=decision_id,
+            agent_id=action.agent_id,
+            branch_id=action.branch_id,
+            outcome="executed",
+            reason_code="world_execution_succeeded",
+            submitted_sim_time_us=action.submitted_sim_time_us,
+            scheduled_sim_time_us=action.expected_execution_time_us,
+            resolved_sim_time_us=world.sim_time_us,
+            authoritative_event_ids=[],
+            result_state_refs={"portfolio_revision": world_version + len(events)},
+        )
+        world.action_receipts.append(receipt)
+        if action.action_type == "PublishInformation" and world.information_items[-1].get("visibility") == "agent_private":
+            recipients = sorted(set([action.agent_id, *list(world.information_items[-1].get("target_ids", []))]) & set(world.agents))
+        else:
+            recipients = sorted(world.agents)
+        triggers_by_agent: dict[str, list[DecisionTrigger]] = {}
+        for recipient in recipients:
+            trigger_type = "information" if action.action_type == "PublishInformation" else "market_change"
+            triggers_by_agent[recipient] = [DecisionTrigger(
+                type=trigger_type,
+                semantic_key=f"{trigger_type}:{action.action_id}",
+                source_event_ids=[],
+                severity=50,
+                first_sim_time_us=world.sim_time_us,
+                last_sim_time_us=world.sim_time_us,
+            )]
+        if action.agent_id in world.agents:
+            triggers_by_agent.setdefault(action.agent_id, []).append(DecisionTrigger(
+                type="own_action_outcome",
+                semantic_key=f"receipt:{action.action_id}",
+                source_event_ids=[],
+                severity=60,
+                first_sim_time_us=world.sim_time_us,
+                last_sim_time_us=world.sim_time_us,
+            ))
+        observations = world.create_observations(
+            action.branch_id,
+            world_version + len(events),
+            recipient_ids=recipients,
+            triggers_by_agent=triggers_by_agent,
+        )
         events.extend(
             world._event(action, "ObservationCreated", {"agent_id": observation.agent_id, "observation_id": observation.observation_id}, priority=50, visibility="agent_private", observation_id=observation.observation_id)
             for observation in observations
@@ -119,7 +217,7 @@ class SimulationWorld:
                 world._event(action, "InformationViewed", {"information_id": information_id, "agent_id": observation.agent_id}, priority=55, visibility="agent_private", observation_id=observation.observation_id)
                 for observation in observations
             )
-        return ActionResult(world, events, observations)
+        return ActionResult(world, events, observations, [receipt])
 
     def rejection_event(self, action: ActionContract, message: str) -> EventDraft:
         return self._event(action, "ActionRejected", {"action_type": action.action_type, "reason": message}, priority=70, visibility="participants")
@@ -208,11 +306,45 @@ class SimulationWorld:
             visibility=visibility,
         )
 
-    def create_observations(self, branch_id: str, world_version: int) -> list[ObservationPacket]:
+    def create_observations(
+        self,
+        branch_id: str,
+        world_version: int,
+        *,
+        recipient_ids: list[str] | None = None,
+        triggers_by_agent: dict[str, list[DecisionTrigger]] | None = None,
+    ) -> list[ObservationPacket]:
         service = ObservationService()
-        observations = [service.build(self, agent_id, branch_id, world_version) for agent_id in sorted(self.agents)]
+        recipients = sorted(set(recipient_ids if recipient_ids is not None else self.agents) & set(self.agents))
+        triggers_by_agent = triggers_by_agent or {
+            agent_id: [DecisionTrigger(
+                type="initial_observation",
+                semantic_key="initial_observation",
+                source_event_ids=[],
+                severity=100,
+                first_sim_time_us=self.sim_time_us,
+                last_sim_time_us=self.sim_time_us,
+            )]
+            for agent_id in recipients
+        }
+        observations = [
+            service.build(
+                self,
+                agent_id,
+                branch_id,
+                world_version,
+                decision_triggers=triggers_by_agent.get(agent_id, []),
+            )
+            for agent_id in recipients
+        ]
         self.latest_observation_ids.update({item.agent_id: item.observation_id for item in observations})
         return observations
+
+    def pending_action_ids(self, agent_id: str) -> list[str]:
+        return sorted(action_id for action_id, value in self.pending_actions.items() if value.get("agent_id") == agent_id)
+
+    def reservation_ids(self, agent_id: str) -> list[str]:
+        return sorted(reservation_id for reservation_id, value in self.action_reservations.items() if value.get("agent_id") == agent_id)
 
     def portfolio_projection(self, agent_id: str) -> dict[str, object]:
         balances = self.ledger.to_json()["balances"].get(agent_id, {})
@@ -226,6 +358,24 @@ class SimulationWorld:
         last_trade = self.clob.to_json()["trades"][-1] if self.clob.trades else None
         return {"market_id": self.market["market_id"], "bids": bids[:20], "asks": asks[:20], "last_trade": last_trade, "trades": self.clob.to_json()["trades"][-100:]}
 
+    def agent_projection(self, agent_id: str) -> dict[str, object]:
+        agent = self.agents[agent_id]
+        definition = self.agent_definitions.get(agent_id)
+        state = self.agent_runtime_states.get(agent_id)
+        return {
+            "agent_id": agent.agent_id,
+            "display_name": agent.display_name,
+            "strategy": agent.strategy,
+            "role_tags": agent.role_tags,
+            "funding_profile": agent.funding_profile,
+            "capabilities": agent.capabilities,
+            "planner_profile_id": definition.planner_profile_id if definition else agent.strategy,
+            "agent_revision": state.agent_revision if state else 0,
+            "active_strategy_revision": state.active_strategy_revision if state else 0,
+            "planning_request_id": state.planning_request_id if state else None,
+            "portfolio": self.portfolio_projection(agent.agent_id),
+        }
+
     def projection(self, branch_id: str, state_version: int, status: str) -> dict[str, object]:
         return {
             "branch_id": branch_id,
@@ -233,7 +383,7 @@ class SimulationWorld:
             "status": status,
             "sim_time_us": self.sim_time_us,
             "market": self.market_projection(),
-            "agents": [{"agent_id": agent.agent_id, "display_name": agent.display_name, "strategy": agent.strategy, "role_tags": agent.role_tags, "portfolio": self.portfolio_projection(agent.agent_id)} for agent in self.agents.values()],
+            "agents": [self.agent_projection(agent_id) for agent_id in self.agents],
             "information": self.information_items[-100:],
             "fixture_step": self.fixture_step,
         }
@@ -243,6 +393,9 @@ class SimulationWorld:
             "sim_time_us": self.sim_time_us,
             "market": deepcopy(self.market),
             "agents": [agent.model_dump(mode="json") for agent in self.agents.values()],
+            "agent_definitions": [definition.model_dump(mode="json") for definition in self.agent_definitions.values()],
+            "agent_runtime_states": [state.model_dump(mode="json") for state in self.agent_runtime_states.values()],
+            "background_market_sector": deepcopy(self.background_market_sector),
             "ledger": self.ledger.to_json(),
             "clob": self.clob.to_json(),
             "information_items": deepcopy(self.information_items),
@@ -251,4 +404,9 @@ class SimulationWorld:
             "rng_streams": self.rng.snapshot(),
             "fixture_step": self.fixture_step,
             "latest_observation_ids": deepcopy(self.latest_observation_ids),
+            "action_receipts": [receipt.model_dump(mode="json") for receipt in self.action_receipts],
+            "pending_actions": deepcopy(self.pending_actions),
+            "action_reservations": deepcopy(self.action_reservations),
+            "planning_requests": [request.model_dump(mode="json") for request in self.planning_requests.values()],
+            "strategy_plans": [plan.model_dump(mode="json") for plan in self.strategy_plans.values()],
         }
