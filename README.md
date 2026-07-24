@@ -79,7 +79,7 @@ python -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -e ".[openai]"
 ```
 
-安装 `openai` 可选依赖不会产生 API 费用。只有在配置 API Key 并选择 LLM 模式后，项目才会调用 OpenAI。
+`openai` 可选依赖只供 OpenAI Provider 使用；DeepSeek Provider 的 HTTP 客户端已包含在基础依赖中。安装依赖本身不会产生 API 费用，只有配置对应 API Key 并选择 LLM 模式后才会调用外部服务。
 
 ## 四、安装并构建前端
 
@@ -155,38 +155,91 @@ Stop-Process -Id $sandboxProcessId
 data\sandbox.db
 ```
 
-## 八、可选：使用 OpenAI Agent 规划
+## 八、可选：配置 LLM Agent 规划
 
-Fixture 模式完全在本地运行。只有 `LLM 烟测` 和 `Live` 模式需要 OpenAI API Key，并会产生实际 API 费用。
+Fixture 模式完全在本地运行。`LLM 烟测` 和 `Live` 可以选择 `openai` 或 `deepseek` Provider，并会产生对应服务的实际 API 费用。
 
-在启动项目前，于同一个 PowerShell 窗口设置：
+### LLM 烟测的虚拟资产
+
+`LLM 烟测` 不需要 `SANDBOX_HOLDER_SNAPSHOT_PATH`。系统根据场景的随机种子和目标 Token，确定性生成一份虚拟 holder snapshot，包括 Token 总量、eligible/locked/protocol/burned 来源桶和 holder 分布。相同 seed 与 Token 会产生相同结果，便于复现。
+
+初始化器仍使用统一的资产分配与守恒校验：
+
+```text
+背景 Token = Eligible Active Supply - Agent Token - 其他显式账户 Token
+背景 USDx  = Active USDx Supply - Agent USDx - 其他显式账户 USDx
+```
+
+预览会明确标记 `synthetic-holder-snapshot`。这些数据只用于烟测，不能解释为真实链上余额。`Live` 模式不会静默回退到虚拟数据。
+
+### 使用 DeepSeek 官网 API
+
+DeepSeek Provider 直接请求官网 `https://api.deepseek.com/chat/completions`，使用 DeepSeek 官网签发的密钥，不需要 `OPENAI_API_KEY`。在启动 Uvicorn 前，于同一个 PowerShell 窗口设置：
+
+```powershell
+$env:DEEPSEEK_API_KEY = "你的 DeepSeek 官网 API Key"
+$env:SANDBOX_DEEPSEEK_MODEL = "deepseek-chat"
+```
+
+通常不需要设置 API 地址。只有需要显式覆盖时才使用：
+
+```powershell
+$env:SANDBOX_DEEPSEEK_BASE_URL = "https://api.deepseek.com"
+```
+
+不要在地址末尾添加 `/chat/completions`，程序会自动拼接。其他可选配置：
+
+```powershell
+$env:SANDBOX_DEEPSEEK_TIMEOUT_SECONDS = "60"
+$env:SANDBOX_DEEPSEEK_MAX_RETRIES = "1"
+$env:SANDBOX_DEEPSEEK_MAX_IN_FLIGHT = "4"
+$env:SANDBOX_DEEPSEEK_MAX_OUTPUT_TOKENS = "4096"
+```
+
+启动后，在 Quick Start 中选择 `deepseek · deepseek-chat`，点击“检查”，然后选择 `LLM 烟测`。“检查”会实际生成并校验一份完整但无动作的 Planning Candidate，而不只是测试网络连通性。后端使用 JSON 输出模式接收结果，并在本地按照 Planning、Scenario Director 或 Agent Configuration 的 Pydantic Schema 重新校验；无效输出不会直接执行。
+
+### 使用 OpenAI 官网 API
 
 ```powershell
 $env:OPENAI_API_KEY = "你的 OpenAI API Key"
+$env:SANDBOX_OPENAI_MODEL = "gpt-5.6-terra"
 ```
 
-可选配置：
+使用 OpenAI Responses API 中转站时，同时设置该站点提供的根地址与模型名：
 
 ```powershell
-$env:SANDBOX_OPENAI_MODEL = "gpt-5.6-terra"
+$env:OPENAI_API_KEY = "中转站提供的 API Key"
+$env:SANDBOX_OPENAI_BASE_URL = "https://your-trusted-relay.example"
+$env:SANDBOX_OPENAI_MODEL = "中转站支持的模型名称"
+```
+
+`SANDBOX_OPENAI_BASE_URL` 是本项目专用配置，不要改用全局 `OPENAI_BASE_URL`，否则可能同时改变 Codex 或其他 OpenAI 客户端的请求目标。不要在地址末尾添加 `/responses`。中转站必须支持 Responses API、`responses.parse` 与结构化输出；Codex 能通过同一个域名工作，并不自动证明该模型和密钥也能完成本项目的完整规划 Schema 请求。
+
+其他可选配置：
+
+```powershell
 $env:SANDBOX_OPENAI_TIMEOUT_SECONDS = "30"
 $env:SANDBOX_OPENAI_MAX_RETRIES = "1"
 $env:SANDBOX_OPENAI_MAX_IN_FLIGHT = "4"
-$env:SANDBOX_OPENAI_MAX_OUTPUT_TOKENS = "1800"
+$env:SANDBOX_OPENAI_MAX_OUTPUT_TOKENS = "4096"
 ```
 
-然后使用第五节的 Uvicorn 命令启动项目。
+环境变量只在后端启动时读取。设置或修改任一 Key、模型或 Base URL 后，必须重启 Uvicorn，再刷新页面并执行 Provider 检查。`$env:NAME = "value"` 只对当前 PowerShell 进程有效，关闭终端或重启电脑后会消失。需要保存到当前 Windows 用户环境时，可使用 `[Environment]::SetEnvironmentVariable("DEEPSEEK_API_KEY", "新密钥", "User")`；设置后要新开 PowerShell。API Key 只由本地后端读取，不会写入 SQLite 或导出的沙盒归档。不要把 API Key 写入仓库文件、截图或提交到 Git。
 
-API Key 只由本地后端读取，不会写入 SQLite 或导出的沙盒归档。不要把 API Key 写入仓库文件或提交到 Git。
+Autonomous 运行按真实时间节拍推进：真实 1 秒对应界面显示的 1 个模拟分钟。LLM 规划由独立 Worker 处理，同一批最多并行 `MAX_IN_FLIGHT` 个请求；Provider 等待或重试不会冻结背景市场的模拟时钟。结果仍按请求的虚拟激活时间、Agent ID 和请求 ID 固定排序后提交，因此网络返回顺序不会决定模拟顺序。
+
+后端进程退出时无法保留内存中的 Worker。下次启动会把数据库里中断的 `Running` 分支恢复为 `Paused`，避免旧实验在后台自动产生 LLM 费用；确认 Provider 配置后点击运行即可继续。
 
 ## 九、可选：使用 Live 模式
 
-`Live` 模式除 OpenAI API Key 外，还需要一个本地 finalized holder snapshot JSON 文件。启动前设置：
+`Live` 模式除所选 LLM Provider 的 API Key 外，还需要一个本地 finalized holder snapshot JSON 文件。启动前设置：
 
 ```powershell
 $env:SANDBOX_HOLDER_SNAPSHOT_PATH = (Resolve-Path ".\path\to\finalized-holder-snapshot.json").Path
 $env:SANDBOX_HOLDER_CHAIN_ID = "ethereum"
 ```
+
+Live 页面中的链目录是程序固定的，目前包含 `Ethereum`、`Solana` 和 `Injective L1`。固定目录只表示支持这些链的场景身份；真正运行 Live 解析时，仍必须为当前选择的链配置匹配的 finalized holder snapshot。当前版本一次启动注册一个 `SANDBOX_HOLDER_CHAIN_ID` 与文件路径，因此未配置的链会在界面中标记为不可用，而不会在点击解析后才报错。Injective L1 的内部目录值为 `injective`，对应 snapshot 的 `chain_id` 也应使用该值。
 
 文件至少需要包含：
 
@@ -276,13 +329,17 @@ Pop-Location
 
 ### 重启后提示 `invalid local session`
 
-后端每次启动都会生成新的本地会话令牌。浏览器如果仍携带上一次运行留下的 `sandbox_session` Cookie，API 会拒绝该旧会话。
+后端每次启动都会生成新的本地会话令牌。当前版本会在页面刷新或其他安全读取请求中自动把旧 `sandbox_session` Cookie 换成当前令牌，不需要手动清理站点数据。
 
-在浏览器中清除 `127.0.0.1` 的站点数据或删除名为 `sandbox_session` 的 Cookie，然后重新打开 <http://127.0.0.1:8000>。仅刷新旧页面不一定能清除该 Cookie。
+如果旧页面在后端重启后立即提交写操作，该操作会被拒绝一次；刷新 <http://127.0.0.1:8000> 后重试即可。`sandbox_session` 只包含随机会话标识，不包含实验、存档或用户数据；运行数据仍保存在 `data\sandbox.db` 或用户显式导出的归档中。
 
 ### Live 或 LLM 模式无法解析
 
-- `LLM 烟测` 需要有效的 `OPENAI_API_KEY`。
+- `LLM 烟测` 不需要 holder snapshot，但需要所选 Provider 对应的 `OPENAI_API_KEY` 或 `DEEPSEEK_API_KEY`。
 - `Live` 还需要有效的 `SANDBOX_HOLDER_SNAPSHOT_PATH`。
 - Live 页面选择的链和 Token 必须与 snapshot 文件匹配。
-- Provider 检查失败时，系统不会自动退回 Fixture 模式。
+- 修改环境变量后必须重启 Uvicorn；只刷新浏览器不会更新后端配置。
+- OpenAI 中转站的 `502`、连接错误或超时属于上游请求失败；查看运行顶部的 `failed` 计数和 SQLite 中的 `llm_records`，不要把 `0 planning` 误读为从未创建规划请求。
+- API 能访问不等于规划可执行：返回内容还必须是完整 JSON，并通过 directive 必填字段、能力和 `based_on_strategy_revision` 校验。失败记录会保存具体的安全裁剪错误；DeepSeek 的第二次尝试会带上第一次的校验反馈。
+- `MAX_OUTPUT_TOKENS` 同时要容纳模型的推理 token 和最终 JSON；默认值为 `4096`。若手动保留了旧的 `1800` 环境变量，可能出现空内容或 `Unterminated string`，应修改后重启。
+- Provider 检查失败时，系统不会自动改用另一家 Provider，也不会把 Live 静默退回 Fixture 或烟测模式。

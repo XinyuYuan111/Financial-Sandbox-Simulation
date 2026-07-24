@@ -19,6 +19,7 @@ from sandbox.contracts.agent_configuration import (
 )
 from sandbox.core.errors import ValidationError
 from sandbox.core.rng import NamedRandomStreams
+from sandbox.core.time import SIMULATION_PLAN_HORIZON_US
 
 
 CAPABILITY_REGISTRY = frozenset({
@@ -53,7 +54,7 @@ DEFAULTS: dict[str, Any] = {
     "base_persona.communication_propensity_milli": 400,
     "base_persona.bounded_notes": "",
     "cognitive_profile.max_plans_per_window": 2,
-    "cognitive_profile.planning_window_us": 300_000_000,
+    "cognitive_profile.planning_window_us": SIMULATION_PLAN_HORIZON_US,
     "cognitive_profile.context_capacity": 8_000,
     "cognitive_profile.memory_search_limit": 5,
     "attention_profile.information_capacity": 20,

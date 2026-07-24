@@ -91,7 +91,7 @@ class AgentConfigurationDraft(StrictFrozenModel):
     agent_id: str | None = Field(default=None, min_length=1, max_length=256)
     display_name: str | None = Field(default=None, min_length=1, max_length=128)
     public_identity: str | None = Field(default=None, max_length=500)
-    strategy: Literal["rule", "replay", "openai"] | None = None
+    strategy: Literal["rule", "replay", "openai", "deepseek"] | None = None
     archetype_ids: list[ParticipantArchetypeId] = Field(default_factory=list, max_length=5)
     role_tags: list[str] | None = Field(default=None, max_length=16)
     capability_set: list[str] | None = Field(default=None, max_length=32)

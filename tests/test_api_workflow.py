@@ -140,6 +140,63 @@ class ApiWorkflowTests(unittest.TestCase):
         )
         self.assertEqual(response.status_code, 405)
 
+    def test_chain_catalog_is_fixed_while_holder_sources_report_runtime_configuration(self) -> None:
+        response = self.client.get("/api/v1/chains")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            [(item["chain_id"], item["label"]) for item in response.json()],
+            [("ethereum", "Ethereum"), ("solana", "Solana"), ("injective", "Injective L1")],
+        )
+        self.assertTrue(all(item["holder_source_configured"] is False for item in response.json()))
+
+    def test_provider_catalog_exposes_openai_and_deepseek_independently(self) -> None:
+        response = self.client.get("/api/v1/providers")
+
+        self.assertEqual(response.status_code, 200)
+        profiles = {item["provider"]: item for item in response.json()}
+        self.assertEqual(set(profiles), {"openai", "deepseek"})
+        self.assertEqual(profiles["openai"]["endpoint_class"], "responses")
+        self.assertEqual(profiles["deepseek"]["endpoint_class"], "chat_completions")
+
+    def test_stale_session_cookie_is_rotated_during_safe_page_load(self) -> None:
+        current_token = self.client.app.state.session_token
+        self.client.cookies.set(
+            "sandbox_session",
+            "previous-server-token",
+            domain="testserver.local",
+            path="/",
+        )
+
+        response = self.client.get("/")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            self.client.cookies.get("sandbox_session", domain="testserver.local", path="/"),
+            current_token,
+        )
+        self.assertIn("HttpOnly", response.headers["set-cookie"])
+        self.assertIn("SameSite=strict", response.headers["set-cookie"])
+
+    def test_stale_session_write_is_rejected_once_and_receives_current_cookie(self) -> None:
+        current_token = self.client.app.state.session_token
+        self.client.cookies.set(
+            "sandbox_session",
+            "previous-server-token",
+            domain="testserver.local",
+            path="/",
+        )
+
+        response = self.client.post("/api/v1/scenarios", json={})
+
+        self.assertEqual(response.status_code, 403)
+        self.assertEqual(response.json()["error_code"], "INVALID_SESSION")
+        self.assertTrue(response.json()["retryable"])
+        self.assertEqual(
+            self.client.cookies.get("sandbox_session", domain="testserver.local", path="/"),
+            current_token,
+        )
+
     def test_agent_interpretation_requires_suggestion_disposition_and_resolution_confirmation(self) -> None:
         self.client.app.state.manager.initializer.llm_gateway = LLMGateway({
             "openai": FakeAgentConfigurationAdapter(),  # type: ignore[dict-item]

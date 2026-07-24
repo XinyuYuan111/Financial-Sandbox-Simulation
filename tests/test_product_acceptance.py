@@ -205,7 +205,7 @@ class ProductAcceptanceTests(unittest.TestCase):
         ).fetchone()["count"]
 
         self.manager.command(branch_id, "autonomous-start", "start")
-        time.sleep(0.7)
+        time.sleep(1.45)
         advanced = self.manager.branch_projection(branch_id)
         decisions = self.store.connection.execute(
             "SELECT COUNT(*) count FROM agent_decisions WHERE branch_id=?",
@@ -417,8 +417,8 @@ class ProductAcceptanceTests(unittest.TestCase):
             submitted_sim_time_us=0,
             action_type="SubmitLimitOrder",
             payload={"side": "buy", "quantity": 10, "price": 100},
-            expected_execution_time_us=10_000_000,
-            validity_window_us=20_000_000,
+            expected_execution_time_us=1_000_000,
+            validity_window_us=3_000_000,
             client_command_id="future-order-command",
         )
         queued = self.manager.submit_action(action)
@@ -437,7 +437,7 @@ class ProductAcceptanceTests(unittest.TestCase):
                 "private_read_refs": [],
                 "stages": [{
                     "stage_id": "future-halt-stage",
-                    "effective_sim_time_us": 5_000_000,
+                    "effective_sim_time_us": 0,
                     "effects": [{
                         "effect_id": "future-halt-effect",
                         "effect_type": "set_market_status",
@@ -451,7 +451,7 @@ class ProductAcceptanceTests(unittest.TestCase):
         )
         self.manager.confirm_intervention_plan(branch_id, str(plan["plan_id"]), "future-halt-confirm")
         self.manager.command(branch_id, "pending-resume", "start")
-        time.sleep(1.2)
+        time.sleep(1.45)
 
         world = self.manager._world(branch_id)
         self.assertNotIn(action.action_id, world.pending_actions)

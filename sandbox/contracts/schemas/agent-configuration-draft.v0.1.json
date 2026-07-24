@@ -482,7 +482,8 @@
           "enum": [
             "rule",
             "replay",
-            "openai"
+            "openai",
+            "deepseek"
           ],
           "type": "string"
         },

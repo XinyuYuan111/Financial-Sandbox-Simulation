@@ -10,6 +10,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from sandbox.agents.llm_gateway import LLMGateway
+from sandbox.agents.providers.deepseek import DeepSeekProviderAdapter
 from sandbox.agents.providers.openai import OpenAIProviderAdapter
 from sandbox.api.routes import router
 from sandbox.app.settings import Settings
@@ -30,13 +31,26 @@ async def lifespan(app: FastAPI):
     archive_service = ArchiveService(store, settings.runtime_version)
     openai_adapter = OpenAIProviderAdapter(
         api_key=settings.openai_api_key,
+        base_url=settings.openai_base_url,
         model=settings.openai_model,
         timeout_seconds=settings.openai_timeout_seconds,
         max_retries=settings.openai_max_retries,
         max_in_flight=settings.openai_max_in_flight,
         max_output_tokens=settings.openai_max_output_tokens,
     )
-    gateway = LLMGateway(adapters={"openai": openai_adapter}, max_in_flight=settings.openai_max_in_flight)
+    deepseek_adapter = DeepSeekProviderAdapter(
+        api_key=settings.deepseek_api_key,
+        base_url=settings.deepseek_base_url,
+        model=settings.deepseek_model,
+        timeout_seconds=settings.deepseek_timeout_seconds,
+        max_retries=settings.deepseek_max_retries,
+        max_in_flight=settings.deepseek_max_in_flight,
+        max_output_tokens=settings.deepseek_max_output_tokens,
+    )
+    gateway = LLMGateway(
+        adapters={"openai": openai_adapter, "deepseek": deepseek_adapter},
+        max_in_flight=max(settings.openai_max_in_flight, settings.deepseek_max_in_flight),
+    )
     holder_providers = {}
     if settings.holder_snapshot_path is not None:
         holder_providers[settings.holder_snapshot_chain_id] = FinalizedSnapshotFileProvider(
@@ -48,6 +62,7 @@ async def lifespan(app: FastAPI):
     app.state.store = store
     app.state.llm_gateway = gateway
     app.state.manager = RunManager(store, initializer, archive_service, settings.runtime_version)
+    app.state.manager.recover_interrupted_branches()
     app.state.session_token = secrets.token_urlsafe(32)
     yield
     app.state.manager.close()
@@ -70,10 +85,13 @@ async def local_session(request: Request, call_next):
             return JSONResponse(status_code=403, content={"error_code": "CROSS_ORIGIN_REJECTED", "message": "state-changing requests must be same-origin", "field_path": None, "retryable": False, "command_id": None})
     token = getattr(request.app.state, "session_token", None)
     supplied = request.cookies.get("sandbox_session")
-    if request.url.path.startswith("/api/") and supplied is not None and supplied != token:
-        return JSONResponse(status_code=403, content={"error_code": "INVALID_SESSION", "message": "invalid local session", "field_path": None, "retryable": False, "command_id": None})
+    stale_session = token is not None and supplied is not None and supplied != token
+    if request.url.path.startswith("/api/") and stale_session and request.method not in {"GET", "HEAD", "OPTIONS"}:
+        response = JSONResponse(status_code=403, content={"error_code": "INVALID_SESSION", "message": "local session changed; refresh and retry", "field_path": None, "retryable": True, "command_id": None})
+        response.set_cookie("sandbox_session", token, httponly=True, samesite="strict")
+        return response
     response = await call_next(request)
-    if token and supplied is None:
+    if token and supplied != token:
         response.set_cookie("sandbox_session", token, httponly=True, samesite="strict")
     return response
 

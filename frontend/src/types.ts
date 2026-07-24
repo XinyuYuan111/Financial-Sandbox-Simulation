@@ -82,6 +82,15 @@ export type Projection = {
   market_status?: 'active' | 'halted'
   deferred_observation_count?: number
   terminal_reason?: string | null
+  planning?: {
+    total: number
+    pending: number
+    applied: number
+    failed: number
+    active_plans: number
+    last_failure_code: string | null
+    last_failure_message: string | null
+  }
   market: {
     market_id: string
     bids: Order[]
@@ -133,9 +142,16 @@ export type EventEnvelope = {
 export type ProviderProfile = {
   provider: string
   model?: string
+  endpoint_class?: 'responses' | 'chat_completions'
   key_present?: boolean
   timeout_seconds?: number
   max_in_flight?: number
+}
+
+export type ChainOption = {
+  chain_id: string
+  label: string
+  holder_source_configured: boolean
 }
 
 export type ConfigurationProvenance = {
@@ -162,7 +178,7 @@ export type AgentConfigurationDraft = {
   agent_id: string | null
   display_name: string | null
   public_identity: string | null
-  strategy: 'rule' | 'replay' | 'openai' | null
+  strategy: 'rule' | 'replay' | 'openai' | 'deepseek' | null
   archetype_ids: string[]
   role_tags: string[] | null
   capability_set: string[] | null

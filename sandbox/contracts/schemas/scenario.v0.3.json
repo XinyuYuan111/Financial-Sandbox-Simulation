@@ -15,7 +15,8 @@
           "enum": [
             "rule",
             "replay",
-            "openai"
+            "openai",
+            "deepseek"
           ],
           "title": "Strategy",
           "type": "string"
@@ -128,7 +129,8 @@
               "enum": [
                 "rule",
                 "replay",
-                "openai"
+                "openai",
+                "deepseek"
               ],
               "type": "string"
             },
@@ -922,7 +924,7 @@
           "type": "integer"
         },
         "planning_window_us": {
-          "default": 300000000,
+          "default": 30000000,
           "minimum": 1,
           "title": "Planning Window Us",
           "type": "integer"

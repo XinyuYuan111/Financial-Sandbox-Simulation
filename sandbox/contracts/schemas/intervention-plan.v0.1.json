@@ -189,7 +189,8 @@
           "default": "typed_control_plane.v0.1",
           "enum": [
             "typed_control_plane.v0.1",
-            "openai.v0.1"
+            "openai.v0.1",
+            "deepseek.v0.1"
           ],
           "title": "Director Kind",
           "type": "string"

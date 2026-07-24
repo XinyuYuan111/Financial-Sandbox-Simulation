@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import unittest
 from types import SimpleNamespace
+from unittest.mock import patch
 
 from sandbox.agents.providers.openai import OpenAIProviderAdapter
+from sandbox.app.settings import Settings
 from sandbox.contracts.agent import DecisionRationale
 from sandbox.contracts.intervention import DirectorPlanCandidate, DirectorProviderRequest
 from sandbox.contracts.planning import PlanningProviderRequest, PlanningResultCandidate
@@ -26,8 +28,6 @@ class FakeResponses:
     async def parse(self, **kwargs: object) -> FakeResponse:
         self.calls.append(kwargs)
         text_format = kwargs["text_format"]
-        if getattr(text_format, "__name__", "") == "PlanningPreflightResult":
-            return FakeResponse({"ok": True}, "resp_preflight")
         if getattr(text_format, "__name__", "") == "DirectorPlanCandidate":
             return FakeResponse(DirectorPlanCandidate(
                 stages=[{
@@ -98,6 +98,34 @@ class OpenAIAdapterTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(report["ok"])
         self.assertEqual(report["message"], "OPENAI_API_KEY is not configured")
         self.assertEqual(adapter.profile.key_present, False)
+
+    async def test_custom_base_url_is_forwarded_to_the_sdk_client(self) -> None:
+        with patch("openai.AsyncOpenAI") as client_constructor:
+            adapter = OpenAIProviderAdapter(
+                api_key="relay-key",
+                base_url="https://v1.codx.qzz.io",
+                model="relay-model",
+            )
+            adapter._client_or_create()
+
+        client_constructor.assert_called_once_with(
+            api_key="relay-key",
+            base_url="https://v1.codx.qzz.io",
+            timeout=30,
+            max_retries=0,
+        )
+
+    async def test_settings_read_the_sandbox_openai_base_url_variable(self) -> None:
+        with patch.dict(
+            "os.environ",
+            {
+                "SANDBOX_OPENAI_BASE_URL": "  https://v1.codx.qzz.io  ",
+                "SANDBOX_OPENAI_STORE": "false",
+            },
+        ):
+            settings = Settings.from_environment()
+
+        self.assertEqual(settings.openai_base_url, "https://v1.codx.qzz.io")
 
     async def test_scenario_director_returns_only_a_typed_candidate_and_redacts_context(self) -> None:
         responses = FakeResponses()

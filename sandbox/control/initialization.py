@@ -31,6 +31,95 @@ class HolderDataProvider(Protocol):
     async def load_finalized_snapshot(self, chain_id: str, target_token: str) -> dict[str, object]: ...
 
 
+SUPPORTED_CHAIN_CATALOG: tuple[dict[str, str], ...] = (
+    {"chain_id": "ethereum", "label": "Ethereum"},
+    {"chain_id": "solana", "label": "Solana"},
+    {"chain_id": "injective", "label": "Injective L1"},
+)
+
+
+def chain_catalog(configured_chain_ids: set[str]) -> list[dict[str, object]]:
+    return [
+        {
+            **chain,
+            "holder_source_configured": chain["chain_id"] in configured_chain_ids,
+        }
+        for chain in SUPPORTED_CHAIN_CATALOG
+    ]
+
+
+def synthetic_smoke_snapshot(*, seed: int, target_token: str) -> HolderSnapshot:
+    """Build a deterministic, conserved holder snapshot for LLM smoke runs."""
+    digest = hashlib.sha256(f"synthetic-smoke.v0.1:{seed}:{target_token}".encode()).digest()
+    total_supply = 5_000_000 + int.from_bytes(digest[0:8], "big") % 95_000_001
+    eligible_ratio_milli = 700 + digest[8] % 251
+    coverage_ratio_milli = 650 + digest[9] % 301
+    eligible_active_supply = total_supply * eligible_ratio_milli // 1_000
+    inactive_supply = total_supply - eligible_active_supply
+    locked_supply = inactive_supply * (450 + digest[10] % 151) // 1_000
+    protocol_supply = (inactive_supply - locked_supply) * (300 + digest[11] % 201) // 1_000
+    burned_supply = inactive_supply - locked_supply - protocol_supply
+    covered_eligible_supply = max(
+        1,
+        eligible_active_supply * coverage_ratio_milli // 1_000,
+    )
+    active_holder_count = 5_000 + int.from_bytes(digest[12:16], "big") % 45_001
+    average_balance = max(1, eligible_active_supply // active_holder_count)
+    snapshot_hash = hashlib.sha256(
+        f"{seed}:{target_token}:{total_supply}:{eligible_active_supply}".encode()
+    ).hexdigest()
+    return HolderSnapshot(
+        provider="synthetic-holder-snapshot",
+        chain_id="synthetic-smoke",
+        target_token=target_token,
+        block_height=1 + int.from_bytes(digest[16:24], "big") % 1_000_000_000,
+        block_hash=f"synthetic:{snapshot_hash}",
+        finalized=True,
+        coverage_ratio_milli=coverage_ratio_milli,
+        total_supply=total_supply,
+        eligible_active_supply=eligible_active_supply,
+        covered_eligible_supply=covered_eligible_supply,
+        source_buckets=[
+            {
+                "bucket_id": "synthetic-eligible-active",
+                "category": "eligible_active",
+                "amount": eligible_active_supply,
+                "eligible_for_active_market": True,
+            },
+            {
+                "bucket_id": "synthetic-locked",
+                "category": "locked",
+                "amount": locked_supply,
+                "eligible_for_active_market": False,
+            },
+            {
+                "bucket_id": "synthetic-protocol",
+                "category": "protocol",
+                "amount": protocol_supply,
+                "eligible_for_active_market": False,
+            },
+            {
+                "bucket_id": "synthetic-burned",
+                "category": "burned",
+                "amount": burned_supply,
+                "eligible_for_active_market": False,
+            },
+        ],
+        holder_distribution={
+            "active_holder_count": active_holder_count,
+            "p25_balance": max(1, average_balance // 4),
+            "p50_balance": average_balance,
+            "p75_balance": average_balance * 3,
+            "p90_balance": average_balance * 10,
+            "p99_balance": average_balance * 50,
+            "top_10_concentration_milli": 350 + digest[24] % 451,
+        },
+        content_hash=f"sha256:{snapshot_hash}",
+        source_name="deterministic synthetic LLM smoke input",
+        mode="synthetic-smoke",
+    )
+
+
 @dataclass(slots=True)
 class FinalizedSnapshotFileProvider:
     path: Path
@@ -206,18 +295,27 @@ class Initializer:
             llm_report: dict[str, object] = {"ok": True, "provider": "fixture", "model": "deterministic", "mode": "fixture"}
         elif draft.mode == "live_llm_smoke":
             assert draft.llm_provider is not None
-            snapshot_path = Path(__file__).resolve().parents[2] / "fixtures" / "holder_snapshots" / "framework-alpha.fixture.v0.3.json"
-            raw_snapshot = json.loads(snapshot_path.read_text(encoding="utf-8"))
-            raw_snapshot.update({"target_token": draft.target_token, "mode": "synthetic-smoke"})
-            snapshot = HolderSnapshot.model_validate(raw_snapshot)
+            snapshot = synthetic_smoke_snapshot(seed=draft.seed, target_token=draft.target_token)
             llm_report = await self.llm_gateway.preflight(draft.llm_provider)
-            provider_report = {"mode": "live_llm_smoke", "provider": "synthetic-holder-snapshot", "ok": True}
-            warnings = ["OpenAI smoke mode uses a synthetic market and does not use live chain holder data."]
+            provider_report = {
+                "mode": "live_llm_smoke",
+                "provider": snapshot.provider,
+                "ok": True,
+                "synthetic": True,
+                "total_supply": snapshot.total_supply,
+                "eligible_active_supply": snapshot.eligible_active_supply,
+            }
+            warnings = [
+                "LLM smoke mode uses deterministic synthetic Token and USDx supplies; no live holder data was used."
+            ]
         else:
             assert draft.chain_id is not None and draft.llm_provider is not None
             provider = self.holder_providers.get(draft.chain_id)
             if provider is None:
-                raise ValidationError(f"holder provider for chain '{draft.chain_id}' is not configured")
+                raise ValidationError(
+                    f"holder provider for chain '{draft.chain_id}' is not configured; "
+                    "set SANDBOX_HOLDER_CHAIN_ID and SANDBOX_HOLDER_SNAPSHOT_PATH"
+                )
             provider_report = await provider.preflight(draft.chain_id, draft.target_token)
             if not provider_report.get("ok"):
                 raise ValidationError(f"holder provider preflight failed: {provider_report.get('message', 'unknown error')}")
@@ -299,7 +397,7 @@ class Initializer:
                 active_usdx_supply=active_usdx_supply,
                 holder_distribution=snapshot.holder_distribution,
                 portfolio=draft.portfolio,
-                planner_kind="openai" if draft.mode != "test_fixture" else "rule",
+                planner_kind=draft.llm_provider or "rule",
                 drafts=list(draft.agent_configuration_drafts) if draft.agent_configuration_drafts is not None else None,
             )
             agents = generated.allocations

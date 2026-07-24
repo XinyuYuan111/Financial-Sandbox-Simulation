@@ -13,7 +13,7 @@ class AgentConfig(BaseModel):
 
     agent_id: str
     display_name: str
-    strategy: Literal["rule", "replay", "openai"]
+    strategy: Literal["rule", "replay", "openai", "deepseek"]
     role_tags: list[str] = Field(default_factory=list)
     capabilities: list[str] = Field(default_factory=lambda: ["market.trade", "information.read"])
     token_balance: int = Field(ge=0)

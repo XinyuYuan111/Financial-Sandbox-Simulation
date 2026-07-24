@@ -36,6 +36,12 @@ export function AppShell() {
   const [error, setError] = useState<string | null>(null)
 
   const activeBranch = useMemo(() => run?.branches.find(branch => branch.branch_id === branchId) ?? null, [branchId, run])
+  const activeLlmProvider = useMemo(() => {
+    const profile = projection?.agents
+      .map(agent => agent.planner_profile_id)
+      .find(value => value && !/^(rule|replay)\./.test(value))
+    return profile?.split('.', 1)[0] ?? 'openai'
+  }, [projection])
 
   const loadBranch = useCallback(async (targetRun: Run, targetBranchId: string, cursor?: number) => {
     setBusy(true); setError(null)
@@ -142,14 +148,14 @@ export function AppShell() {
   }
 
   return <div className="app-shell">
-    <RunTopbar run={run} branch={historicalCursor === null ? activeBranch : { ...activeBranch, status: 'Historical' }} simTimeUs={projection.sim_time_us} cursor={projection.cursor} agents={projection.agents} busy={busy} onCommand={command} onRefresh={refresh} />
+    <RunTopbar run={run} branch={historicalCursor === null ? activeBranch : { ...activeBranch, status: 'Historical' }} simTimeUs={projection.sim_time_us} cursor={projection.cursor} agents={projection.agents} planning={projection.planning} busy={busy} onCommand={command} onRefresh={refresh} />
     <aside className="app-sidebar"><nav>{(['run', 'manage'] as const).map(group => <div className="nav-group" key={group}><span>{group === 'run' ? '运行' : '管理'}</span>{navigation.filter(item => item.group === group).map(item => { const Icon = item.icon; return <button key={item.id} className={view === item.id ? 'selected' : ''} onClick={() => setView(item.id)}><Icon size={17} /><b>{item.label}</b></button> })}</div>)}</nav><div className="run-switcher"><label>当前实验<select value={run.run_id} onChange={event => { void selectRun(event.target.value) }}>{runs.map(item => <option value={item.run_id} key={item.run_id}>{item.name}</option>)}</select></label><span><Boxes size={14} />{run.branches.length} branches</span><small>{shortId(run.run_id)}</small></div></aside>
     <main className="app-workspace">{error ? <ErrorBanner message={error} onClose={() => setError(null)} /> : null}{busy ? <div className="loading-bar" /> : null}
       {view === 'market' ? <MarketWorkspace projection={projection} /> : null}
       {view === 'agents' ? <AgentExplorer branchId={branchId} cursor={historicalCursor ?? undefined} /> : null}
       {view === 'events' ? <EventExplorer events={events} /> : null}
       {view === 'information' ? <InformationWorkspace projection={projection} /> : null}
-      {view === 'interventions' ? <InterventionWorkspace branchId={branchId} branchStatus={historicalCursor === null ? activeBranch.status : 'Historical'} simTimeUs={projection.sim_time_us} onChanged={refresh} /> : null}
+      {view === 'interventions' ? <InterventionWorkspace branchId={branchId} branchStatus={historicalCursor === null ? activeBranch.status : 'Historical'} simTimeUs={projection.sim_time_us} provider={activeLlmProvider} onChanged={refresh} /> : null}
       {view === 'branches' ? <BranchExplorer run={run} activeBranchId={branchId} projection={projection} checkpointId={checkpointId} onSelect={next => { void loadBranch(run, next) }} onFork={fork} onReplay={cursor => { void loadBranch(run, branchId, cursor) }} onExport={exportArchive} onImport={importArchive} /> : null}
       {view === 'scenario' ? <QuickStartPage embedded onRun={acceptRun} /> : null}
     </main>

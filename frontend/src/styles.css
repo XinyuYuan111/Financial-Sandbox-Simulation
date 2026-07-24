@@ -46,6 +46,7 @@ small { color: var(--muted); }
 .run-telemetry { display: flex; align-items: center; justify-content: center; gap: 14px; white-space: nowrap; }
 .run-telemetry > span:not(.status-badge) { display: flex; align-items: baseline; gap: 4px; color: var(--muted); font-size: 11px; }
 .run-telemetry b { color: var(--ink); font-size: 12px; }
+.run-telemetry .telemetry-warning, .run-telemetry .telemetry-warning b { color: var(--amber); }
 .run-controls { display: flex; justify-content: flex-end; gap: 5px; }
 .icon-button { width: 34px; height: 34px; display: inline-grid; place-items: center; padding: 0; border: 1px solid var(--line); border-radius: 5px; background: var(--surface); cursor: pointer; }
 .icon-button:hover:not(:disabled) { border-color: #97aaa9; background: var(--teal-soft); color: var(--teal-dark); }

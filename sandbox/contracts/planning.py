@@ -122,6 +122,8 @@ class CommunicationDirective(StrictFrozenModel):
     def validate_targets(self) -> "CommunicationDirective":
         if self.channel == "PrivateChannel" and not self.target_ids:
             raise ValueError("private communication requires target_ids")
+        if self.channel != "PrivateChannel" and self.target_ids:
+            raise ValueError("public communication channels cannot declare target_ids")
         return self
 
 
@@ -229,7 +231,7 @@ def validate_planning_transition(current: PlanningRequest, next_request: Plannin
 class ProviderProfile(StrictFrozenModel):
     provider: str
     model: str
-    endpoint_class: Literal["responses"] = "responses"
+    endpoint_class: Literal["responses", "chat_completions"] = "responses"
     timeout_seconds: int = Field(ge=1, le=600)
     max_retries: int = Field(ge=0, le=10)
     max_in_flight: int = Field(ge=1, le=1_000)
@@ -253,6 +255,7 @@ class PlanningProviderRequest(StrictFrozenModel):
     request_id: str
     agent_id: str
     context_hash: str
+    based_on_strategy_revision: int = Field(default=0, ge=0)
     planner_instructions: str = Field(min_length=1, max_length=10_000)
     persona: dict[str, object]
     observation: dict[str, object]

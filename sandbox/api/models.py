@@ -16,7 +16,7 @@ class CreateRunRequest(BaseModel):
 class InterpretAgentConfigurationRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     user_intent: str = Field(min_length=1, max_length=4_000)
-    provider: Literal["openai"] = "openai"
+    provider: Literal["openai", "deepseek"] = "openai"
 
 
 class CommandRequest(BaseModel):
@@ -53,6 +53,6 @@ class InterpretInterventionPlanRequest(BaseModel):
     client_command_id: str = Field(min_length=1, max_length=256)
     user_intent: str = Field(min_length=1, max_length=4_000)
     requested_effective_time_us: int = Field(ge=0)
-    provider: Literal["openai"] = "openai"
+    provider: Literal["openai", "deepseek"] = "openai"
     access_scope: DirectorAccessScope = Field(default_factory=DirectorAccessScope)
     private_read_refs: list[PrivateStateRef] = Field(default_factory=list, max_length=2_048)

@@ -900,6 +900,17 @@ class SimulationWorld:
         }
 
     def projection(self, branch_id: str, state_version: int, status: str) -> dict[str, object]:
+        planning_requests = list(self.planning_requests.values())
+        terminal_requests = [request for request in planning_requests if request.state == "Terminal"]
+        failed_requests = [
+            request for request in terminal_requests
+            if request.terminal_outcome in {"failed", "timed_out"}
+        ]
+        latest_failure = max(
+            failed_requests,
+            key=lambda request: (request.requested_sim_time_us, request.request_id),
+            default=None,
+        )
         return {
             "branch_id": branch_id,
             "cursor": state_version,
@@ -914,6 +925,22 @@ class SimulationWorld:
             "deferred_observation_count": len(self.deferred_observation_ids),
             "pending_delivery_count": len(self.pending_deliveries),
             "terminal_reason": self.terminal_reason,
+            "planning": {
+                "total": len(planning_requests),
+                "pending": sum(request.state != "Terminal" for request in planning_requests),
+                "applied": sum(request.terminal_outcome == "applied" for request in terminal_requests),
+                "failed": len(failed_requests),
+                "active_plans": sum(
+                    1
+                    for state in self.agent_runtime_states.values()
+                    if state.active_plan_id is not None
+                    and state.active_plan_id in self.strategy_plans
+                    and self.strategy_plans[state.active_plan_id].valid_from_sim_time_us
+                    <= self.sim_time_us
+                    < self.strategy_plans[state.active_plan_id].valid_until_sim_time_us
+                ),
+                "last_failure_code": latest_failure.error_code if latest_failure else None,
+            },
         }
 
     def to_json(self) -> dict[str, object]:

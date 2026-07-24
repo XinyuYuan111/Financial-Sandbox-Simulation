@@ -15,6 +15,7 @@ from sandbox.contracts.planning import (
 )
 from sandbox.core.errors import ConflictError, ValidationError
 from sandbox.core.ids import deterministic_id
+from sandbox.core.time import SIMULATION_PLAN_HORIZON_US
 from sandbox.agents.reactive import evaluate_condition
 
 
@@ -41,7 +42,7 @@ class RulePlanner:
     ) -> PlanningResultCandidate:
         return PlanningResultCandidate(
             based_on_strategy_revision=state.active_strategy_revision,
-            valid_for_us=300_000_000,
+            valid_for_us=SIMULATION_PLAN_HORIZON_US,
             goals=[],
             activation_preconditions=[],
             constraints=[],
@@ -196,7 +197,7 @@ def fixture_candidate(
         raise ValidationError(f"fixture planner does not support '{action_type}'")
     return PlanningResultCandidate(
         based_on_strategy_revision=strategy_revision,
-        valid_for_us=300_000_000,
+        valid_for_us=SIMULATION_PLAN_HORIZON_US,
         goals=[],
         activation_preconditions=[],
         constraints=[],

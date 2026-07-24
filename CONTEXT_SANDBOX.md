@@ -8,6 +8,14 @@
 用户向沙盒引入的外生信息；它只能通过正常的信息传播边界影响 Agent 可获得的内容，不自动成为权威世界事实。
 _Avoid_: State Intervention、系统事实、直接状态修改
 
+**Supported Chain Catalog**:
+产品固定版本中的可选链身份与显示名称目录，例如 Ethereum、Solana 和 Injective L1；它定义用户可以选择的网络，不代表该进程已经拥有对应链的 holder 数据。
+_Avoid_: Holder Snapshot Provider、任意用户输入链名、链上数据已接通
+
+**Holder Snapshot Provider**:
+为指定 Supported Chain 提供已最终确认、可校验的 holder snapshot 的运行时数据源。它必须独立配置并通过链身份、Token、最终性和守恒校验，不能由固定链目录或 LLM 推断替代。
+_Avoid_: 链目录、实时余额猜测、合成 Fixture 数据冒充 Live 数据
+
 **State Intervention**:
 用户明确授权、具有受支持类型和确定语义的外生世界变化；它在已暂停分支的确定事件边界由相关状态所有者校验和应用。
 _Avoid_: Information Intervention、任意状态 Patch、LLM 直接执行

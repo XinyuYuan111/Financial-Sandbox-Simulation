@@ -179,7 +179,7 @@ class EffectPreview(StrictFrozenModel):
 
 
 class DirectorRecord(StrictFrozenModel):
-    director_kind: Literal["typed_control_plane.v0.1", "openai.v0.1"] = "typed_control_plane.v0.1"
+    director_kind: Literal["typed_control_plane.v0.1", "openai.v0.1", "deepseek.v0.1"] = "typed_control_plane.v0.1"
     submitted_intent: str = Field(min_length=1, max_length=4_000)
     typed_output: list[dict[str, object]] = Field(default_factory=list, max_length=32)
     provider: str | None = Field(default=None, max_length=128)

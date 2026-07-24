@@ -3,6 +3,7 @@ import { Check, CheckCircle2, Database, KeyRound, LoaderCircle, Play, RefreshCw,
 import { api } from '../../api'
 import type {
   AgentConfigurationDraft,
+  ChainOption,
   ParticipantArchetype,
   ProviderProfile,
   ResolvedPreview,
@@ -12,6 +13,12 @@ import { ErrorBanner, formatInteger, StatusBadge } from '../../components/ui'
 
 type Mode = 'test_fixture' | 'live_llm_smoke' | 'live'
 type InputMode = 'random' | 'natural_language' | 'detailed'
+
+const BUILT_IN_CHAINS: ChainOption[] = [
+  { chain_id: 'ethereum', label: 'Ethereum', holder_source_configured: false },
+  { chain_id: 'solana', label: 'Solana', holder_source_configured: false },
+  { chain_id: 'injective', label: 'Injective L1', holder_source_configured: false },
+]
 
 const asOptionalInteger = (value: string) => value.trim() ? Number.parseInt(value, 10) : null
 const populationPreset = (count: number) => count <= 4 ? 'smoke' : count <= 20 ? 'compact' : 'standard'
@@ -27,6 +34,7 @@ export function QuickStartPage({ onRun, embedded = false }: { onRun: (run: Run) 
   const [compositionCorrelation, setCompositionCorrelation] = useState(35)
   const [provider, setProvider] = useState('openai')
   const [chain, setChain] = useState('ethereum')
+  const [chains, setChains] = useState<ChainOption[]>(BUILT_IN_CHAINS)
   const [providers, setProviders] = useState<ProviderProfile[]>([])
   const [archetypes, setArchetypes] = useState<ParticipantArchetype[]>([])
   const [selectedArchetypes, setSelectedArchetypes] = useState<string[]>(['ordinary_participant'])
@@ -43,11 +51,21 @@ export function QuickStartPage({ onRun, embedded = false }: { onRun: (run: Run) 
   const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
-    api.providers<ProviderProfile[]>().then(setProviders).catch(() => setProviders([]))
+    api.providers<ProviderProfile[]>().then(items => {
+      setProviders(items)
+      setProvider(current => {
+        const currentProfile = items.find(item => item.provider === current)
+        return currentProfile?.key_present
+          ? current
+          : items.find(item => item.key_present)?.provider ?? currentProfile?.provider ?? items[0]?.provider ?? current
+      })
+    }).catch(() => setProviders([]))
+    api.chains<ChainOption[]>().then(setChains).catch(() => setChains(BUILT_IN_CHAINS))
     api.agentArchetypes<{ archetypes: ParticipantArchetype[] }>().then(result => setArchetypes(result.archetypes)).catch(() => setArchetypes([]))
   }, [])
 
   const selectedProvider = useMemo(() => providers.find(item => item.provider === provider), [provider, providers])
+  const selectedChain = useMemo(() => chains.find(item => item.chain_id === chain) ?? BUILT_IN_CHAINS[0], [chain, chains])
   const needsProvider = mode !== 'test_fixture' || inputMode === 'natural_language'
   const unresolvedSuggestions = interpretedDraft?.suggestions.filter(item => (
     !interpretedDraft.accepted_suggestion_ids.includes(item.suggestion_id)
@@ -167,6 +185,7 @@ export function QuickStartPage({ onRun, embedded = false }: { onRun: (run: Run) 
   }
 
   const resolveDisabled = busy || !name.trim() || !token.trim()
+    || (mode === 'live' && !selectedChain.holder_source_configured)
     || (inputMode === 'natural_language' && (!interpretedDraft || unresolvedSuggestions.length > 0))
     || (inputMode === 'detailed' && (!selectedArchetypes.length || Number(detailRisk) < 0 || Number(detailRisk) > 1000))
   const previewAgents = preview?.agent_definitions.slice(0, 10) ?? []
@@ -224,10 +243,11 @@ export function QuickStartPage({ onRun, embedded = false }: { onRun: (run: Run) 
         <div className="form-row"><label>报价覆盖率 (%)<input type="number" min={0.01} max={1000} step={1} value={quoteCoverage} onChange={event => { setQuoteCoverage(Number(event.target.value)); invalidate() }} /></label><label>Token / USDx 相关度 (%)<input type="number" min={0} max={100} value={compositionCorrelation} onChange={event => { setCompositionCorrelation(Number(event.target.value)); invalidate() }} /></label></div>
 
         {needsProvider ? <>
-          <div className="form-row"><label>Provider<select value={provider} onChange={event => { setProvider(event.target.value); setPreflight(null); invalidate() }}>{providers.length ? providers.map(item => <option value={item.provider} key={item.provider}>{item.provider} · {item.model ?? 'default'}</option>) : <option value="openai">openai</option>}</select></label>{mode === 'live' ? <label>链数据源<select value={chain} onChange={event => { setChain(event.target.value); invalidate() }}><option value="ethereum">Ethereum</option><option value="solana">Solana</option></select></label> : <span />}</div>
+          <div className="form-row"><label>Provider<select value={provider} onChange={event => { setProvider(event.target.value); setPreflight(null); invalidate() }}>{providers.length ? providers.map(item => <option value={item.provider} key={item.provider}>{item.provider} · {item.model ?? 'default'}</option>) : <option value="openai">openai</option>}</select></label>{mode === 'live' ? <label>链数据源<select value={chain} onChange={event => { setChain(event.target.value); invalidate() }}>{chains.map(item => <option value={item.chain_id} key={item.chain_id} disabled={!item.holder_source_configured}>{item.label}{item.holder_source_configured ? '' : ' · 未配置 holder snapshot'}</option>)}</select></label> : <span />}</div>
           <div className="provider-line"><span><KeyRound size={16} />服务端密钥</span><StatusBadge status={selectedProvider?.key_present ? 'ok' : 'missing'} /><button className="secondary-button" onClick={checkProvider} disabled={busy}><RefreshCw size={15} />检查</button></div>
-          {preflight ? <div className="success-line"><CheckCircle2 size={16} />{String(preflight.provider)} · {String(preflight.model ?? 'default')} 可用</div> : null}
-          {mode !== 'test_fixture' ? <div className="cost-warning"><ShieldAlert size={17} /><span>{mode === 'live_llm_smoke' ? '最多 4 个初始化规划请求。' : 'Live 模式会使用真实 Provider 和 holder snapshot。'}</span></div> : null}
+          {preflight?.ok === true ? <div className="success-line"><CheckCircle2 size={16} />{String(preflight.provider)} · {String(preflight.model ?? 'default')} 可用</div> : null}
+          {mode === 'live' && !selectedChain.holder_source_configured ? <div className="warning-line">{selectedChain.label} 已在固定链目录中，但当前进程没有配置该链的 finalized holder snapshot。</div> : null}
+          {mode !== 'test_fixture' ? <div className="cost-warning"><ShieldAlert size={17} /><span>{mode === 'live_llm_smoke' ? '使用 seed 合成 Token、USDx 与背景余量，不需要 holder snapshot；最多 4 个 Agent。' : 'Live 模式会使用真实 Provider 和 holder snapshot。'}</span></div> : null}
         </> : <div className="fixture-note"><CheckCircle2 size={17} /><span>确定性本地链路，不调用外部 Provider。</span></div>}
         <button className="primary-button wide" onClick={resolve} disabled={resolveDisabled}>{busy ? <LoaderCircle className="spin" size={17} /> : <RefreshCw size={17} />}解析初始状态</button>
       </section>

@@ -34,6 +34,7 @@ from sandbox.control.branch_runner import BranchRunner
 from sandbox.control.scenario_director import ScenarioDirector
 from sandbox.core.errors import ConflictError, NotFoundError, SandboxError, ValidationError
 from sandbox.core.ids import deterministic_id, new_id
+from sandbox.core.time import SIMULATION_PLAN_HORIZON_US, SIMULATION_WALL_SECONDS_PER_MINUTE
 from sandbox.store.archive import ArchiveService
 from sandbox.store.event_store import EventStore, canonical_json, utc_now
 from sandbox.store.sqlite import SQLiteStore
@@ -55,6 +56,8 @@ class RunManager:
         self._runner_locks: defaultdict[str, threading.Lock] = defaultdict(threading.Lock)
         self._runner_threads: dict[str, threading.Thread] = {}
         self._runner_cancel: dict[str, threading.Event] = {}
+        self._planning_threads: dict[str, threading.Thread] = {}
+        self._planning_cancel: dict[str, threading.Event] = {}
 
     def create_scenario(self, draft: ScenarioDraft) -> dict[str, object]:
         scenario_id = new_id("scenario")
@@ -287,6 +290,15 @@ class RunManager:
             }
         world = self._world(branch_id)
         projection = world.projection(branch_id, int(branch["state_version"]), str(branch["status"]))
+        latest_failure = self.store.connection.execute(
+            "SELECT payload_json FROM planning_results WHERE branch_id=? AND result_status='failed' "
+            "ORDER BY received_at DESC,request_id DESC LIMIT 1",
+            (branch_id,),
+        ).fetchone()
+        planning = projection.get("planning")
+        if isinstance(planning, dict):
+            failure_payload = json.loads(latest_failure["payload_json"]) if latest_failure is not None else {}
+            planning["last_failure_message"] = failure_payload.get("message")
         projection["parent_branch_id"] = branch["parent_branch_id"]
         projection["fork_checkpoint_id"] = branch["fork_checkpoint_id"]
         return projection
@@ -302,6 +314,36 @@ class RunManager:
 
     def provider_profiles(self) -> list[dict[str, object]]:
         return self.initializer.llm_gateway.profiles()
+
+    def recover_interrupted_branches(self) -> None:
+        with self.store.locked():
+            branch_ids = [
+                str(row["branch_id"])
+                for row in self.store.connection.execute(
+                    "SELECT branch_id FROM branches WHERE status='Running' ORDER BY created_at,branch_id"
+                ).fetchall()
+            ]
+            for branch_id in branch_ids:
+                branch = self._branch(branch_id)
+                world = self._world(branch_id)
+                self.events.append_batch(
+                    str(branch["run_id"]),
+                    branch_id,
+                    [self._system_event(
+                        "BranchPaused",
+                        branch_id,
+                        {"reason": "runtime_restarted", "resumable": True},
+                        sim_time_us=world.sim_time_us,
+                    )],
+                    world_state=world.to_json(),
+                    branch_status="Paused",
+                    expected_branch_version=int(branch["state_version"]),
+                )
+
+    def chain_catalog(self) -> list[dict[str, object]]:
+        from sandbox.control.initialization import chain_catalog
+
+        return chain_catalog(set(self.initializer.holder_providers))
 
     async def provider_preflight(self, provider_name: str) -> dict[str, object]:
         return await self.initializer.llm_gateway.preflight(provider_name)
@@ -628,7 +670,7 @@ class RunManager:
             )
             plan = plan.model_copy(update={
                 "director_record": DirectorRecord(
-                    director_kind="openai.v0.1",
+                    director_kind="deepseek.v0.1" if provider_name == "deepseek" else "openai.v0.1",
                     submitted_intent=user_intent,
                     typed_output=[stage.model_dump(mode="json") for stage in candidate.stages],
                     provider=provider_name,
@@ -857,22 +899,60 @@ class RunManager:
             result = self._command_locked(branch_id, client_command_id, command_type, payload)
         if command_type == "start":
             self._ensure_autonomous_runner(branch_id)
+        elif command_type in {"pause", "stop"}:
+            cancel = self._runner_cancel.get(branch_id)
+            if cancel is not None:
+                cancel.set()
+            if command_type == "stop":
+                planning_cancel = self._planning_cancel.get(branch_id)
+                if planning_cancel is not None:
+                    planning_cancel.set()
         return result
 
     def _ensure_autonomous_runner(self, branch_id: str) -> None:
         current = self._runner_threads.get(branch_id)
-        if current is not None and current.is_alive():
+        current_cancel = self._runner_cancel.get(branch_id)
+        if current is None or not current.is_alive() or (current_cancel is not None and current_cancel.is_set()):
+            cancel = threading.Event()
+            self._runner_cancel[branch_id] = cancel
+            thread = threading.Thread(
+                target=self._autonomous_runner,
+                args=(branch_id, cancel),
+                name=f"sandbox-runner-{branch_id}",
+                daemon=True,
+            )
+            self._runner_threads[branch_id] = thread
+            thread.start()
+        self._ensure_planning_worker(branch_id)
+
+    def _ensure_planning_worker(self, branch_id: str) -> None:
+        current = self._planning_threads.get(branch_id)
+        current_cancel = self._planning_cancel.get(branch_id)
+        if current is not None and current.is_alive() and not (current_cancel is not None and current_cancel.is_set()):
             return
         cancel = threading.Event()
-        self._runner_cancel[branch_id] = cancel
+        self._planning_cancel[branch_id] = cancel
         thread = threading.Thread(
-            target=self._autonomous_runner,
+            target=self._autonomous_planner,
             args=(branch_id, cancel),
-            name=f"sandbox-runner-{branch_id}",
+            name=f"sandbox-planner-{branch_id}",
             daemon=True,
         )
-        self._runner_threads[branch_id] = thread
+        self._planning_threads[branch_id] = thread
         thread.start()
+
+    def _autonomous_mode_active(self, branch_id: str) -> bool:
+        with self.store.locked():
+            branch = self._branch(branch_id)
+            if branch["status"] != "Running":
+                return False
+            latest_control = self.store.connection.execute(
+                "SELECT command_type FROM commands WHERE branch_id=? "
+                "AND command_type IN ('start','step_fixture','run_for') "
+                "ORDER BY created_at DESC,rowid DESC LIMIT 1",
+                (branch_id,),
+            ).fetchone()
+            return latest_control is None or latest_control["command_type"] not in {"step_fixture", "run_for"}
 
     def _autonomous_runner(self, branch_id: str, cancel: threading.Event) -> None:
         # A short control-plane grace period lets an immediate Pause win without
@@ -881,42 +961,50 @@ class RunManager:
             return
         while not cancel.is_set():
             try:
+                if not self._autonomous_mode_active(branch_id):
+                    return
                 with self.store.locked():
-                    branch = self._branch(branch_id)
-                    if branch["status"] != "Running":
-                        return
-                    latest_control = self.store.connection.execute(
-                        "SELECT command_type FROM commands WHERE branch_id=? "
-                        "AND command_type IN ('start','step_fixture','run_for') "
-                        "ORDER BY created_at DESC,rowid DESC LIMIT 1",
-                        (branch_id,),
-                    ).fetchone()
-                    if latest_control is not None and latest_control["command_type"] in {"step_fixture", "run_for"}:
-                        return
-                if not self._advance_background_once(branch_id):
-                    planning_result = asyncio.run(self._run_planning_requests(branch_id, max_requests=1))
-                    if not planning_result["processed_requests"]:
-                        with self.store.locked():
-                            branch = self._branch(branch_id)
-                            if branch["status"] == "Running":
-                                world = self._world(branch_id)
-                                world.terminal_reason = "event_queue_exhausted"
-                                self.events.append_batch(
-                                    str(branch["run_id"]),
+                    world = self._world(branch_id)
+                    next_time = self._next_background_event_time_us(branch_id, world)
+                    has_open_planning = any(
+                        request.state in {"Queued", "Running"}
+                        for request in world.planning_requests.values()
+                    )
+                    current_sim_time = world.sim_time_us
+                if next_time is None:
+                    if has_open_planning:
+                        self._ensure_planning_worker(branch_id)
+                        if cancel.wait(0.05):
+                            return
+                        continue
+                    with self.store.locked():
+                        branch = self._branch(branch_id)
+                        if branch["status"] == "Running":
+                            world = self._world(branch_id)
+                            world.terminal_reason = "event_queue_exhausted"
+                            self.events.append_batch(
+                                str(branch["run_id"]),
+                                branch_id,
+                                [self._system_event(
+                                    "BranchCompleted",
                                     branch_id,
-                                    [self._system_event(
-                                        "BranchCompleted",
-                                        branch_id,
-                                        {"reason": "event_queue_exhausted"},
-                                        sim_time_us=world.sim_time_us,
-                                    )],
-                                    world_state=world.to_json(),
-                                    branch_status="Completed",
-                                    expected_branch_version=int(branch["state_version"]),
-                                )
-                        return
-                else:
-                    asyncio.run(self._run_planning_requests(branch_id, max_requests=1))
+                                    {"reason": "event_queue_exhausted"},
+                                    sim_time_us=world.sim_time_us,
+                                )],
+                                world_state=world.to_json(),
+                                branch_status="Completed",
+                                expected_branch_version=int(branch["state_version"]),
+                            )
+                    return
+                wait_seconds = (
+                    max(0, next_time - current_sim_time)
+                    / 1_000_000
+                    * SIMULATION_WALL_SECONDS_PER_MINUTE
+                )
+                if wait_seconds and cancel.wait(wait_seconds):
+                    return
+                if self._advance_background_once(branch_id):
+                    self._ensure_planning_worker(branch_id)
             except Exception as error:
                 try:
                     with self.store.locked():
@@ -940,7 +1028,24 @@ class RunManager:
                 except Exception:
                     pass
                 return
-            if cancel.wait(0.05):
+            if cancel.wait(0.001):
+                return
+
+    def _autonomous_planner(self, branch_id: str, cancel: threading.Event) -> None:
+        if cancel.wait(0.25):
+            return
+        while not cancel.is_set():
+            try:
+                if not self._autonomous_mode_active(branch_id):
+                    return
+                result = asyncio.run(self._run_planning_requests(
+                    branch_id,
+                    max_requests=max(1, self.initializer.llm_gateway.max_in_flight),
+                    due_only=True,
+                ))
+                if not result["processed_requests"] and cancel.wait(0.05):
+                    return
+            except Exception:
                 return
 
     def _next_background_action(
@@ -1048,6 +1153,36 @@ class RunManager:
             client_command_id=f"background-policy:{sequence}",
         )
 
+    def _next_background_event_time_us(self, branch_id: str, world: SimulationWorld) -> int | None:
+        sequence = int(world.background_market_sector.get("policy_sequence", 0))
+        raw_policy_limit = world.background_market_sector.get("policy_step_limit")
+        policy_limit = int(raw_policy_limit) if raw_policy_limit is not None else None
+        pending_times = [
+            int(item["expected_execution_time_us"])
+            for item in world.pending_actions.values()
+        ]
+        delivery_times = [
+            int(item["delivery_sim_time_us"])
+            for item in world.pending_deliveries.values()
+        ]
+        interval = int(world.background_market_sector.get("quote_refresh_interval_us", 1_000_000))
+        background_times = (
+            [world.sim_time_us + interval]
+            if (policy_limit is None or sequence < policy_limit) and world.market.get("status", "active") == "active"
+            else []
+        )
+        intervention_times = [
+            stage.effective_sim_time_us
+            for row in self.store.connection.execute(
+                "SELECT plan_json FROM intervention_plans WHERE branch_id=? AND status='confirmed'",
+                (branch_id,),
+            ).fetchall()
+            for stage in InterventionPlan.model_validate(json.loads(row["plan_json"])).stages
+            if stage.status == "pending"
+        ]
+        candidates = [*pending_times, *delivery_times, *background_times, *intervention_times]
+        return min(candidates) if candidates else None
+
     def _advance_background_once(self, branch_id: str) -> bool:
         with self._runner_locks[branch_id], self.store.locked():
             branch = self._branch(branch_id)
@@ -1055,41 +1190,12 @@ class RunManager:
                 return False
             world = self._world(branch_id)
             sequence = int(world.background_market_sector.get("policy_sequence", 0))
-            policy_limit = int(world.background_market_sector.get("policy_step_limit", 200))
+            raw_policy_limit = world.background_market_sector.get("policy_step_limit")
+            policy_limit = int(raw_policy_limit) if raw_policy_limit is not None else None
             background_id = str(world.background_market_sector.get("sector_id", "background"))
-            pending = sorted(
-                world.pending_actions.values(),
-                key=lambda item: (int(item["expected_execution_time_us"]), str(item["action_id"])),
-            )
-            next_pending_time = int(pending[0]["expected_execution_time_us"]) if pending else None
-            deliveries = sorted(
-                world.pending_deliveries.values(),
-                key=lambda item: (int(item["delivery_sim_time_us"]), str(item["delivery_id"])),
-            )
-            next_delivery_time = int(deliveries[0]["delivery_sim_time_us"]) if deliveries else None
-            interval = int(world.background_market_sector.get("quote_refresh_interval_us", 1_000_000))
-            next_background_time = (
-                world.sim_time_us + interval
-                if sequence < policy_limit and world.market.get("status", "active") == "active"
-                else None
-            )
-            intervention_times = [
-                stage.effective_sim_time_us
-                for row in self.store.connection.execute(
-                    "SELECT plan_json FROM intervention_plans WHERE branch_id=? AND status='confirmed'",
-                    (branch_id,),
-                ).fetchall()
-                for stage in InterventionPlan.model_validate(json.loads(row["plan_json"])).stages
-                if stage.status == "pending"
-            ]
-            candidates = [
-                time
-                for time in [next_pending_time, next_delivery_time, next_background_time, *intervention_times]
-                if time is not None
-            ]
-            if not candidates:
+            next_time = self._next_background_event_time_us(branch_id, world)
+            if next_time is None:
                 return False
-            next_time = min(candidates)
             applied, failed = self._apply_due_intervention_stages(branch_id, through_sim_time_us=next_time)
             if applied or failed:
                 return True
@@ -1129,11 +1235,14 @@ class RunManager:
                     admitted_reservation_id=reservation_id,
                 )
                 return True
-            if sequence >= policy_limit or world.market.get("status", "active") != "active":
+            if (policy_limit is not None and sequence >= policy_limit) or world.market.get("status", "active") != "active":
                 return False
             working = world.clone()
             working.background_market_sector["policy_sequence"] = sequence + 1
-            working.background_market_sector["policy_step_limit"] = policy_limit
+            if policy_limit is None:
+                working.background_market_sector.pop("policy_step_limit", None)
+            else:
+                working.background_market_sector["policy_step_limit"] = policy_limit
             action = self._next_background_action(working, branch_id, sequence)
             if action is None:
                 working.background_market_sector["policy_exhausted"] = True
@@ -1295,7 +1404,12 @@ class RunManager:
     def close(self) -> None:
         for cancel in self._runner_cancel.values():
             cancel.set()
+        for cancel in self._planning_cancel.values():
+            cancel.set()
         for thread in self._runner_threads.values():
+            if thread.is_alive():
+                thread.join(timeout=1)
+        for thread in self._planning_threads.values():
             if thread.is_alive():
                 thread.join(timeout=1)
 
@@ -1549,31 +1663,43 @@ class RunManager:
                 raise ValidationError(f"unsupported command '{command_type}'")
             return result
 
-    async def _run_planning_requests(self, branch_id: str, *, max_requests: int) -> dict[str, object]:
-        processed = 0
-        applied = 0
-        failed = 0
-        deferred = 0
-        while processed < max_requests:
+    async def _run_planning_requests(
+        self,
+        branch_id: str,
+        *,
+        max_requests: int,
+        due_only: bool = False,
+    ) -> dict[str, object]:
+        prepared: list[tuple[Any, str, PlanningProviderRequest]] = []
+        selected_ids: set[str] = set()
+        while len(prepared) < max_requests:
             with self.store.locked():
                 branch = self._branch(branch_id)
                 if branch["status"] != "Running":
                     break
                 world = self._world(branch_id)
                 candidates = sorted(
-                    (request for request in world.planning_requests.values() if request.state in {"Queued", "Running"}),
+                    (
+                        request
+                        for request in world.planning_requests.values()
+                        if request.state in {"Queued", "Running"}
+                        and request.request_id not in selected_ids
+                        and (not due_only or request.activation_time_us <= world.sim_time_us)
+                    ),
                     key=lambda item: (item.activation_time_us, item.agent_id, item.request_id),
                 )
                 if not candidates:
                     break
                 request = candidates[0]
-                self._apply_due_intervention_stages(
-                    branch_id,
-                    through_sim_time_us=max(world.sim_time_us, request.activation_time_us),
-                )
-                branch = self._branch(branch_id)
-                world = self._world(branch_id)
-                request = world.planning_requests[request.request_id]
+                selected_ids.add(request.request_id)
+                if not due_only:
+                    self._apply_due_intervention_stages(
+                        branch_id,
+                        through_sim_time_us=max(world.sim_time_us, request.activation_time_us),
+                    )
+                    branch = self._branch(branch_id)
+                    world = self._world(branch_id)
+                    request = world.planning_requests[request.request_id]
                 state = world.agent_runtime_states[request.agent_id]
                 definition = world.agent_definitions[request.agent_id]
                 observation = self._latest_observation(branch_id, request.agent_id)
@@ -1601,6 +1727,7 @@ class RunManager:
                     request = running
                 provider_name = definition.planner_profile_id.split(".", 1)[0]
                 context = {
+                    "based_on_strategy_revision": request.based_on_strategy_revision,
                     "persona": definition.base_persona.model_dump(mode="json"),
                     "observation": observation.model_dump(mode="json"),
                     "cognition": {
@@ -1616,26 +1743,37 @@ class RunManager:
                     request_id=request.request_id,
                     agent_id=request.agent_id,
                     context_hash=context_hash,
-                    planner_instructions="Return one complete bounded candidate StrategyPlan.",
+                    planner_instructions=(
+                        "Return one complete bounded candidate StrategyPlan covering exactly the next "
+                        f"30 simulation minutes (valid_for_us must be {SIMULATION_PLAN_HORIZON_US}). "
+                        f"Set based_on_strategy_revision to exactly {request.based_on_strategy_revision}. "
+                        "The host stores sim_time_us in microseconds, while the UI displays each 1000000us "
+                        "simulation tick as one simulation minute; use microseconds for interval and timing fields. "
+                        "Use registered trade, quote, cancel, and communication directives only when evidence, "
+                        "capabilities, and all required directive fields support them."
+                    ),
                     **context,
                 )
+                prepared.append((request, provider_name, provider_request))
 
-            def persist_raw(record: Any) -> None:
-                with self.store.locked():
-                    current = self._branch(branch_id)
-                    self.events.append_batch(
-                        str(current["run_id"]),
-                        branch_id,
-                        [],
-                        llm_records=[record.model_dump(mode="json")],
-                        expected_branch_version=int(current["state_version"]),
-                    )
+        def persist_raw(record: Any) -> None:
+            with self.store.locked():
+                current = self._branch(branch_id)
+                self.events.append_batch(
+                    str(current["run_id"]),
+                    branch_id,
+                    [],
+                    llm_records=[record.model_dump(mode="json")],
+                    expected_branch_version=int(current["state_version"]),
+                )
 
+        async def execute(item: tuple[Any, str, PlanningProviderRequest]) -> tuple[PlanningResultCandidate | None, Exception | None]:
+            request, provider_name, provider_request = item
             try:
                 if provider_name in {"rule", "replay"}:
                     candidate = PlanningResultCandidate(
-                        based_on_strategy_revision=state.active_strategy_revision,
-                        valid_for_us=300_000_000,
+                        based_on_strategy_revision=request.based_on_strategy_revision,
+                        valid_for_us=SIMULATION_PLAN_HORIZON_US,
                         goals=[],
                         activation_preconditions=[],
                         constraints=[],
@@ -1648,7 +1786,25 @@ class RunManager:
                         ),
                     )
                 else:
-                    candidate = await self.initializer.llm_gateway.plan(provider_name, provider_request, record_raw=persist_raw)
+                    candidate = await self.initializer.llm_gateway.plan(
+                        provider_name,
+                        provider_request,
+                        record_raw=persist_raw,
+                    )
+                return candidate.model_copy(update={"valid_for_us": SIMULATION_PLAN_HORIZON_US}), None
+            except Exception as error:
+                return None, error
+
+        results = await asyncio.gather(*(execute(item) for item in prepared)) if prepared else []
+        applied = 0
+        failed = 0
+        deferred = 0
+        for (request, _, _), (candidate, provider_error) in zip(prepared, results):
+            try:
+                if provider_error is not None:
+                    raise provider_error
+                if candidate is None:
+                    raise RuntimeError("planning provider returned no candidate")
                 with self.store.locked():
                     current = self._branch(branch_id)
                     self.events.append_batch(
@@ -1666,7 +1822,9 @@ class RunManager:
                         applied += 1
                     else:
                         deferred += 1
-            except SandboxError as error:
+            except Exception as error:
+                error_code = error.error_code if isinstance(error, SandboxError) else "PLANNING_PROVIDER_FAILED"
+                error_message = (error.message if isinstance(error, SandboxError) else str(error))[:1_000]
                 with self.store.locked():
                     current = self._branch(branch_id)
                     self.events.append_batch(
@@ -1674,19 +1832,18 @@ class RunManager:
                         planning_results=[{
                             "request_id": request.request_id,
                             "result_status": "failed",
-                            "payload": {"error_code": error.error_code},
+                            "payload": {"error_code": error_code, "message": error_message},
                             "applied": False,
                         }],
                         expected_branch_version=int(current["state_version"]),
                     )
                     if current["status"] == "Running":
-                        self._fail_planning_request(branch_id, request.request_id, error.error_code)
+                        self._fail_planning_request(branch_id, request.request_id, error_code, error_message)
                         failed += 1
                     else:
                         deferred += 1
-            processed += 1
         return {
-            "processed_requests": processed,
+            "processed_requests": len(prepared),
             "applied_requests": applied,
             "failed_requests": failed,
             "deferred_results": deferred,
@@ -1698,6 +1855,8 @@ class RunManager:
         request_id: str,
         candidate: PlanningResultCandidate,
     ) -> None:
+        # Keep restored or deferred provider results on the same canonical horizon.
+        candidate = candidate.model_copy(update={"valid_for_us": SIMULATION_PLAN_HORIZON_US})
         branch = self._branch(branch_id)
         if branch["status"] != "Running":
             raise ConflictError("planning results cannot activate while the branch is Paused", error_code="BRANCH_NOT_RUNNING")
@@ -1794,7 +1953,13 @@ class RunManager:
             expected_branch_version=int(branch["state_version"]),
         )
 
-    def _fail_planning_request(self, branch_id: str, request_id: str, error_code: str) -> None:
+    def _fail_planning_request(
+        self,
+        branch_id: str,
+        request_id: str,
+        error_code: str,
+        error_message: str | None = None,
+    ) -> None:
         branch = self._branch(branch_id)
         if branch["status"] != "Running":
             raise ConflictError("planning failures cannot settle while the branch is Paused", error_code="BRANCH_NOT_RUNNING")
@@ -1815,7 +1980,7 @@ class RunManager:
             planning_results=[{
                 "request_id": request_id,
                 "result_status": "failed",
-                "payload": {"error_code": error_code},
+                "payload": {"error_code": error_code, "message": error_message},
                 "applied": True,
             }],
             expected_branch_version=int(branch["state_version"]),
@@ -1846,6 +2011,7 @@ class RunManager:
                     branch_id,
                     request_id,
                     str(payload.get("error_code", "PLANNING_PROVIDER_FAILED")),
+                    str(payload.get("message")) if payload.get("message") else None,
                 )
             activated += 1
         return activated

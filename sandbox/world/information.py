@@ -24,6 +24,8 @@ def publish_information(
     targets = target_ids or []
     if channel == "PrivateChannel" and not targets:
         raise ValidationError("private information requires target_ids")
+    if channel != "PrivateChannel" and targets:
+        raise ValidationError("public information channels cannot declare target_ids")
     return {
         "information_id": information_id or new_id("info"),
         "source_id": source_id,

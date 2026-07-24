@@ -4,8 +4,9 @@ import { AlertCircle, Inbox, X } from 'lucide-react'
 export const formatInteger = (value: number | null | undefined) =>
   new Intl.NumberFormat('zh-CN').format(value ?? 0)
 
+// The product display relabels each stored simulation-second tick as one minute.
 export const formatTime = (value: number | null | undefined) =>
-  `${((value ?? 0) / 1_000_000).toFixed(2)}s`
+  `${((value ?? 0) / 1_000_000).toFixed(2)}min`
 
 export const shortId = (value: string | null | undefined) =>
   value ? `${value.slice(0, 7)}...${value.slice(-4)}` : '-'

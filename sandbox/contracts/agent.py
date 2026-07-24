@@ -5,6 +5,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from sandbox.contracts.agent_configuration import ConfigurationProvenance
+from sandbox.core.time import SIMULATION_PLAN_HORIZON_US
 
 
 ComponentName = Literal["memory", "belief", "planning", "strategy", "cursor", "budget", "attention"]
@@ -37,7 +38,7 @@ class BasePersona(StrictFrozenModel):
 class CognitiveProfile(StrictFrozenModel):
     profile_id: str = "cognitive.default.v0.1"
     max_plans_per_window: int = Field(default=2, ge=0, le=100)
-    planning_window_us: int = Field(default=300_000_000, ge=1)
+    planning_window_us: int = Field(default=SIMULATION_PLAN_HORIZON_US, ge=1)
     context_capacity: int = Field(default=8_000, ge=256, le=1_000_000)
     memory_search_limit: int = Field(default=5, ge=0, le=100)
 

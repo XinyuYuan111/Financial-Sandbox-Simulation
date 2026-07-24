@@ -40,7 +40,7 @@ async def run(args: argparse.Namespace) -> dict[str, object]:
             timeout_seconds=int(os.getenv("SANDBOX_OPENAI_TIMEOUT_SECONDS", "30")),
             max_retries=int(os.getenv("SANDBOX_OPENAI_MAX_RETRIES", "1")),
             max_in_flight=min(4, int(os.getenv("SANDBOX_OPENAI_MAX_IN_FLIGHT", "4"))),
-            max_output_tokens=int(os.getenv("SANDBOX_OPENAI_MAX_OUTPUT_TOKENS", "1800")),
+            max_output_tokens=int(os.getenv("SANDBOX_OPENAI_MAX_OUTPUT_TOKENS", "4096")),
         )
         gateway = LLMGateway({"openai": adapter}, max_in_flight=4)
         initializer = Initializer({}, gateway)

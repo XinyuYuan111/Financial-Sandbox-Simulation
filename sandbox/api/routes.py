@@ -41,6 +41,11 @@ def providers(request: Request) -> list[dict[str, object]]:
     return manager(request).provider_profiles()
 
 
+@router.get("/chains")
+def chains(request: Request) -> list[dict[str, object]]:
+    return manager(request).chain_catalog()
+
+
 @router.post("/providers/{provider_name}/preflight")
 async def provider_preflight(provider_name: str, request: Request) -> dict[str, object]:
     return await manager(request).provider_preflight(provider_name)

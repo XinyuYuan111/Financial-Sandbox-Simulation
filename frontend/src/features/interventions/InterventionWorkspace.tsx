@@ -100,10 +100,11 @@ function effectLabel(effect: InterventionEffect) {
   return labels[effect.effect_type] ?? effect.effect_type
 }
 
-export function InterventionWorkspace({ branchId, branchStatus, simTimeUs, onChanged }: {
+export function InterventionWorkspace({ branchId, branchStatus, simTimeUs, provider, onChanged }: {
   branchId: string
   branchStatus: string
   simTimeUs: number
+  provider: string
   onChanged: () => Promise<void>
 }) {
   const [plans, setPlans] = useState<InterventionPlan[]>([])
@@ -151,7 +152,7 @@ export function InterventionWorkspace({ branchId, branchStatus, simTimeUs, onCha
     if (!intent.trim()) return
     setBusy(true); setError(null)
     try {
-      await api.interpretInterventionPlan(branchId, intent, Number(effectiveTime))
+      await api.interpretInterventionPlan(branchId, intent, Number(effectiveTime), provider)
       setIntent(''); setEffects([])
       await loadPlans()
     } catch (reason) { setError(reason instanceof Error ? reason.message : 'Scenario Director 生成失败') }

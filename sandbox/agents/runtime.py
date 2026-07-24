@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from sandbox.agents.planning import PlanningCoordinator
-from sandbox.agents.reactive import DeclarativeMarketController
+from sandbox.agents.reactive import DeclarativeMarketController, evaluate_condition
 from sandbox.contracts.agent import (
     AgentDecision,
     AgentDefinition,
@@ -105,7 +105,19 @@ class AgentRuntime:
                 evidence_memory_ids=[memory_id],
                 stated_reason="Confidence is derived from the Agent's private skepticism and delivery context.",
             ))
-        plan_for_controller = activate_plan or active_plan
+        active_plan_is_current = (
+            active_plan is not None
+            and active_plan.valid_from_sim_time_us <= observation.sim_time_us < active_plan.valid_until_sim_time_us
+        )
+        replan_due = False
+        if active_plan is not None:
+            replan_due = not active_plan_is_current or any(
+                evaluate_condition(condition, observation, state)
+                for condition in active_plan.replan_conditions
+            )
+        # An expired plan must stop producing directives and reopen the planning
+        # gate. Replanning conditions have the same boundary semantics.
+        plan_for_controller = activate_plan or (active_plan if active_plan_is_current and not replan_due else None)
         reactive = self.controller.react(
             definition=definition,
             state=state,

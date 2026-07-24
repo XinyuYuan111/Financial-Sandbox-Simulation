@@ -16,6 +16,7 @@ from sandbox.contracts.planning import LLMRecord, PlanningResultCandidate, Provi
 from sandbox.control.initialization import Initializer
 from sandbox.control.run_manager import RunManager
 from sandbox.core.ids import new_id
+from sandbox.core.errors import ValidationError
 from sandbox.store.archive import ArchiveService
 from sandbox.store.sqlite import SQLiteStore
 
@@ -51,7 +52,7 @@ class FakePlanningAdapter:
                 status="succeeded",
             ))
         return PlanningResultCandidate(
-            based_on_strategy_revision=0,
+            based_on_strategy_revision=request.based_on_strategy_revision,
             valid_for_us=10_000_000,
             goals=[],
             activation_preconditions=[],
@@ -60,6 +61,22 @@ class FakePlanningAdapter:
             replan_conditions=[],
             rationale=DecisionRationale(goal_summary="Hold", uncertainty_milli=800, stated_reason="Smoke hold plan"),
         )
+
+
+class SlowPlanningAdapter(FakePlanningAdapter):
+    def __init__(self, delay_seconds: float) -> None:
+        self.delay_seconds = delay_seconds
+        self.requests = []
+
+    async def create_plan(self, request, *, record_raw=None):
+        self.requests.append(request)
+        await asyncio.sleep(self.delay_seconds)
+        return await super().create_plan(request, record_raw=record_raw)
+
+
+class FailingPlanningAdapter(FakePlanningAdapter):
+    async def create_plan(self, request, *, record_raw=None):
+        raise ValidationError("provider returned truncated JSON")
 
 
 class AgentRuntimeTests(unittest.TestCase):
@@ -262,6 +279,77 @@ class AgentRuntimeTests(unittest.TestCase):
             )
         finally:
             restored_store.close()
+
+    def test_live_planning_batch_runs_provider_calls_concurrently(self) -> None:
+        adapter = SlowPlanningAdapter(0.2)
+        self.manager.initializer.llm_gateway = LLMGateway({"openai": adapter}, max_in_flight=4)
+        scenario = self.manager.create_scenario(ScenarioDraft(
+            mode="live_llm_smoke",
+            llm_provider="openai",
+            population={"preset": "smoke"},
+        ))
+        resolved = asyncio.run(self.manager.resolve_scenario(str(scenario["scenario_id"])))
+        run = self.manager.create_run(str(scenario["scenario_id"]), resolved.resolution_hash)
+        branch_id = str(run["branches"][0]["branch_id"])
+        self.manager.command(branch_id, "concurrent-start", "start")
+
+        started = time.monotonic()
+        result = self.manager.command(branch_id, "concurrent-run", "run_for", {"max_requests": 4})
+        elapsed = time.monotonic() - started
+
+        self.assertEqual(result["processed_requests"], 4)
+        self.assertEqual(result["applied_requests"], 4)
+        self.assertEqual(len(adapter.requests), 4)
+        self.assertLess(elapsed, 0.65)
+        self.assertTrue(all(request.based_on_strategy_revision == 0 for request in adapter.requests))
+
+    def test_autonomous_clock_advances_while_llm_is_still_pending(self) -> None:
+        adapter = SlowPlanningAdapter(2.0)
+        self.manager.initializer.llm_gateway = LLMGateway({"openai": adapter}, max_in_flight=1)
+        scenario = self.manager.create_scenario(ScenarioDraft(
+            mode="live_llm_smoke",
+            llm_provider="openai",
+            population={"preset": "smoke", "agent_count": 1},
+            agent_configuration_drafts=[{
+                "draft_id": "immediate-planner",
+                "input_mode": "detailed",
+                "latency_profile": {"planning_latency_us": 0},
+            }],
+        ))
+        resolved = asyncio.run(self.manager.resolve_scenario(str(scenario["scenario_id"])))
+        run = self.manager.create_run(str(scenario["scenario_id"]), resolved.resolution_hash)
+        branch_id = str(run["branches"][0]["branch_id"])
+        self.manager.command(branch_id, "paced-start", "start")
+
+        time.sleep(1.45)
+        branch = self.manager._branch(branch_id)
+
+        self.assertGreaterEqual(int(branch["sim_time_us"]), 1_000_000)
+        self.assertLess(int(branch["sim_time_us"]), 2_000_000)
+        self.assertEqual(
+            self.store.connection.execute("SELECT COUNT(*) count FROM llm_records").fetchone()["count"],
+            0,
+        )
+        self.manager.command(branch_id, "paced-pause", "pause")
+
+    def test_projection_exposes_the_latest_planning_failure_message(self) -> None:
+        self.manager.initializer.llm_gateway = LLMGateway({"openai": FailingPlanningAdapter()})
+        scenario = self.manager.create_scenario(ScenarioDraft(
+            mode="live_llm_smoke",
+            llm_provider="openai",
+            population={"preset": "smoke", "agent_count": 1},
+        ))
+        resolved = asyncio.run(self.manager.resolve_scenario(str(scenario["scenario_id"])))
+        run = self.manager.create_run(str(scenario["scenario_id"]), resolved.resolution_hash)
+        branch_id = str(run["branches"][0]["branch_id"])
+        self.manager.command(branch_id, "failure-start", "start")
+
+        result = self.manager.command(branch_id, "failure-run", "run_for", {"max_requests": 1})
+        projection = self.manager.branch_projection(branch_id)
+
+        self.assertEqual(result["failed_requests"], 1)
+        self.assertEqual(projection["planning"]["last_failure_code"], "VALIDATION_FAILED")
+        self.assertEqual(projection["planning"]["last_failure_message"], "provider returned truncated JSON")
 
 
 if __name__ == "__main__":

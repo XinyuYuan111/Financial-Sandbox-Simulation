@@ -14,11 +14,19 @@ class Settings:
     runtime_version: str = "0.3.0"
     host: str = "127.0.0.1"
     openai_api_key: str | None = field(default=None, repr=False)
+    openai_base_url: str | None = None
     openai_model: str = "gpt-5.6-terra"
     openai_timeout_seconds: int = 30
     openai_max_retries: int = 1
     openai_max_in_flight: int = 4
-    openai_max_output_tokens: int = 1_800
+    openai_max_output_tokens: int = 4_096
+    deepseek_api_key: str | None = field(default=None, repr=False)
+    deepseek_base_url: str = "https://api.deepseek.com"
+    deepseek_model: str = "deepseek-chat"
+    deepseek_timeout_seconds: int = 60
+    deepseek_max_retries: int = 1
+    deepseek_max_in_flight: int = 4
+    deepseek_max_output_tokens: int = 4_096
     holder_snapshot_path: Path | None = None
     holder_snapshot_chain_id: str = "ethereum"
 
@@ -34,11 +42,19 @@ class Settings:
             frontend_dist=workspace / "frontend" / "dist",
             archive_dir=data_dir / "archives",
             openai_api_key=os.getenv("OPENAI_API_KEY") or None,
+            openai_base_url=(os.getenv("SANDBOX_OPENAI_BASE_URL") or "").strip() or None,
             openai_model=os.getenv("SANDBOX_OPENAI_MODEL", "gpt-5.6-terra"),
             openai_timeout_seconds=int(os.getenv("SANDBOX_OPENAI_TIMEOUT_SECONDS", "30")),
             openai_max_retries=int(os.getenv("SANDBOX_OPENAI_MAX_RETRIES", "1")),
             openai_max_in_flight=int(os.getenv("SANDBOX_OPENAI_MAX_IN_FLIGHT", "4")),
-            openai_max_output_tokens=int(os.getenv("SANDBOX_OPENAI_MAX_OUTPUT_TOKENS", "1800")),
+            openai_max_output_tokens=int(os.getenv("SANDBOX_OPENAI_MAX_OUTPUT_TOKENS", "4096")),
+            deepseek_api_key=os.getenv("DEEPSEEK_API_KEY") or None,
+            deepseek_base_url=(os.getenv("SANDBOX_DEEPSEEK_BASE_URL") or "https://api.deepseek.com").strip().rstrip("/"),
+            deepseek_model=os.getenv("SANDBOX_DEEPSEEK_MODEL", "deepseek-chat"),
+            deepseek_timeout_seconds=int(os.getenv("SANDBOX_DEEPSEEK_TIMEOUT_SECONDS", "60")),
+            deepseek_max_retries=int(os.getenv("SANDBOX_DEEPSEEK_MAX_RETRIES", "1")),
+            deepseek_max_in_flight=int(os.getenv("SANDBOX_DEEPSEEK_MAX_IN_FLIGHT", "4")),
+            deepseek_max_output_tokens=int(os.getenv("SANDBOX_DEEPSEEK_MAX_OUTPUT_TOKENS", "4096")),
             holder_snapshot_path=Path(os.environ["SANDBOX_HOLDER_SNAPSHOT_PATH"]).resolve() if os.getenv("SANDBOX_HOLDER_SNAPSHOT_PATH") else None,
             holder_snapshot_chain_id=os.getenv("SANDBOX_HOLDER_CHAIN_ID", "ethereum"),
         )
