@@ -385,6 +385,14 @@
       "title": "Beliefs",
       "type": "array"
     },
+    "viewed_information_ids": {
+      "items": {
+        "type": "string"
+      },
+      "maxItems": 10000,
+      "title": "Viewed Information Ids",
+      "type": "array"
+    },
     "processed_observation_ids": {
       "items": {
         "type": "string"

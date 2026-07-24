@@ -13,7 +13,7 @@ from sandbox.agents.llm_gateway import LLMGateway
 from sandbox.agents.providers.openai import OpenAIProviderAdapter
 from sandbox.api.routes import router
 from sandbox.app.settings import Settings
-from sandbox.control.initialization import Initializer
+from sandbox.control.initialization import FinalizedSnapshotFileProvider, Initializer
 from sandbox.control.run_manager import RunManager
 from sandbox.core.errors import ConflictError, SandboxError
 from sandbox.store.archive import ArchiveService
@@ -37,13 +37,20 @@ async def lifespan(app: FastAPI):
         max_output_tokens=settings.openai_max_output_tokens,
     )
     gateway = LLMGateway(adapters={"openai": openai_adapter}, max_in_flight=settings.openai_max_in_flight)
-    initializer = Initializer(holder_providers={}, llm_gateway=gateway)
+    holder_providers = {}
+    if settings.holder_snapshot_path is not None:
+        holder_providers[settings.holder_snapshot_chain_id] = FinalizedSnapshotFileProvider(
+            path=settings.holder_snapshot_path,
+            chain_id=settings.holder_snapshot_chain_id,
+        )
+    initializer = Initializer(holder_providers=holder_providers, llm_gateway=gateway)
     app.state.settings = settings
     app.state.store = store
     app.state.llm_gateway = gateway
     app.state.manager = RunManager(store, initializer, archive_service, settings.runtime_version)
     app.state.session_token = secrets.token_urlsafe(32)
     yield
+    app.state.manager.close()
     store.close()
 
 

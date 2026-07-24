@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import tempfile
+import time
 import unittest
 import zipfile
 from pathlib import Path
@@ -73,8 +74,22 @@ class AgentRuntimeTests(unittest.TestCase):
         )
 
     def tearDown(self) -> None:
+        self.manager.close()
         self.store.close()
         self.temp.cleanup()
+
+    def wait_for_information_view(self, branch_id: str, action_id: str, agent_id: str, timeout: float = 2.0) -> None:
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            if any(
+                event.action_id == action_id
+                and event.event_type == "InformationViewed"
+                and event.payload.get("agent_id") == agent_id
+                for event in self.manager.events.list_events(branch_id, limit=10_000)
+            ):
+                return
+            time.sleep(0.02)
+        self.fail("the information was not viewed before the timeout")
 
     def create_running(self) -> tuple[str, str]:
         scenario = self.manager.create_scenario(ScenarioDraft())
@@ -137,10 +152,6 @@ class AgentRuntimeTests(unittest.TestCase):
 
     def test_private_information_only_wakes_source_and_target(self) -> None:
         _, branch_id = self.create_running()
-        before = {
-            agent: len(self.manager.observations(branch_id, agent))
-            for agent in ("rule_alpha", "rule_beta", "replay_agent")
-        }
         action = ActionContract(
             action_id=new_id("act"),
             agent_id="replay_agent",
@@ -155,13 +166,31 @@ class AgentRuntimeTests(unittest.TestCase):
         )
         result = self.manager.submit_action(action)
         self.assertTrue(result["accepted"])
-        after = {
-            agent: len(self.manager.observations(branch_id, agent))
+        self.assertIn(action.action_id, self.manager._world(branch_id).pending_actions)
+        self.wait_for_information_view(branch_id, action.action_id, "rule_alpha")
+        published = next(
+            event for event in self.manager.events.list_events(branch_id, limit=10_000)
+            if event.action_id == action.action_id and event.event_type == "InformationPublished"
+        )
+        information_id = str(published.payload["information_id"])
+        observations = {
+            agent: [
+                item for item in self.manager.observations(branch_id, agent)
+                if information_id in item["provenance"]
+            ]
             for agent in ("rule_alpha", "rule_beta", "replay_agent")
         }
-        self.assertEqual(after["rule_alpha"], before["rule_alpha"] + 1)
-        self.assertEqual(after["replay_agent"], before["replay_agent"] + 1)
-        self.assertEqual(after["rule_beta"], before["rule_beta"])
+        self.assertEqual(len(observations["rule_alpha"]), 1)
+        self.assertEqual(len(observations["replay_agent"]), 1)
+        self.assertFalse(observations["rule_beta"])
+        target_observation_id = observations["rule_alpha"][0]["observation_id"]
+        self.assertEqual(
+            sum(
+                decision["decision"]["observation_id"] == target_observation_id
+                for decision in self.manager.agent_decisions(branch_id, "rule_alpha")
+            ),
+            1,
+        )
 
     def test_rejected_agent_action_keeps_the_full_audit_chain(self) -> None:
         _, branch_id = self.create_running()

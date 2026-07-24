@@ -97,33 +97,38 @@ def agent_observations(branch_id: str, agent_id: str, request: Request, cursor: 
 
 
 @router.get("/branches/{branch_id}/agents")
-def branch_agents(branch_id: str, request: Request) -> dict[str, object]:
-    return {"branch_id": branch_id, "agents": manager(request).agents(branch_id)}
+def branch_agents(branch_id: str, request: Request, cursor: int | None = Query(default=None, ge=0)) -> dict[str, object]:
+    return {"branch_id": branch_id, "agents": manager(request).agents(branch_id, cursor=cursor)}
 
 
 @router.get("/branches/{branch_id}/agents/{agent_id}")
-def agent_detail(branch_id: str, agent_id: str, request: Request) -> dict[str, object]:
-    return manager(request).agent_detail(branch_id, agent_id)
+def agent_detail(branch_id: str, agent_id: str, request: Request, cursor: int | None = Query(default=None, ge=0)) -> dict[str, object]:
+    return manager(request).agent_detail(branch_id, agent_id, cursor=cursor)
 
 
 @router.get("/branches/{branch_id}/agents/{agent_id}/decisions")
-def agent_decisions(branch_id: str, agent_id: str, request: Request, limit: int = Query(default=200, ge=1, le=1_000)) -> dict[str, object]:
-    return {"branch_id": branch_id, "agent_id": agent_id, "decisions": manager(request).agent_decisions(branch_id, agent_id, limit=limit)}
+def agent_decisions(branch_id: str, agent_id: str, request: Request, cursor: int | None = Query(default=None, ge=0), limit: int = Query(default=200, ge=1, le=1_000)) -> dict[str, object]:
+    return {"branch_id": branch_id, "agent_id": agent_id, "decisions": manager(request).agent_decisions(branch_id, agent_id, cursor=cursor, limit=limit)}
 
 
 @router.get("/branches/{branch_id}/agents/{agent_id}/plans")
-def agent_plans(branch_id: str, agent_id: str, request: Request, limit: int = Query(default=200, ge=1, le=1_000)) -> dict[str, object]:
-    return {"branch_id": branch_id, "agent_id": agent_id, "plans": manager(request).agent_plans(branch_id, agent_id, limit=limit)}
+def agent_plans(branch_id: str, agent_id: str, request: Request, cursor: int | None = Query(default=None, ge=0), limit: int = Query(default=200, ge=1, le=1_000)) -> dict[str, object]:
+    return {"branch_id": branch_id, "agent_id": agent_id, "plans": manager(request).agent_plans(branch_id, agent_id, cursor=cursor, limit=limit)}
 
 
 @router.get("/branches/{branch_id}/agents/{agent_id}/receipts")
-def agent_receipts(branch_id: str, agent_id: str, request: Request, limit: int = Query(default=200, ge=1, le=1_000)) -> dict[str, object]:
-    return {"branch_id": branch_id, "agent_id": agent_id, "receipts": manager(request).agent_receipts(branch_id, agent_id, limit=limit)}
+def agent_receipts(branch_id: str, agent_id: str, request: Request, cursor: int | None = Query(default=None, ge=0), limit: int = Query(default=200, ge=1, le=1_000)) -> dict[str, object]:
+    return {"branch_id": branch_id, "agent_id": agent_id, "receipts": manager(request).agent_receipts(branch_id, agent_id, cursor=cursor, limit=limit)}
 
 
 @router.get("/branches/{branch_id}/intervention-plans")
 def intervention_plans(branch_id: str, request: Request) -> dict[str, object]:
     return {"branch_id": branch_id, "plans": manager(request).intervention_plans(branch_id)}
+
+
+@router.get("/intervention-templates")
+def intervention_templates(request: Request) -> dict[str, object]:
+    return {"templates": manager(request).intervention_templates()}
 
 
 @router.get("/branches/{branch_id}/intervention-plans/{plan_id}")

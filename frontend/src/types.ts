@@ -82,6 +82,7 @@ export type Projection = {
   world_revision?: number
   market_status?: 'active' | 'halted'
   deferred_observation_count?: number
+  terminal_reason?: string | null
   market: {
     market_id: string
     bids: Order[]
@@ -147,7 +148,18 @@ export type ResolvedPreview = {
   chain_snapshot: Record<string, unknown>
   total_supply: Record<string, number>
   agents: Array<{ agent_id: string; display_name: string; strategy: string; token_balance: number; usdx_balance: number }>
-  agent_definitions: Array<{ agent_id: string; display_name: string; funding_profile: string; role_tags: string[]; planner_profile_id: string }>
+  agent_definitions: Array<{
+    agent_id: string
+    display_name: string
+    funding_profile: string
+    role_tags: string[]
+    planner_profile_id: string
+    capability_set: string[]
+    base_persona: { risk_tolerance_milli: number; time_horizon: 'short' | 'medium' | 'long'; skepticism_milli: number }
+    cognitive_profile: { max_plans_per_window: number; memory_search_limit: number }
+    attention_profile: { information_capacity: number; minimum_salience: number }
+    latency_profile: { planning_latency_us: number; action_latency_us: number }
+  }>
   background_market_sector: { sector_id: string; token_balance: number; usdx_balance: number }
   preview: {
     preset?: string

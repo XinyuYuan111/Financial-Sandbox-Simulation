@@ -4,7 +4,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from sandbox.contracts.agent import AgentDefinition
+from sandbox.contracts.agent import AgentDefinition, AgentRuntimeState
 
 
 class AgentConfig(BaseModel):
@@ -64,6 +64,8 @@ class ScenarioDraft(BaseModel):
     population: PopulationConfig = Field(default_factory=PopulationConfig)
     market: MarketConfig = Field(default_factory=MarketConfig)
     agents: list[AgentConfig] | None = None
+    agent_definitions: list[AgentDefinition] | None = None
+    initial_agent_states: list[AgentRuntimeState] | None = None
 
     @model_validator(mode="after")
     def validate_live_inputs(self) -> "ScenarioDraft":
@@ -87,6 +89,7 @@ class ResolvedInitialState(BaseModel):
     market: MarketConfig
     agents: list[AgentConfig]
     agent_definitions: list[AgentDefinition] = Field(default_factory=list)
+    initial_agent_states: list[AgentRuntimeState] = Field(default_factory=list)
     background_market_sector: BackgroundMarketSector = Field(default_factory=BackgroundMarketSector)
     total_supply: dict[str, int]
     preview: dict[str, object] = Field(default_factory=dict)

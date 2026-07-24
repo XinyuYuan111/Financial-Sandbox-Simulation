@@ -154,6 +154,22 @@ class EventStore:
                 )
             if branch_status is not None:
                 connection.execute("UPDATE branches SET status=? WHERE branch_id=?", (branch_status, branch_id))
+                if branch_status in {"Running", "Failed"}:
+                    connection.execute("UPDATE runs SET status=? WHERE run_id=?", (branch_status, run_id))
+                elif branch_status == "Paused":
+                    running = connection.execute(
+                        "SELECT 1 FROM branches WHERE run_id=? AND status='Running' LIMIT 1",
+                        (run_id,),
+                    ).fetchone()
+                    if running is None:
+                        connection.execute("UPDATE runs SET status='Paused' WHERE run_id=?", (run_id,))
+                elif branch_status == "Completed":
+                    active = connection.execute(
+                        "SELECT 1 FROM branches WHERE run_id=? AND status NOT IN ('Completed','Failed') LIMIT 1",
+                        (run_id,),
+                    ).fetchone()
+                    if active is None:
+                        connection.execute("UPDATE runs SET status='Completed' WHERE run_id=?", (run_id,))
             for observation in observations:
                 connection.execute(
                     "INSERT OR REPLACE INTO observations(observation_id,branch_id,agent_id,sim_time_us,observation_json) VALUES(?,?,?,?,?)",

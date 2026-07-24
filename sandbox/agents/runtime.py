@@ -8,6 +8,7 @@ from sandbox.contracts.agent import (
     AgentDecision,
     AgentDefinition,
     AgentRuntimeState,
+    BeliefProposal,
     BeliefState,
     BudgetChange,
     DecisionOutcome,
@@ -76,6 +77,34 @@ class AgentRuntime:
             "decision", observation.branch_id, state.agent_id, observation.observation_id, state.agent_revision
         )
         memory_proposals = self.cognition.propose(observation, state)
+        belief_proposals = []
+        information_by_id = {item.information_id: item for item in observation.information_items}
+        for memory_proposal in memory_proposals:
+            if not memory_proposal.source_ids:
+                continue
+            source_id = memory_proposal.source_ids[0]
+            item = information_by_id.get(source_id)
+            if item is None:
+                continue
+            memory_id = deterministic_id("memory", decision_id, memory_proposal.proposal_id)
+            confidence = max(
+                50,
+                min(
+                    950,
+                    1_000 - definition.base_persona.skepticism_milli
+                    + (150 if item.visibility == "agent_private" else 0),
+                ),
+            )
+            belief_proposals.append(BeliefProposal(
+                proposal_id=deterministic_id("proposal", observation.observation_id, "belief", source_id),
+                depends_on=[memory_proposal.proposal_id],
+                subject=item.source_id,
+                predicate="reported_information",
+                value=item.rendered_content,
+                confidence_milli=confidence,
+                evidence_memory_ids=[memory_id],
+                stated_reason="Confidence is derived from the Agent's private skepticism and delivery context.",
+            ))
         plan_for_controller = activate_plan or active_plan
         reactive = self.controller.react(
             definition=definition,
@@ -106,6 +135,7 @@ class AgentRuntime:
                 requested_planner_profile_id=definition.planner_profile_id,
             )
         proposal_ids = [item.proposal_id for item in memory_proposals]
+        proposal_ids.extend(item.proposal_id for item in belief_proposals)
         if planning_proposal is not None:
             proposal_ids.append(planning_proposal.proposal_id)
         if strategy_proposal is not None:
@@ -126,6 +156,7 @@ class AgentRuntime:
                 "budget": state.component_revisions["budget"],
             },
             memory_proposals=memory_proposals,
+            belief_proposals=belief_proposals,
             planning_request_proposal=planning_proposal,
             strategy_plan_proposal=strategy_proposal,
             action_proposals=reactive_actions,
@@ -154,12 +185,14 @@ class AgentRuntime:
         results: list[ProposalResult] = []
         revisions = dict(state.component_revisions)
         memory_entries = list(state.memory_entries)
+        beliefs = list(state.beliefs)
         observed_sources = set(observation.provenance) | {receipt.action_id for receipt in observation.action_receipts}
         accepted_ids: set[str] = set()
         for proposal in decision.memory_proposals:
             if proposal.kind == "write" and proposal.source_ids and set(proposal.source_ids).issubset(observed_sources):
+                memory_id = deterministic_id("memory", decision.decision_id, proposal.proposal_id)
                 memory_entries.append(MemoryEntryState(
-                    memory_id=deterministic_id("memory", decision.decision_id, proposal.proposal_id),
+                    memory_id=memory_id,
                     summary=proposal.summary,
                     source_ids=proposal.source_ids,
                     confidence_milli=proposal.confidence_milli,
@@ -168,15 +201,76 @@ class AgentRuntime:
                 ))
                 accepted_ids.add(proposal.proposal_id)
                 results.append(ProposalResult(proposal_id=proposal.proposal_id, accepted=True, reason_code="accepted"))
+            elif proposal.kind == "forget" and proposal.memory_id is not None:
+                next_entries = [entry for entry in memory_entries if entry.memory_id != proposal.memory_id]
+                if len(next_entries) != len(memory_entries):
+                    memory_entries = next_entries
+                    accepted_ids.add(proposal.proposal_id)
+                    results.append(ProposalResult(proposal_id=proposal.proposal_id, accepted=True, reason_code="forgotten"))
+                else:
+                    results.append(ProposalResult(proposal_id=proposal.proposal_id, accepted=False, reason_code="memory_not_found"))
             else:
                 results.append(ProposalResult(proposal_id=proposal.proposal_id, accepted=False, reason_code="invalid_memory_source"))
+        memory_capacity = max(1, min(1_000, definition.cognitive_profile.context_capacity // 256))
+        if len(memory_entries) > memory_capacity:
+            memory_entries = sorted(
+                memory_entries,
+                key=lambda entry: (-entry.salience, -entry.created_sim_time_us, entry.memory_id),
+            )[:memory_capacity]
         if memory_entries != list(state.memory_entries):
             revisions["memory"] += 1
+
+        available_memory_ids = {entry.memory_id for entry in memory_entries}
+        for proposal in decision.belief_proposals:
+            dependencies_ok = set(proposal.depends_on).issubset(accepted_ids)
+            evidence_ok = set(proposal.evidence_memory_ids).issubset(available_memory_ids)
+            if not dependencies_ok or not evidence_ok:
+                results.append(ProposalResult(proposal_id=proposal.proposal_id, accepted=False, reason_code="invalid_belief_evidence"))
+                continue
+            belief = BeliefState(
+                belief_id=deterministic_id("belief", state.agent_id, proposal.subject, proposal.predicate),
+                subject=proposal.subject,
+                predicate=proposal.predicate,
+                value=proposal.value,
+                confidence_milli=proposal.confidence_milli,
+                evidence_memory_ids=proposal.evidence_memory_ids,
+                updated_sim_time_us=observation.sim_time_us,
+                stated_reason=proposal.stated_reason,
+            )
+            beliefs = [
+                existing for existing in beliefs
+                if (existing.subject, existing.predicate) != (belief.subject, belief.predicate)
+            ]
+            beliefs.append(belief)
+            accepted_ids.add(proposal.proposal_id)
+            results.append(ProposalResult(
+                proposal_id=proposal.proposal_id,
+                accepted=True,
+                reason_code="belief_revised",
+                resulting_ref=belief.belief_id,
+            ))
+        if beliefs != list(state.beliefs):
+            revisions["belief"] += 1
 
         request = None
         planning_request_id = state.planning_request_id
         budget = state.cognitive_budget_state
         budget_changes: list[BudgetChange] = []
+        if observation.sim_time_us - budget.window_started_sim_time_us >= definition.cognitive_profile.planning_window_us:
+            budget = budget.model_copy(update={
+                "window_started_sim_time_us": observation.sim_time_us,
+                "plans_remaining": definition.cognitive_profile.max_plans_per_window,
+                "plans_reserved": 0,
+                "searches_remaining": definition.cognitive_profile.memory_search_limit,
+            })
+            revisions["budget"] += 1
+            budget_changes.append(BudgetChange(
+                budget_kind="cognitive",
+                operation="reset",
+                delta=definition.cognitive_profile.max_plans_per_window,
+                remaining=budget.plans_remaining,
+                reason_code="planning_window_elapsed",
+            ))
         if decision.planning_request_proposal is not None:
             proposal = decision.planning_request_proposal
             dependencies_ok = set(proposal.depends_on).issubset(accepted_ids)
@@ -228,6 +322,33 @@ class AgentRuntime:
                 results.append(ProposalResult(proposal_id=proposal.proposal_id, accepted=False, reason_code="dependency_or_capability_rejected"))
         if cursors != dict(state.directive_cursors):
             revisions["cursor"] += 1
+        attention_budget = state.attention_budget_state
+        if observation.sim_time_us - attention_budget.window_started_sim_time_us >= definition.cognitive_profile.planning_window_us:
+            attention_budget = attention_budget.model_copy(update={
+                "window_started_sim_time_us": observation.sim_time_us,
+                "items_remaining": definition.attention_profile.information_capacity,
+            })
+            revisions["attention"] += 1
+            budget_changes.append(BudgetChange(
+                budget_kind="attention",
+                operation="reset",
+                delta=definition.attention_profile.information_capacity,
+                remaining=attention_budget.items_remaining,
+                reason_code="attention_window_elapsed",
+            ))
+        viewed_count = len(observation.information_items)
+        if viewed_count:
+            attention_budget = attention_budget.model_copy(update={
+                "items_remaining": max(0, attention_budget.items_remaining - viewed_count),
+            })
+            revisions["attention"] += 1
+            budget_changes.append(BudgetChange(
+                budget_kind="attention",
+                operation="consume",
+                delta=-viewed_count,
+                remaining=attention_budget.items_remaining,
+                reason_code="information_viewed",
+            ))
         next_state = state.model_copy(update={
             "agent_revision": state.agent_revision + 1,
             "component_revisions": revisions,
@@ -236,7 +357,13 @@ class AgentRuntime:
             "planning_request_id": planning_request_id,
             "directive_cursors": cursors,
             "cognitive_budget_state": budget,
+            "attention_budget_state": attention_budget,
             "memory_entries": memory_entries,
+            "beliefs": beliefs,
+            "viewed_information_ids": list(dict.fromkeys([
+                *state.viewed_information_ids,
+                *(item.information_id for item in observation.information_items),
+            ]))[-10_000:],
             "processed_observation_ids": [*state.processed_observation_ids, observation.observation_id],
         })
         outcome = DecisionOutcome(

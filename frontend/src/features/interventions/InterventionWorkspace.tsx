@@ -4,7 +4,7 @@ import { api } from '../../api'
 import type { InterventionEffect, InterventionPlan } from '../../types'
 import { EmptyState, shortId, StatusBadge } from '../../components/ui'
 
-type EffectKind = 'publish_information' | 'transfer_asset' | 'set_market_status' | 'set_account_freeze' | 'set_wallet_access'
+type EffectKind = 'publish_information' | 'transfer_asset' | 'set_market_status' | 'set_account_freeze' | 'set_wallet_access' | 'create_world_entity' | 'create_relationship'
 
 type EffectDraft = {
   effect_type: EffectKind
@@ -24,6 +24,13 @@ type EffectDraft = {
   wallet_owner_id: string
   grantee_agent_id: string
   permissions: Array<'observe' | 'transact'>
+  entity_id: string
+  entity_type: 'institution' | 'venue' | 'wallet'
+  display_name: string
+  relationship_id: string
+  relationship_type: 'wallet_control' | 'custody' | 'exposure'
+  source_entity_id: string
+  target_entity_id: string
 }
 
 const blankEffect = (): EffectDraft => ({
@@ -44,6 +51,8 @@ const blankEffect = (): EffectDraft => ({
   wallet_owner_id: '',
   grantee_agent_id: '',
   permissions: ['observe'],
+  entity_id: '', entity_type: 'institution', display_name: '',
+  relationship_id: '', relationship_type: 'custody', source_entity_id: '', target_entity_id: '',
 })
 
 const splitIds = (value: string) => value.split(',').map(item => item.trim()).filter(Boolean)
@@ -65,6 +74,17 @@ function buildEffect(draft: EffectDraft): InterventionEffect {
   if (draft.effect_type === 'set_account_freeze') return {
     effect_id, effect_type: draft.effect_type, owner_id: draft.owner_id, frozen: draft.frozen, reason_code: draft.reason_code,
   }
+  if (draft.effect_type === 'create_world_entity') return {
+    effect_id, effect_type: draft.effect_type, entity_id: draft.entity_id,
+    entity_type: draft.entity_type, display_name: draft.display_name,
+  }
+  if (draft.effect_type === 'create_relationship') return {
+    effect_id, effect_type: draft.effect_type, relationship_id: draft.relationship_id,
+    relationship_type: draft.relationship_type, source_entity_id: draft.source_entity_id,
+    target_entity_id: draft.target_entity_id,
+    asset: draft.relationship_type === 'exposure' ? draft.asset : null,
+    amount: draft.relationship_type === 'exposure' ? Number(draft.amount) : null,
+  }
   return {
     effect_id, effect_type: draft.effect_type, wallet_owner_id: draft.wallet_owner_id,
     grantee_agent_id: draft.grantee_agent_id, permissions: draft.permissions, reason_code: draft.reason_code,
@@ -75,6 +95,7 @@ function effectLabel(effect: InterventionEffect) {
   const labels: Record<string, string> = {
     publish_information: '发布信息', transfer_asset: '资产转移', set_market_status: '市场状态',
     set_account_freeze: '账户冻结', set_wallet_access: '钱包访问',
+    create_world_entity: '创建实体', create_relationship: '创建关系',
   }
   return labels[effect.effect_type] ?? effect.effect_type
 }
@@ -156,7 +177,7 @@ export function InterventionWorkspace({ branchId, branchStatus, simTimeUs, onCha
         <label>用户指令<textarea value={intent} onChange={event => setIntent(event.target.value)} maxLength={4000} disabled={!paused || busy} /></label>
         <label>生效时间<input type="number" min={simTimeUs} step="1" value={effectiveTime} onChange={event => setEffectiveTime(event.target.value)} disabled={!paused || busy} /></label>
         <label>效果类型<select value={effectDraft.effect_type} onChange={event => setEffectDraft(current => ({ ...current, effect_type: event.target.value as EffectKind }))} disabled={!paused || busy}>
-          <option value="publish_information">发布信息</option><option value="transfer_asset">资产转移</option><option value="set_market_status">市场状态</option><option value="set_account_freeze">账户冻结</option><option value="set_wallet_access">钱包访问</option>
+          <option value="publish_information">发布信息</option><option value="transfer_asset">资产转移</option><option value="set_market_status">市场状态</option><option value="set_account_freeze">账户冻结</option><option value="set_wallet_access">钱包访问</option><option value="create_world_entity">创建实体</option><option value="create_relationship">创建关系</option>
         </select></label>
         {effectDraft.effect_type === 'publish_information' ? <>
           <label>频道<select value={effectDraft.channel} onChange={event => setEffectDraft(current => ({ ...current, channel: event.target.value as EffectDraft['channel'] }))}><option>PublicFeed</option><option>OfficialAnnouncement</option><option>TradingTerminal</option><option>PrivateChannel</option></select></label>
@@ -167,6 +188,8 @@ export function InterventionWorkspace({ branchId, branchStatus, simTimeUs, onCha
         {effectDraft.effect_type === 'set_market_status' ? <><label>市场<input value={effectDraft.market_id} onChange={event => setEffectDraft(current => ({ ...current, market_id: event.target.value }))} /></label><label>状态<select value={effectDraft.status} onChange={event => setEffectDraft(current => ({ ...current, status: event.target.value as EffectDraft['status'] }))}><option value="active">Active</option><option value="halted">Halted</option></select></label></> : null}
         {effectDraft.effect_type === 'set_account_freeze' ? <><label>账户<input value={effectDraft.owner_id} onChange={event => setEffectDraft(current => ({ ...current, owner_id: event.target.value }))} /></label><label className="toggle-field"><input type="checkbox" checked={effectDraft.frozen} onChange={event => setEffectDraft(current => ({ ...current, frozen: event.target.checked }))} />冻结</label></> : null}
         {effectDraft.effect_type === 'set_wallet_access' ? <><label>钱包账户<input value={effectDraft.wallet_owner_id} onChange={event => setEffectDraft(current => ({ ...current, wallet_owner_id: event.target.value }))} /></label><label>获权 Agent<input value={effectDraft.grantee_agent_id} onChange={event => setEffectDraft(current => ({ ...current, grantee_agent_id: event.target.value }))} /></label><label>权限<select value={effectDraft.permissions.join(',')} onChange={event => setEffectDraft(current => ({ ...current, permissions: event.target.value.split(',') as EffectDraft['permissions'] }))}><option value="observe">Observe</option><option value="observe,transact">Observe + transact</option><option value="">Revoke</option></select></label></> : null}
+        {effectDraft.effect_type === 'create_world_entity' ? <><label>实体 ID<input value={effectDraft.entity_id} onChange={event => setEffectDraft(current => ({ ...current, entity_id: event.target.value }))} /></label><label>实体类型<select value={effectDraft.entity_type} onChange={event => setEffectDraft(current => ({ ...current, entity_type: event.target.value as EffectDraft['entity_type'] }))}><option value="institution">Institution</option><option value="venue">Venue</option><option value="wallet">Wallet</option></select></label><label className="full-field">显示名称<input value={effectDraft.display_name} onChange={event => setEffectDraft(current => ({ ...current, display_name: event.target.value }))} /></label></> : null}
+        {effectDraft.effect_type === 'create_relationship' ? <><label>关系 ID<input value={effectDraft.relationship_id} onChange={event => setEffectDraft(current => ({ ...current, relationship_id: event.target.value }))} /></label><label>关系类型<select value={effectDraft.relationship_type} onChange={event => setEffectDraft(current => ({ ...current, relationship_type: event.target.value as EffectDraft['relationship_type'] }))}><option value="wallet_control">Wallet control</option><option value="custody">Custody</option><option value="exposure">Exposure</option></select></label><label>来源实体<input value={effectDraft.source_entity_id} onChange={event => setEffectDraft(current => ({ ...current, source_entity_id: event.target.value }))} /></label><label>目标实体<input value={effectDraft.target_entity_id} onChange={event => setEffectDraft(current => ({ ...current, target_entity_id: event.target.value }))} /></label>{effectDraft.relationship_type === 'exposure' ? <><label>资产<input value={effectDraft.asset} onChange={event => setEffectDraft(current => ({ ...current, asset: event.target.value }))} /></label><label>数量<input type="number" min="0" value={effectDraft.amount} onChange={event => setEffectDraft(current => ({ ...current, amount: event.target.value }))} /></label></> : null}</> : null}
         {effectDraft.effect_type !== 'publish_information' ? <label className="full-field">原因代码<input value={effectDraft.reason_code} onChange={event => setEffectDraft(current => ({ ...current, reason_code: event.target.value }))} /></label> : null}
         <button className="secondary-button add-effect" type="button" onClick={addEffect} disabled={!paused || busy}><Plus size={15} />添加效果</button>
       </div>

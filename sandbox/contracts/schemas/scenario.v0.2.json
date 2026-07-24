@@ -61,6 +61,585 @@
       "title": "AgentConfig",
       "type": "object"
     },
+    "AgentDefinition": {
+      "additionalProperties": false,
+      "properties": {
+        "agent_id": {
+          "maxLength": 256,
+          "minLength": 1,
+          "title": "Agent Id",
+          "type": "string"
+        },
+        "display_name": {
+          "maxLength": 128,
+          "minLength": 1,
+          "title": "Display Name",
+          "type": "string"
+        },
+        "public_identity": {
+          "default": "",
+          "maxLength": 500,
+          "title": "Public Identity",
+          "type": "string"
+        },
+        "role_tags": {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 16,
+          "title": "Role Tags",
+          "type": "array"
+        },
+        "funding_profile": {
+          "enum": [
+            "ordinary",
+            "capital",
+            "liquidity",
+            "issuer",
+            "information"
+          ],
+          "title": "Funding Profile",
+          "type": "string"
+        },
+        "capability_set": {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 32,
+          "title": "Capability Set",
+          "type": "array"
+        },
+        "base_persona": {
+          "$ref": "#/$defs/BasePersona"
+        },
+        "planner_profile_id": {
+          "maxLength": 128,
+          "minLength": 1,
+          "title": "Planner Profile Id",
+          "type": "string"
+        },
+        "controller_profile_id": {
+          "default": "declarative_market.v0.1",
+          "maxLength": 128,
+          "minLength": 1,
+          "title": "Controller Profile Id",
+          "type": "string"
+        },
+        "cognitive_profile": {
+          "$ref": "#/$defs/CognitiveProfile"
+        },
+        "attention_profile": {
+          "$ref": "#/$defs/AttentionProfile"
+        },
+        "latency_profile": {
+          "$ref": "#/$defs/LatencyProfile"
+        },
+        "schema_version": {
+          "const": "agent-definition.v0.1",
+          "default": "agent-definition.v0.1",
+          "title": "Schema Version",
+          "type": "string"
+        }
+      },
+      "required": [
+        "agent_id",
+        "display_name",
+        "funding_profile",
+        "base_persona",
+        "planner_profile_id"
+      ],
+      "title": "AgentDefinition",
+      "type": "object"
+    },
+    "AgentRuntimeState": {
+      "additionalProperties": false,
+      "properties": {
+        "agent_id": {
+          "title": "Agent Id",
+          "type": "string"
+        },
+        "agent_revision": {
+          "default": 0,
+          "minimum": 0,
+          "title": "Agent Revision",
+          "type": "integer"
+        },
+        "component_revisions": {
+          "additionalProperties": {
+            "type": "integer"
+          },
+          "propertyNames": {
+            "enum": [
+              "memory",
+              "belief",
+              "planning",
+              "strategy",
+              "cursor",
+              "budget",
+              "attention"
+            ]
+          },
+          "title": "Component Revisions",
+          "type": "object"
+        },
+        "active_plan_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Active Plan Id"
+        },
+        "active_strategy_revision": {
+          "default": 0,
+          "minimum": 0,
+          "title": "Active Strategy Revision",
+          "type": "integer"
+        },
+        "planning_request_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Planning Request Id"
+        },
+        "trigger_accumulator": {
+          "items": {
+            "$ref": "#/$defs/ReplanTrigger"
+          },
+          "maxItems": 32,
+          "title": "Trigger Accumulator",
+          "type": "array"
+        },
+        "directive_cursors": {
+          "additionalProperties": {
+            "$ref": "#/$defs/DirectiveExecutionCursor"
+          },
+          "title": "Directive Cursors",
+          "type": "object"
+        },
+        "cognitive_budget_state": {
+          "$ref": "#/$defs/CognitiveBudgetState"
+        },
+        "attention_budget_state": {
+          "$ref": "#/$defs/AttentionBudgetState"
+        },
+        "memory_entries": {
+          "items": {
+            "$ref": "#/$defs/MemoryEntryState"
+          },
+          "maxItems": 1000,
+          "title": "Memory Entries",
+          "type": "array"
+        },
+        "beliefs": {
+          "items": {
+            "$ref": "#/$defs/BeliefState"
+          },
+          "maxItems": 1000,
+          "title": "Beliefs",
+          "type": "array"
+        },
+        "viewed_information_ids": {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 10000,
+          "title": "Viewed Information Ids",
+          "type": "array"
+        },
+        "processed_observation_ids": {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 10000,
+          "title": "Processed Observation Ids",
+          "type": "array"
+        },
+        "schema_version": {
+          "const": "agent-runtime-state.v0.1",
+          "default": "agent-runtime-state.v0.1",
+          "title": "Schema Version",
+          "type": "string"
+        }
+      },
+      "required": [
+        "agent_id"
+      ],
+      "title": "AgentRuntimeState",
+      "type": "object"
+    },
+    "AttentionBudgetState": {
+      "additionalProperties": false,
+      "properties": {
+        "window_started_sim_time_us": {
+          "default": 0,
+          "minimum": 0,
+          "title": "Window Started Sim Time Us",
+          "type": "integer"
+        },
+        "items_remaining": {
+          "default": 20,
+          "minimum": 0,
+          "title": "Items Remaining",
+          "type": "integer"
+        }
+      },
+      "title": "AttentionBudgetState",
+      "type": "object"
+    },
+    "AttentionProfile": {
+      "additionalProperties": false,
+      "properties": {
+        "profile_id": {
+          "default": "attention.default.v0.1",
+          "title": "Profile Id",
+          "type": "string"
+        },
+        "information_capacity": {
+          "default": 20,
+          "maximum": 10000,
+          "minimum": 1,
+          "title": "Information Capacity",
+          "type": "integer"
+        },
+        "minimum_salience": {
+          "default": 0,
+          "maximum": 100,
+          "minimum": 0,
+          "title": "Minimum Salience",
+          "type": "integer"
+        }
+      },
+      "title": "AttentionProfile",
+      "type": "object"
+    },
+    "BasePersona": {
+      "additionalProperties": false,
+      "properties": {
+        "template_id": {
+          "maxLength": 128,
+          "minLength": 1,
+          "title": "Template Id",
+          "type": "string"
+        },
+        "template_version": {
+          "const": "persona.v0.1",
+          "default": "persona.v0.1",
+          "title": "Template Version",
+          "type": "string"
+        },
+        "private_goals": {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 8,
+          "title": "Private Goals",
+          "type": "array"
+        },
+        "risk_tolerance_milli": {
+          "maximum": 1000,
+          "minimum": 0,
+          "title": "Risk Tolerance Milli",
+          "type": "integer"
+        },
+        "time_horizon": {
+          "enum": [
+            "short",
+            "medium",
+            "long"
+          ],
+          "title": "Time Horizon",
+          "type": "string"
+        },
+        "loss_aversion_milli": {
+          "maximum": 1000,
+          "minimum": 0,
+          "title": "Loss Aversion Milli",
+          "type": "integer"
+        },
+        "trend_bias_milli": {
+          "maximum": 1000,
+          "minimum": 0,
+          "title": "Trend Bias Milli",
+          "type": "integer"
+        },
+        "skepticism_milli": {
+          "maximum": 1000,
+          "minimum": 0,
+          "title": "Skepticism Milli",
+          "type": "integer"
+        },
+        "communication_propensity_milli": {
+          "maximum": 1000,
+          "minimum": 0,
+          "title": "Communication Propensity Milli",
+          "type": "integer"
+        },
+        "bounded_notes": {
+          "default": "",
+          "maxLength": 500,
+          "title": "Bounded Notes",
+          "type": "string"
+        }
+      },
+      "required": [
+        "template_id",
+        "risk_tolerance_milli",
+        "time_horizon",
+        "loss_aversion_milli",
+        "trend_bias_milli",
+        "skepticism_milli",
+        "communication_propensity_milli"
+      ],
+      "title": "BasePersona",
+      "type": "object"
+    },
+    "BeliefState": {
+      "additionalProperties": false,
+      "properties": {
+        "belief_id": {
+          "title": "Belief Id",
+          "type": "string"
+        },
+        "subject": {
+          "title": "Subject",
+          "type": "string"
+        },
+        "predicate": {
+          "title": "Predicate",
+          "type": "string"
+        },
+        "value": {
+          "title": "Value",
+          "type": "string"
+        },
+        "confidence_milli": {
+          "maximum": 1000,
+          "minimum": 0,
+          "title": "Confidence Milli",
+          "type": "integer"
+        },
+        "evidence_memory_ids": {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 32,
+          "title": "Evidence Memory Ids",
+          "type": "array"
+        },
+        "updated_sim_time_us": {
+          "minimum": 0,
+          "title": "Updated Sim Time Us",
+          "type": "integer"
+        },
+        "stated_reason": {
+          "default": "",
+          "maxLength": 500,
+          "title": "Stated Reason",
+          "type": "string"
+        }
+      },
+      "required": [
+        "belief_id",
+        "subject",
+        "predicate",
+        "value",
+        "confidence_milli",
+        "updated_sim_time_us"
+      ],
+      "title": "BeliefState",
+      "type": "object"
+    },
+    "CognitiveBudgetState": {
+      "additionalProperties": false,
+      "properties": {
+        "window_started_sim_time_us": {
+          "default": 0,
+          "minimum": 0,
+          "title": "Window Started Sim Time Us",
+          "type": "integer"
+        },
+        "plans_remaining": {
+          "default": 2,
+          "minimum": 0,
+          "title": "Plans Remaining",
+          "type": "integer"
+        },
+        "plans_reserved": {
+          "default": 0,
+          "minimum": 0,
+          "title": "Plans Reserved",
+          "type": "integer"
+        },
+        "searches_remaining": {
+          "default": 5,
+          "minimum": 0,
+          "title": "Searches Remaining",
+          "type": "integer"
+        }
+      },
+      "title": "CognitiveBudgetState",
+      "type": "object"
+    },
+    "CognitiveProfile": {
+      "additionalProperties": false,
+      "properties": {
+        "profile_id": {
+          "default": "cognitive.default.v0.1",
+          "title": "Profile Id",
+          "type": "string"
+        },
+        "max_plans_per_window": {
+          "default": 2,
+          "maximum": 100,
+          "minimum": 0,
+          "title": "Max Plans Per Window",
+          "type": "integer"
+        },
+        "planning_window_us": {
+          "default": 300000000,
+          "minimum": 1,
+          "title": "Planning Window Us",
+          "type": "integer"
+        },
+        "context_capacity": {
+          "default": 8000,
+          "maximum": 1000000,
+          "minimum": 256,
+          "title": "Context Capacity",
+          "type": "integer"
+        },
+        "memory_search_limit": {
+          "default": 5,
+          "maximum": 100,
+          "minimum": 0,
+          "title": "Memory Search Limit",
+          "type": "integer"
+        }
+      },
+      "title": "CognitiveProfile",
+      "type": "object"
+    },
+    "DirectiveExecutionCursor": {
+      "additionalProperties": false,
+      "properties": {
+        "plan_revision": {
+          "minimum": 1,
+          "title": "Plan Revision",
+          "type": "integer"
+        },
+        "directive_id": {
+          "maxLength": 256,
+          "minLength": 1,
+          "title": "Directive Id",
+          "type": "string"
+        },
+        "last_observation_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Last Observation Id"
+        },
+        "previous_guard": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Previous Guard"
+        },
+        "emission_count": {
+          "default": 0,
+          "minimum": 0,
+          "title": "Emission Count",
+          "type": "integer"
+        },
+        "last_eligible_sim_time_us": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Last Eligible Sim Time Us"
+        },
+        "next_eligible_sim_time_us": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Next Eligible Sim Time Us"
+        },
+        "action_ids": {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 10000,
+          "title": "Action Ids",
+          "type": "array"
+        }
+      },
+      "required": [
+        "plan_revision",
+        "directive_id"
+      ],
+      "title": "DirectiveExecutionCursor",
+      "type": "object"
+    },
+    "LatencyProfile": {
+      "additionalProperties": false,
+      "properties": {
+        "profile_id": {
+          "default": "latency.default.v0.1",
+          "title": "Profile Id",
+          "type": "string"
+        },
+        "planning_latency_us": {
+          "default": 1000000,
+          "minimum": 0,
+          "title": "Planning Latency Us",
+          "type": "integer"
+        },
+        "action_latency_us": {
+          "default": 1000000,
+          "minimum": 0,
+          "title": "Action Latency Us",
+          "type": "integer"
+        }
+      },
+      "title": "LatencyProfile",
+      "type": "object"
+    },
     "MarketConfig": {
       "additionalProperties": false,
       "properties": {
@@ -121,6 +700,59 @@
       "title": "MarketConfig",
       "type": "object"
     },
+    "MemoryEntryState": {
+      "additionalProperties": false,
+      "properties": {
+        "memory_id": {
+          "title": "Memory Id",
+          "type": "string"
+        },
+        "summary": {
+          "maxLength": 1000,
+          "title": "Summary",
+          "type": "string"
+        },
+        "source_ids": {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 32,
+          "title": "Source Ids",
+          "type": "array"
+        },
+        "confidence_milli": {
+          "maximum": 1000,
+          "minimum": 0,
+          "title": "Confidence Milli",
+          "type": "integer"
+        },
+        "salience": {
+          "maximum": 100,
+          "minimum": 0,
+          "title": "Salience",
+          "type": "integer"
+        },
+        "created_sim_time_us": {
+          "minimum": 0,
+          "title": "Created Sim Time Us",
+          "type": "integer"
+        },
+        "accessible": {
+          "default": true,
+          "title": "Accessible",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "memory_id",
+        "summary",
+        "confidence_milli",
+        "salience",
+        "created_sim_time_us"
+      ],
+      "title": "MemoryEntryState",
+      "type": "object"
+    },
     "PopulationConfig": {
       "additionalProperties": false,
       "properties": {
@@ -151,6 +783,48 @@
         }
       },
       "title": "PopulationConfig",
+      "type": "object"
+    },
+    "ReplanTrigger": {
+      "additionalProperties": false,
+      "properties": {
+        "semantic_key": {
+          "maxLength": 128,
+          "minLength": 1,
+          "title": "Semantic Key",
+          "type": "string"
+        },
+        "count": {
+          "default": 1,
+          "minimum": 1,
+          "title": "Count",
+          "type": "integer"
+        },
+        "first_sim_time_us": {
+          "minimum": 0,
+          "title": "First Sim Time Us",
+          "type": "integer"
+        },
+        "last_sim_time_us": {
+          "minimum": 0,
+          "title": "Last Sim Time Us",
+          "type": "integer"
+        },
+        "source_event_ids": {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 32,
+          "title": "Source Event Ids",
+          "type": "array"
+        }
+      },
+      "required": [
+        "semantic_key",
+        "first_sim_time_us",
+        "last_sim_time_us"
+      ],
+      "title": "ReplanTrigger",
       "type": "object"
     }
   },
@@ -232,6 +906,36 @@
       ],
       "default": null,
       "title": "Agents"
+    },
+    "agent_definitions": {
+      "anyOf": [
+        {
+          "items": {
+            "$ref": "#/$defs/AgentDefinition"
+          },
+          "type": "array"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Agent Definitions"
+    },
+    "initial_agent_states": {
+      "anyOf": [
+        {
+          "items": {
+            "$ref": "#/$defs/AgentRuntimeState"
+          },
+          "type": "array"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Initial Agent States"
     }
   },
   "title": "ScenarioDraft",

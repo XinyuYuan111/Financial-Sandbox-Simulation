@@ -26,6 +26,20 @@ from sandbox.world.state import SimulationWorld
 class ScenarioDirector:
     """Command-scoped, read-only interpreter for typed intervention drafts."""
 
+    TEMPLATES: tuple[dict[str, object], ...] = (
+        {"template_id": "venue-halt.v0.1", "label": "Venue halt or outage", "effect_types": ["set_market_status", "publish_information"]},
+        {"template_id": "custody-freeze.v0.1", "label": "Custody account freeze", "effect_types": ["set_account_freeze", "publish_information"]},
+        {"template_id": "wallet-access-leak.v0.1", "label": "Wallet access leak", "effect_types": ["set_wallet_access", "publish_information"]},
+        {"template_id": "selective-rumor.v0.1", "label": "Selective rumor", "effect_types": ["publish_information"]},
+        {"template_id": "public-announcement.v0.1", "label": "Public announcement", "effect_types": ["publish_information"]},
+        {"template_id": "bounded-asset-shock.v0.1", "label": "Bounded asset transfer shock", "effect_types": ["transfer_asset", "publish_information"]},
+        {"template_id": "institution-relationship.v0.1", "label": "New institution and relationship", "effect_types": ["create_world_entity", "create_relationship", "publish_information"]},
+    )
+
+    @classmethod
+    def templates(cls) -> list[dict[str, object]]:
+        return [dict(template) for template in cls.TEMPLATES]
+
     def draft(
         self,
         *,

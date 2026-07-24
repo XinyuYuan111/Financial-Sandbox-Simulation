@@ -2,11 +2,12 @@ from __future__ import annotations
 
 from copy import deepcopy
 from dataclasses import dataclass
+import hashlib
 from typing import Any, Literal
 
 from sandbox.agents.entities import AgentState
 from sandbox.agents.observation import ObservationService
-from sandbox.contracts.agent import ActionReceipt, AgentDefinition, AgentRuntimeState, DecisionTrigger
+from sandbox.contracts.agent import ActionReceipt, ActionReservation, AgentDefinition, AgentRuntimeState, DecisionTrigger, PendingAction
 from sandbox.contracts.action import ActionContract
 from sandbox.contracts.event import EventDraft
 from sandbox.contracts.intervention import (
@@ -23,8 +24,8 @@ from sandbox.contracts.observation import ObservationPacket
 from sandbox.contracts.planning import PlanningRequest, StrategyPlan
 from sandbox.contracts.scenario import ResolvedInitialState
 from sandbox.core.errors import MissingCausalStateError, ValidationError
-from sandbox.core.ids import new_id
-from sandbox.core.numeric import require_int
+from sandbox.core.ids import deterministic_id, new_id
+from sandbox.core.numeric import ceil_basis_points, require_int
 from sandbox.core.rng import NamedRandomStreams
 from sandbox.world.information import publish_information
 from sandbox.world.ledger import Ledger
@@ -72,6 +73,8 @@ class SimulationWorld:
         self.wallet_access: dict[str, dict[str, list[str]]] = {}
         self.frozen_accounts: set[str] = set()
         self.deferred_observation_ids: list[str] = []
+        self.pending_deliveries: dict[str, dict[str, object]] = {}
+        self.terminal_reason: str | None = None
 
     @classmethod
     def from_resolved(cls, resolved: ResolvedInitialState) -> "SimulationWorld":
@@ -87,6 +90,7 @@ class SimulationWorld:
         world.chain_snapshot = deepcopy(resolved.chain_snapshot)
         world.rng = NamedRandomStreams(resolved.seed)
         definitions = {definition.agent_id: definition for definition in resolved.agent_definitions}
+        initial_states = {state.agent_id: state for state in resolved.initial_agent_states}
         for config in resolved.agents:
             if config.strategy == "background":
                 continue
@@ -109,7 +113,7 @@ class SimulationWorld:
             definition = definitions.get(config.agent_id)
             if definition is not None:
                 world.agent_definitions[config.agent_id] = definition
-                world.agent_runtime_states[config.agent_id] = AgentRuntimeState(
+                world.agent_runtime_states[config.agent_id] = initial_states.get(config.agent_id) or AgentRuntimeState(
                     agent_id=config.agent_id,
                     cognitive_budget_state={
                         "window_started_sim_time_us": 0,
@@ -169,6 +173,8 @@ class SimulationWorld:
         world.wallet_access = deepcopy(value.get("wallet_access", {}))
         world.frozen_accounts = set(value.get("frozen_accounts", []))
         world.deferred_observation_ids = list(value.get("deferred_observation_ids", []))
+        world.pending_deliveries = deepcopy(value.get("pending_deliveries", {}))
+        world.terminal_reason = value.get("terminal_reason")
         return world
 
     def clone(self) -> "SimulationWorld":
@@ -181,6 +187,8 @@ class SimulationWorld:
         world_version: int,
         proposal_id: str | None = None,
         decision_id: str | None = None,
+        defer_execution: bool = False,
+        admitted_reservation_id: str | None = None,
     ) -> ActionResult:
         world = self.clone()
         if action.branch_id == "":
@@ -194,9 +202,89 @@ class SimulationWorld:
             raise ValidationError("action execution time cannot precede submission")
         if action.expected_execution_time_us > action.submitted_sim_time_us + action.validity_window_us:
             raise ValidationError("action expires before its expected execution time")
+        if defer_execution:
+            # Validate the complete domain action on a discarded clone before
+            # admitting a durable future commitment.
+            world.apply_action(
+                action,
+                world_version=world_version,
+                proposal_id=proposal_id,
+                decision_id=decision_id,
+            )
+        reservation_id = admitted_reservation_id or deterministic_id("reservation", action.action_id)
+        proposal_ref = proposal_id or deterministic_id("proposal", action.action_id, "external")
+        if admitted_reservation_id is not None:
+            existing_reservation = world.action_reservations.get(reservation_id)
+            existing_pending = world.pending_actions.get(action.action_id)
+            if existing_reservation is None or existing_pending is None:
+                raise ValidationError("admitted action is missing its reservation or pending state")
+            asset_amounts = {str(asset): int(amount) for asset, amount in dict(existing_reservation.get("asset_amounts", {})).items()}
+            events: list[EventDraft] = []
+        else:
+            asset_amounts: dict[str, int] = {}
+            if action.action_type in {"SubmitLimitOrder", "SubmitProtectedMarketOrder"}:
+                side = action.payload.get("side")
+                quantity = require_int(action.payload.get("quantity"), "payload.quantity", minimum=1)
+                if side == "sell":
+                    asset_amounts[str(world.market["base_asset"])] = quantity
+                elif side == "buy":
+                    price_key = "price" if action.action_type == "SubmitLimitOrder" else "worst_price"
+                    reserve_price = require_int(action.payload.get(price_key), f"payload.{price_key}", minimum=1)
+                    gross = reserve_price * quantity
+                    asset_amounts[str(world.market["quote_asset"])] = gross + ceil_basis_points(gross, int(world.market["taker_fee_bps"]))
+            for asset, amount in asset_amounts.items():
+                already_reserved = sum(
+                    int(value.get("asset_amounts", {}).get(asset, 0))
+                    for value in world.action_reservations.values()
+                    if value.get("agent_id") == action.agent_id and value.get("state", "active") == "active"
+                )
+                if world.ledger.balance(action.agent_id, asset) - already_reserved < amount:
+                    raise ValidationError(f"insufficient unreserved {asset} balance for action")
+            reservation = ActionReservation(
+                reservation_id=reservation_id,
+                action_id=action.action_id,
+                agent_id=action.agent_id,
+                asset_amounts=asset_amounts,
+                created_sim_time_us=action.submitted_sim_time_us,
+                expires_sim_time_us=action.submitted_sim_time_us + action.validity_window_us,
+            )
+            pending = PendingAction(
+                action_id=action.action_id,
+                proposal_id=proposal_ref,
+                decision_id=decision_id,
+                agent_id=action.agent_id,
+                expected_execution_time_us=action.expected_execution_time_us,
+                validity_deadline_us=action.submitted_sim_time_us + action.validity_window_us,
+                reservation_id=reservation_id,
+            )
+            world.action_reservations[reservation_id] = reservation.model_dump(mode="json")
+            world.pending_actions[action.action_id] = {
+                **pending.model_dump(mode="json"),
+                "action": action.model_dump(mode="json"),
+            }
+            accepted = world._event(action, "ActionAccepted", {"action_type": action.action_type}, priority=70, visibility="participants")
+            events = [
+                accepted.model_copy(update={"sim_time_us": action.submitted_sim_time_us}),
+                world._event(
+                    action,
+                    "ActionReservationCreated",
+                    {"reservation_id": reservation_id, "asset_amounts": asset_amounts},
+                    priority=71,
+                    visibility="participants",
+                    phase="01-reservation",
+                ).model_copy(update={"sim_time_us": action.submitted_sim_time_us}),
+                world._event(
+                    action,
+                    "PendingActionScheduled",
+                    {"reservation_id": reservation_id, "expected_execution_time_us": action.expected_execution_time_us},
+                    priority=72,
+                    visibility="participants",
+                    phase="02-pending",
+                ).model_copy(update={"sim_time_us": action.submitted_sim_time_us}),
+            ]
+        if defer_execution:
+            return ActionResult(world, events, [], [])
         world.sim_time_us = max(world.sim_time_us, action.expected_execution_time_us)
-        accepted = world._event(action, "ActionAccepted", {"action_type": action.action_type}, priority=70, visibility="participants")
-        events = [accepted.model_copy(update={"sim_time_us": action.submitted_sim_time_us})]
         token_before = world.ledger.total(world.market["base_asset"])
         quote_before = world.ledger.total(world.market["quote_asset"])
         if action.action_type in {"SubmitLimitOrder", "SubmitProtectedMarketOrder", "CancelOrder", "ReplaceOrder"}:
@@ -211,6 +299,26 @@ class SimulationWorld:
             if "information.publish" not in capabilities:
                 raise ValidationError("agent does not have information.publish capability")
             events.extend(world._apply_information_action(action))
+        world.pending_actions.pop(action.action_id, None)
+        world.action_reservations.pop(reservation_id, None)
+        events.extend([
+            world._event(
+                action,
+                "ActionReservationConsumed",
+                {"reservation_id": reservation_id},
+                priority=73,
+                visibility="participants",
+                phase="98-reservation-consumed",
+            ),
+            world._event(
+                action,
+                "PendingActionResolved",
+                {"reservation_id": reservation_id, "outcome": "executed"},
+                priority=74,
+                visibility="participants",
+                phase="99-pending-resolved",
+            ),
+        ])
         if world.ledger.total(world.market["base_asset"]) != token_before or world.ledger.total(world.market["quote_asset"]) != quote_before:
             raise ValidationError("asset conservation invariant failed")
         receipt = ActionReceipt(
@@ -253,21 +361,45 @@ class SimulationWorld:
                 first_sim_time_us=world.sim_time_us,
                 last_sim_time_us=world.sim_time_us,
             ))
+        previous_observation_ids = dict(world.latest_observation_ids)
         observations = world.create_observations(
             action.branch_id,
             world_version + len(events),
             recipient_ids=recipients,
             triggers_by_agent=triggers_by_agent,
         )
+        if action.action_type == "PublishInformation":
+            information_id = str(world.information_items[-1]["information_id"])
+            selected_observations = [
+                observation
+                for observation in observations
+                if any(item.information_id == information_id for item in observation.information_items)
+            ]
+            selected_agents = {observation.agent_id for observation in selected_observations}
+            for recipient in set(recipients) - selected_agents:
+                previous = previous_observation_ids.get(recipient)
+                if previous is None:
+                    world.latest_observation_ids.pop(recipient, None)
+                else:
+                    world.latest_observation_ids[recipient] = previous
+            observations = selected_observations
         events.extend(
             world._event(action, "ObservationCreated", {"agent_id": observation.agent_id, "observation_id": observation.observation_id}, priority=50, visibility="agent_private", observation_id=observation.observation_id)
             for observation in observations
         )
         if action.action_type == "PublishInformation":
-            information_id = str(world.information_items[-1]["information_id"])
             events.extend(
-                world._event(action, "InformationViewed", {"information_id": information_id, "agent_id": observation.agent_id}, priority=55, visibility="agent_private", observation_id=observation.observation_id)
+                world._event(
+                    action,
+                    "InformationViewed",
+                    {"information_id": visible.information_id, "agent_id": observation.agent_id},
+                    priority=55,
+                    visibility="agent_private",
+                    observation_id=observation.observation_id,
+                    phase=f"viewed:{observation.agent_id}:{visible.information_id}",
+                )
                 for observation in observations
+                for visible in observation.information_items
             )
         return ActionResult(world, events, observations, [receipt])
 
@@ -308,7 +440,12 @@ class SimulationWorld:
                 content=effect.content,
                 sim_time_us=world.sim_time_us,
                 target_ids=effect.target_ids,
+                information_id=deterministic_id("information", plan_id, stage.stage_id, effect.effect_id),
             )
+            recipients = list(item["target_ids"]) if item["visibility"] == "agent_private" else sorted(world.agents)
+            item["delivery_times_us"] = {target: world.sim_time_us for target in recipients}
+            item["expires_sim_time_us"] = world.sim_time_us + 86_400_000_000
+            item["salience"] = 90 if item["visibility"] == "agent_private" else 80
             item["intervention_plan_id"] = plan_id
             item["intervention_stage_id"] = stage.stage_id
             item["effect_id"] = effect.effect_id
@@ -318,7 +455,6 @@ class SimulationWorld:
                 plan_id, stage.stage_id, effect.effect_id, "InformationPublished", item,
                 priority=40, visibility=visibility, phase="published",
             ))
-            recipients = list(item["target_ids"]) if item["visibility"] == "agent_private" else sorted(world.agents)
             for target in recipients:
                 delivery_type = "PrivateMessageDelivered" if item["visibility"] == "agent_private" else "InformationDelivered"
                 events.append(world._intervention_event(
@@ -556,19 +692,62 @@ class SimulationWorld:
         return events
 
     def _apply_information_action(self, action: ActionContract) -> list[EventDraft]:
+        derived_from = action.payload.get("derived_from_info_id")
+        if derived_from is not None and not any(
+            item.get("information_id") == derived_from for item in self.information_items
+        ):
+            raise ValidationError("derived information source does not exist")
         item = publish_information(
             source_id=action.agent_id,
             channel=str(action.payload.get("channel", "PublicFeed")),
             content=str(action.payload.get("content", "")),
             sim_time_us=self.sim_time_us,
             target_ids=list(action.payload.get("target_ids", [])),
+            derived_from_info_id=str(derived_from) if derived_from is not None else None,
+            information_id=deterministic_id("information", action.action_id),
         )
+        recipients: list[str] = []
+        if item["visibility"] == "agent_private":
+            recipients = sorted(set([action.agent_id, *list(item["target_ids"])]) & set(self.agents))
+            item["salience"] = 90
+        else:
+            for agent_id, definition in sorted(self.agent_definitions.items()):
+                if "information.read" not in definition.capability_set and agent_id != action.agent_id:
+                    continue
+                digest = hashlib.sha256(f"{item['information_id']}:{agent_id}".encode()).digest()
+                if agent_id == action.agent_id or int.from_bytes(digest[:2], "big") % 100 < 70:
+                    recipients.append(agent_id)
+            item["salience"] = 80 if item["channel"] == "OfficialAnnouncement" else 50
+        delivery_times: dict[str, int] = {}
+        for target in recipients:
+            definition = self.agent_definitions.get(target)
+            base_latency = 0 if target == action.agent_id else max(
+                1,
+                (definition.latency_profile.action_latency_us // 4) if definition is not None else 250_000,
+            )
+            jitter = int.from_bytes(hashlib.sha256(f"delivery:{item['information_id']}:{target}".encode()).digest()[:2], "big") % 1_000
+            delivery_times[target] = self.sim_time_us + base_latency + (0 if target == action.agent_id else jitter)
+        item["delivery_times_us"] = delivery_times
+        item["expires_sim_time_us"] = self.sim_time_us + 86_400_000_000
         self.information_items.append(item)
         events = [self._event(action, "InformationPublished", item, priority=40, visibility="agent_private" if item["visibility"] == "agent_private" else "public", phase="00-published")]
-        recipients = list(item["target_ids"]) if item["visibility"] == "agent_private" else sorted(self.agents)
         for target in recipients:
             delivery_type = "PrivateMessageDelivered" if item["visibility"] == "agent_private" else "InformationDelivered"
-            events.append(self._event(action, delivery_type, {"information_id": item["information_id"], "target_id": target}, priority=40, visibility="agent_private" if item["visibility"] == "agent_private" else "participants", phase=f"01-delivered:{target}"))
+            if delivery_times[target] <= self.sim_time_us:
+                events.append(self._event(action, delivery_type, {"information_id": item["information_id"], "target_id": target}, priority=40, visibility="agent_private" if item["visibility"] == "agent_private" else "participants", phase=f"01-delivered:{target}").model_copy(update={"sim_time_us": delivery_times[target], "target_ids": [target]}))
+            else:
+                delivery_id = deterministic_id("delivery", str(item["information_id"]), target)
+                self.pending_deliveries[delivery_id] = {
+                    "delivery_id": delivery_id,
+                    "information_id": item["information_id"],
+                    "target_id": target,
+                    "delivery_sim_time_us": delivery_times[target],
+                    "expires_sim_time_us": item["expires_sim_time_us"],
+                    "visibility": item["visibility"],
+                    "source_id": action.agent_id,
+                    "action_id": action.action_id,
+                    "client_command_id": action.client_command_id,
+                }
         return events
 
     def _event(self, action: ActionContract, event_type: str, payload: dict[str, object], *, priority: int, visibility: str = "public", observation_id: str | None = None, phase: str | None = None) -> EventDraft:
@@ -682,6 +861,8 @@ class SimulationWorld:
             "world_revision": self.world_revision,
             "market_status": self.market.get("status", "active"),
             "deferred_observation_count": len(self.deferred_observation_ids),
+            "pending_delivery_count": len(self.pending_deliveries),
+            "terminal_reason": self.terminal_reason,
         }
 
     def to_json(self) -> dict[str, object]:
@@ -711,4 +892,6 @@ class SimulationWorld:
             "wallet_access": deepcopy(self.wallet_access),
             "frozen_accounts": sorted(self.frozen_accounts),
             "deferred_observation_ids": list(self.deferred_observation_ids),
+            "pending_deliveries": deepcopy(self.pending_deliveries),
+            "terminal_reason": self.terminal_reason,
         }

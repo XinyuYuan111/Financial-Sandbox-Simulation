@@ -19,7 +19,7 @@ type DecisionResponse = { decisions: AgentAudit['decisions'] }
 type PlanResponse = { plans: AgentAudit['plans'] }
 type ReceiptResponse = { receipts: AgentAudit['receipts'] }
 
-export function AgentExplorer({ branchId }: { branchId: string }) {
+export function AgentExplorer({ branchId, cursor }: { branchId: string; cursor?: number }) {
   const [agents, setAgents] = useState<AgentProjection[]>([])
   const [selectedId, setSelectedId] = useState('')
   const [detail, setDetail] = useState<AgentDetail | null>(null)
@@ -30,30 +30,30 @@ export function AgentExplorer({ branchId }: { branchId: string }) {
   useEffect(() => {
     let active = true
     setSelectedId(''); setDetail(null); setAudit({ observations: [], decisions: [], plans: [], receipts: [] })
-    api.agents<{ agents: AgentProjection[] }>(branchId).then(response => {
+    api.agents<{ agents: AgentProjection[] }>(branchId, cursor).then(response => {
       if (!active) return
       setAgents(response.agents)
       setSelectedId(response.agents[0]?.agent_id ?? '')
     }).catch(reason => active && setError(reason instanceof Error ? reason.message : 'Agent 列表加载失败'))
     return () => { active = false }
-  }, [branchId])
+  }, [branchId, cursor])
 
   useEffect(() => {
     if (!selectedId) return
     let active = true
     Promise.all([
-      api.agent<AgentDetail>(branchId, selectedId),
-      api.observations<ObservationResponse>(branchId, selectedId),
-      api.decisions<DecisionResponse>(branchId, selectedId),
-      api.plans<PlanResponse>(branchId, selectedId),
-      api.receipts<ReceiptResponse>(branchId, selectedId),
+      api.agent<AgentDetail>(branchId, selectedId, cursor),
+      api.observations<ObservationResponse>(branchId, selectedId, cursor),
+      api.decisions<DecisionResponse>(branchId, selectedId, cursor),
+      api.plans<PlanResponse>(branchId, selectedId, cursor),
+      api.receipts<ReceiptResponse>(branchId, selectedId, cursor),
     ]).then(([agent, observations, decisions, plans, receipts]) => {
       if (!active) return
       setDetail(agent)
       setAudit({ observations: observations.observations, decisions: decisions.decisions, plans: plans.plans, receipts: receipts.receipts })
     }).catch(reason => active && setError(reason instanceof Error ? reason.message : 'Agent 审计数据加载失败'))
     return () => { active = false }
-  }, [branchId, selectedId])
+  }, [branchId, cursor, selectedId])
 
   return <div className="agent-explorer">
     {error ? <ErrorBanner message={error} onClose={() => setError(null)} /> : null}
@@ -84,7 +84,7 @@ function Overview({ detail, audit }: { detail: AgentDetail; audit: AgentAudit })
   const persona = asRecord(definition.base_persona)
   return <div className="agent-overview">
     <section className="fact-grid agent-facts"><div><span>资金画像</span><strong>{detail.funding_profile ?? '-'}</strong></div><div><span>规划器</span><strong>{detail.planner_profile_id ?? '-'}</strong></div><div><span>开放订单</span><strong>{detail.portfolio.open_orders.length}</strong></div><div><span>审计决策</span><strong>{audit.decisions.length}</strong></div></section>
-    <div className="overview-grid"><section><h3>账户</h3><table><thead><tr><th>资产</th><th>可用</th><th>锁定</th></tr></thead><tbody>{Object.entries(balances).map(([asset, balance]) => <tr key={asset}><td><strong>{asset}</strong></td><td>{formatInteger(balance.free)}</td><td>{formatInteger(balance.locked)}</td></tr>)}</tbody></table></section><section><h3>身份与能力</h3><dl className="detail-list"><div><dt>公开身份</dt><dd>{String(definition.public_identity ?? '-')}</dd></div><div><dt>风险偏好</dt><dd>{String(persona.risk_appetite_milli ?? '-')} / 1000</dd></div><div><dt>时间偏好</dt><dd>{String(persona.time_preference_milli ?? '-')} / 1000</dd></div><div><dt>能力</dt><dd>{detail.capabilities?.join(', ') || '-'}</dd></div><div><dt>角色</dt><dd>{detail.role_tags?.join(', ') || '-'}</dd></div></dl></section></div>
+    <div className="overview-grid"><section><h3>账户</h3><table><thead><tr><th>资产</th><th>可用</th><th>锁定</th></tr></thead><tbody>{Object.entries(balances).map(([asset, balance]) => <tr key={asset}><td><strong>{asset}</strong></td><td>{formatInteger(balance.free)}</td><td>{formatInteger(balance.locked)}</td></tr>)}</tbody></table></section><section><h3>身份与能力</h3><dl className="detail-list"><div><dt>公开身份</dt><dd>{String(definition.public_identity ?? '-')}</dd></div><div><dt>风险承受度</dt><dd>{String(persona.risk_tolerance_milli ?? '-')} / 1000</dd></div><div><dt>时间范围</dt><dd>{String(persona.time_horizon ?? '-')}</dd></div><div><dt>能力</dt><dd>{detail.capabilities?.join(', ') || '-'}</dd></div><div><dt>角色</dt><dd>{detail.role_tags?.join(', ') || '-'}</dd></div></dl></section></div>
   </div>
 }
 

@@ -1,4 +1,5 @@
 const jsonHeaders = { 'Content-Type': 'application/json' }
+const atCursor = (cursor?: number) => cursor === undefined ? '' : `?cursor=${cursor}`
 
 export class ApiError extends Error {
   code: string
@@ -25,11 +26,11 @@ export const api = {
   observations: <T>(branchId: string, agentId: string, cursor?: number) => request<T>(`/api/v1/branches/${branchId}/agents/${agentId}/observations${cursor === undefined ? '' : `?cursor=${cursor}`}`),
   providers: <T>() => request<T>('/api/v1/providers'),
   providerPreflight: <T>(name: string) => request<T>(`/api/v1/providers/${name}/preflight`, { method: 'POST' }),
-  agents: <T>(branchId: string) => request<T>(`/api/v1/branches/${branchId}/agents`),
-  agent: <T>(branchId: string, agentId: string) => request<T>(`/api/v1/branches/${branchId}/agents/${agentId}`),
-  decisions: <T>(branchId: string, agentId: string) => request<T>(`/api/v1/branches/${branchId}/agents/${agentId}/decisions`),
-  plans: <T>(branchId: string, agentId: string) => request<T>(`/api/v1/branches/${branchId}/agents/${agentId}/plans`),
-  receipts: <T>(branchId: string, agentId: string) => request<T>(`/api/v1/branches/${branchId}/agents/${agentId}/receipts`),
+  agents: <T>(branchId: string, cursor?: number) => request<T>(`/api/v1/branches/${branchId}/agents${atCursor(cursor)}`),
+  agent: <T>(branchId: string, agentId: string, cursor?: number) => request<T>(`/api/v1/branches/${branchId}/agents/${agentId}${atCursor(cursor)}`),
+  decisions: <T>(branchId: string, agentId: string, cursor?: number) => request<T>(`/api/v1/branches/${branchId}/agents/${agentId}/decisions${atCursor(cursor)}`),
+  plans: <T>(branchId: string, agentId: string, cursor?: number) => request<T>(`/api/v1/branches/${branchId}/agents/${agentId}/plans${atCursor(cursor)}`),
+  receipts: <T>(branchId: string, agentId: string, cursor?: number) => request<T>(`/api/v1/branches/${branchId}/agents/${agentId}/receipts${atCursor(cursor)}`),
   interventionPlans: <T>(branchId: string) => request<T>(`/api/v1/branches/${branchId}/intervention-plans`),
   draftInterventionPlan: <T>(branchId: string, draft: unknown) => request<T>(`/api/v1/branches/${branchId}/intervention-plans`, { method: 'POST', headers: jsonHeaders, body: JSON.stringify({ client_command_id: crypto.randomUUID(), draft }) }),
   interpretInterventionPlan: <T>(branchId: string, userIntent: string, requestedEffectiveTimeUs: number) => request<T>(`/api/v1/branches/${branchId}/intervention-plans/interpret`, { method: 'POST', headers: jsonHeaders, body: JSON.stringify({ client_command_id: crypto.randomUUID(), user_intent: userIntent, requested_effective_time_us: requestedEffectiveTimeUs, provider: 'openai', access_scope: { private_grants: [] }, private_read_refs: [] }) }),

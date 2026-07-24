@@ -387,6 +387,45 @@
           "title": "Sim Time Us",
           "type": "integer"
         },
+        "delivered_sim_time_us": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Delivered Sim Time Us"
+        },
+        "viewed_sim_time_us": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Viewed Sim Time Us"
+        },
+        "expires_sim_time_us": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Expires Sim Time Us"
+        },
         "target_ids": {
           "items": {
             "type": "string"

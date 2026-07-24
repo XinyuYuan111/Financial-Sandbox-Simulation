@@ -56,6 +56,9 @@ class ObservedInformation(StrictFrozenModel):
     channel: str
     rendered_content: str = Field(max_length=4_000)
     sim_time_us: int = Field(ge=0)
+    delivered_sim_time_us: int | None = Field(default=None, ge=0)
+    viewed_sim_time_us: int | None = Field(default=None, ge=0)
+    expires_sim_time_us: int | None = Field(default=None, ge=0)
     target_ids: list[str] = Field(default_factory=list)
     visibility: Literal["public", "agent_private"]
     derived_from_info_id: str | None = None

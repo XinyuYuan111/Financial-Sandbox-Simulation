@@ -164,6 +164,7 @@ class AgentRuntimeState(StrictFrozenModel):
     attention_budget_state: AttentionBudgetState = Field(default_factory=AttentionBudgetState)
     memory_entries: list[MemoryEntryState] = Field(default_factory=list, max_length=1_000)
     beliefs: list[BeliefState] = Field(default_factory=list, max_length=1_000)
+    viewed_information_ids: list[str] = Field(default_factory=list, max_length=10_000)
     processed_observation_ids: list[str] = Field(default_factory=list, max_length=10_000)
     schema_version: Literal["agent-runtime-state.v0.1"] = "agent-runtime-state.v0.1"
 

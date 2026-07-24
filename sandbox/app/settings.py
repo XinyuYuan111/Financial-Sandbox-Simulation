@@ -19,6 +19,8 @@ class Settings:
     openai_max_retries: int = 1
     openai_max_in_flight: int = 4
     openai_max_output_tokens: int = 1_800
+    holder_snapshot_path: Path | None = None
+    holder_snapshot_chain_id: str = "ethereum"
 
     @classmethod
     def from_environment(cls) -> "Settings":
@@ -37,6 +39,8 @@ class Settings:
             openai_max_retries=int(os.getenv("SANDBOX_OPENAI_MAX_RETRIES", "1")),
             openai_max_in_flight=int(os.getenv("SANDBOX_OPENAI_MAX_IN_FLIGHT", "4")),
             openai_max_output_tokens=int(os.getenv("SANDBOX_OPENAI_MAX_OUTPUT_TOKENS", "1800")),
+            holder_snapshot_path=Path(os.environ["SANDBOX_HOLDER_SNAPSHOT_PATH"]).resolve() if os.getenv("SANDBOX_HOLDER_SNAPSHOT_PATH") else None,
+            holder_snapshot_chain_id=os.getenv("SANDBOX_HOLDER_CHAIN_ID", "ethereum"),
         )
 
     def ensure_directories(self) -> None:

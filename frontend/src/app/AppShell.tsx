@@ -31,6 +31,7 @@ export function AppShell() {
   const [events, setEvents] = useState<EventEnvelope[]>([])
   const [view, setView] = useState<View>('market')
   const [checkpointId, setCheckpointId] = useState<string | null>(null)
+  const [historicalCursor, setHistoricalCursor] = useState<number | null>(null)
   const [busy, setBusy] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
@@ -43,20 +44,24 @@ export function AppShell() {
         api.state<Projection>(targetBranchId, cursor),
         api.events<{ events: EventEnvelope[] }>(targetBranchId),
       ])
-      setRun(targetRun); setBranchId(targetBranchId); setProjection(nextProjection); setEvents(eventResponse.events)
+      const branch = targetRun.branches.find(item => item.branch_id === targetBranchId)
+      const historical = cursor !== undefined && branch !== undefined && cursor < branch.state_version
+      setHistoricalCursor(historical ? cursor : null)
+      setRun(targetRun); setBranchId(targetBranchId); setProjection(nextProjection)
+      setEvents(historical ? eventResponse.events.filter(event => event.branch_seq <= cursor) : eventResponse.events)
     } catch (reason) { setError(reason instanceof Error ? reason.message : '运行数据加载失败') }
     finally { setBusy(false) }
   }, [])
 
   const refresh = useCallback(async () => {
-    if (!run || !branchId) return
+    if (!run || !branchId || historicalCursor !== null) return
     setBusy(true)
     try {
       const fresh = await api.getRun<Run>(run.run_id)
       setRuns(current => current.map(item => item.run_id === fresh.run_id ? fresh : item))
       await loadBranch(fresh, branchId)
     } catch (reason) { setError(reason instanceof Error ? reason.message : '刷新失败'); setBusy(false) }
-  }, [branchId, loadBranch, run])
+  }, [branchId, historicalCursor, loadBranch, run])
 
   useEffect(() => {
     let active = true
@@ -72,10 +77,10 @@ export function AppShell() {
   }, [loadBranch])
 
   useEffect(() => {
-    if (!activeBranch || activeBranch.status !== 'Running') return
+    if (!activeBranch || activeBranch.status !== 'Running' || historicalCursor !== null) return
     const timer = window.setInterval(() => { void refresh() }, 3000)
     return () => window.clearInterval(timer)
-  }, [activeBranch, refresh])
+  }, [activeBranch, historicalCursor, refresh])
 
   const acceptRun = async (created: Run) => {
     const branch = created.branches[0]
@@ -84,8 +89,8 @@ export function AppShell() {
     if (branch) await loadBranch(created, branch.branch_id)
   }
 
-  const command = async (commandType: 'start' | 'pause' | 'step_fixture' | 'run_for' | 'save') => {
-    if (!branchId) return
+  const command = async (commandType: 'start' | 'pause' | 'stop' | 'step_fixture' | 'run_for' | 'save') => {
+    if (!branchId || historicalCursor !== null) return
     setBusy(true); setError(null)
     try {
       const result = await api.command<Record<string, unknown>>(branchId, commandType, commandType === 'run_for' ? { max_requests: 1 } : {})
@@ -137,14 +142,14 @@ export function AppShell() {
   }
 
   return <div className="app-shell">
-    <RunTopbar run={run} branch={activeBranch} simTimeUs={projection.sim_time_us} cursor={projection.cursor} agents={projection.agents} busy={busy} onCommand={command} onRefresh={refresh} />
+    <RunTopbar run={run} branch={historicalCursor === null ? activeBranch : { ...activeBranch, status: 'Historical' }} simTimeUs={projection.sim_time_us} cursor={projection.cursor} agents={projection.agents} busy={busy} onCommand={command} onRefresh={refresh} />
     <aside className="app-sidebar"><nav>{(['run', 'manage'] as const).map(group => <div className="nav-group" key={group}><span>{group === 'run' ? '运行' : '管理'}</span>{navigation.filter(item => item.group === group).map(item => { const Icon = item.icon; return <button key={item.id} className={view === item.id ? 'selected' : ''} onClick={() => setView(item.id)}><Icon size={17} /><b>{item.label}</b></button> })}</div>)}</nav><div className="run-switcher"><label>当前实验<select value={run.run_id} onChange={event => { void selectRun(event.target.value) }}>{runs.map(item => <option value={item.run_id} key={item.run_id}>{item.name}</option>)}</select></label><span><Boxes size={14} />{run.branches.length} branches</span><small>{shortId(run.run_id)}</small></div></aside>
     <main className="app-workspace">{error ? <ErrorBanner message={error} onClose={() => setError(null)} /> : null}{busy ? <div className="loading-bar" /> : null}
       {view === 'market' ? <MarketWorkspace projection={projection} /> : null}
-      {view === 'agents' ? <AgentExplorer branchId={branchId} /> : null}
+      {view === 'agents' ? <AgentExplorer branchId={branchId} cursor={historicalCursor ?? undefined} /> : null}
       {view === 'events' ? <EventExplorer events={events} /> : null}
       {view === 'information' ? <InformationWorkspace projection={projection} /> : null}
-      {view === 'interventions' ? <InterventionWorkspace branchId={branchId} branchStatus={activeBranch.status} simTimeUs={projection.sim_time_us} onChanged={refresh} /> : null}
+      {view === 'interventions' ? <InterventionWorkspace branchId={branchId} branchStatus={historicalCursor === null ? activeBranch.status : 'Historical'} simTimeUs={projection.sim_time_us} onChanged={refresh} /> : null}
       {view === 'branches' ? <BranchExplorer run={run} activeBranchId={branchId} projection={projection} checkpointId={checkpointId} onSelect={next => { void loadBranch(run, next) }} onFork={fork} onReplay={cursor => { void loadBranch(run, branchId, cursor) }} onExport={exportArchive} onImport={importArchive} /> : null}
       {view === 'scenario' ? <QuickStartPage embedded onRun={acceptRun} /> : null}
     </main>

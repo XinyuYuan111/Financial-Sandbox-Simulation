@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from copy import deepcopy
 from typing import Protocol
 
 from sandbox.contracts.agent import DecisionTrigger
@@ -17,7 +18,37 @@ class ObservationService:
         *,
         decision_triggers: list[DecisionTrigger] | None = None,
     ) -> ObservationPacket:
-        visible = [item for item in world.information_items if item.get("visibility") == "public" or agent_id in item.get("target_ids", [])]
+        definition = world.agent_definitions.get(agent_id)
+        runtime_state = world.agent_runtime_states.get(agent_id)
+        capacity = definition.attention_profile.information_capacity if definition is not None else 20
+        if runtime_state is not None:
+            capacity = min(capacity, runtime_state.attention_budget_state.items_remaining)
+        viewed_ids = set(runtime_state.viewed_information_ids) if runtime_state is not None else set()
+        minimum_salience = definition.attention_profile.minimum_salience if definition is not None else 0
+        candidates: list[dict[str, object]] = []
+        for raw in world.information_items:
+            if str(raw.get("information_id")) in viewed_ids or int(raw.get("salience", 50)) < minimum_salience:
+                continue
+            delivery_times = raw.get("delivery_times_us", {})
+            if not isinstance(delivery_times, dict) or agent_id not in delivery_times:
+                continue
+            delivered_at = int(delivery_times[agent_id])
+            expires_at = int(raw.get("expires_sim_time_us", delivered_at + 86_400_000_000))
+            if delivered_at > world.sim_time_us or expires_at < world.sim_time_us:
+                continue
+            item = {
+                key: deepcopy(value)
+                for key, value in raw.items()
+                if key not in {"delivery_times_us", "salience"}
+            }
+            item["delivered_sim_time_us"] = delivered_at
+            item["viewed_sim_time_us"] = world.sim_time_us
+            item["expires_sim_time_us"] = expires_at
+            item["_salience"] = int(raw.get("salience", 50))
+            candidates.append(item)
+        candidates.sort(key=lambda item: (-int(item["_salience"]), -int(item["sim_time_us"]), str(item["information_id"])))
+        selected = candidates[:capacity]
+        visible = [{key: value for key, value in item.items() if key != "_salience"} for item in selected]
         portfolio = world.portfolio_projection(agent_id)
         wallet_access = world.wallet_access_projection(agent_id)
         receipts = [receipt for receipt in world.action_receipts if receipt.agent_id == agent_id]
@@ -42,12 +73,17 @@ class ObservationService:
                 risk_refs=[],
             ),
             portfolio_view=portfolio,
-            information_items=visible[-20:],
+            information_items=visible,
             private_messages=[item for item in visible if item.get("visibility") == "agent_private"],
             action_receipts=receipts[-20:],
             chain_view=world.chain_snapshot,
-            provenance=[str(item.get("information_id")) for item in visible[-20:]],
-            attention_decisions=[{"policy": "latest-within-capacity", "selected": len(visible[-20:])}],
+            provenance=[str(item.get("information_id")) for item in visible],
+            attention_decisions=[{
+                "policy": "salience-then-recency",
+                "selected": len(visible),
+                "dropped": max(0, len(candidates) - len(visible)),
+                "reason_code": "within_capacity" if len(candidates) <= capacity else "capacity_exhausted",
+            }],
         )
 
 
@@ -56,6 +92,8 @@ class WorldProjection(Protocol):
     information_items: list[dict[str, object]]
     chain_snapshot: dict[str, object]
     action_receipts: list[object]
+    agent_definitions: dict[str, object]
+    agent_runtime_states: dict[str, object]
 
     def market_projection(self) -> dict[str, object]: ...
     def portfolio_projection(self, agent_id: str) -> dict[str, object]: ...

@@ -12,7 +12,7 @@ from sandbox.agents.strategies import FixtureStrategies
 from sandbox.agents.planning import PlanningCoordinator, fixture_candidate
 from sandbox.agents.runtime import AgentRuntime
 from sandbox.contracts.action import ActionContract
-from sandbox.contracts.agent import ActionReceipt, DecisionTrigger
+from sandbox.contracts.agent import ActionReceipt, DecisionRationale, DecisionTrigger
 from sandbox.contracts.event import EventDraft
 from sandbox.contracts.intervention import (
     DirectorAccessScope,
@@ -51,6 +51,8 @@ class RunManager:
         self.scenario_director = ScenarioDirector()
         self._locks: defaultdict[str, threading.RLock] = defaultdict(threading.RLock)
         self._runner_locks: defaultdict[str, threading.Lock] = defaultdict(threading.Lock)
+        self._runner_threads: dict[str, threading.Thread] = {}
+        self._runner_cancel: dict[str, threading.Event] = {}
 
     def create_scenario(self, draft: ScenarioDraft) -> dict[str, object]:
         scenario_id = new_id("scenario")
@@ -195,41 +197,102 @@ class RunManager:
     async def provider_preflight(self, provider_name: str) -> dict[str, object]:
         return await self.initializer.llm_gateway.preflight(provider_name)
 
-    def agents(self, branch_id: str) -> list[dict[str, object]]:
+    def agents(self, branch_id: str, *, cursor: int | None = None) -> list[dict[str, object]]:
         with self.store.locked():
             world = self._world(branch_id)
-            return [self._agent_summary(world, agent_id) for agent_id in sorted(world.agents)]
+            if cursor is None:
+                return [self._agent_summary(world, agent_id) for agent_id in sorted(world.agents)]
+            return [self._historical_agent_summary(branch_id, world, agent_id, cursor) for agent_id in sorted(world.agents)]
 
-    def agent_detail(self, branch_id: str, agent_id: str) -> dict[str, object]:
+    def agent_detail(self, branch_id: str, agent_id: str, *, cursor: int | None = None) -> dict[str, object]:
         with self.store.locked():
             world = self._world(branch_id)
             if agent_id not in world.agents:
                 raise NotFoundError("agent", agent_id)
+            if cursor is not None:
+                return self._historical_agent_summary(branch_id, world, agent_id, cursor, include_private=True)
             return self._agent_summary(world, agent_id, include_private=True)
 
-    def agent_decisions(self, branch_id: str, agent_id: str, *, limit: int = 200) -> list[dict[str, object]]:
+    def agent_decisions(self, branch_id: str, agent_id: str, *, cursor: int | None = None, limit: int = 200) -> list[dict[str, object]]:
         with self.store.locked():
             rows = self.store.connection.execute(
                 "SELECT decision_json,outcome_json FROM agent_decisions WHERE branch_id=? AND agent_id=? ORDER BY sim_time_us DESC LIMIT ?",
                 (branch_id, agent_id, limit),
             ).fetchall()
-            return [{"decision": json.loads(row["decision_json"]), "outcome": json.loads(row["outcome_json"])} for row in rows]
+            records = [{"decision": json.loads(row["decision_json"]), "outcome": json.loads(row["outcome_json"])} for row in rows]
+            if cursor is None:
+                return records
+            versions = self._observation_versions(branch_id)
+            return [record for record in records if versions.get(str(record["decision"]["observation_id"]), cursor + 1) <= cursor]
 
-    def agent_plans(self, branch_id: str, agent_id: str, *, limit: int = 200) -> list[dict[str, object]]:
+    def agent_plans(self, branch_id: str, agent_id: str, *, cursor: int | None = None, limit: int = 200) -> list[dict[str, object]]:
         with self.store.locked():
             rows = self.store.connection.execute(
                 "SELECT plan_json,active FROM strategy_plans WHERE branch_id=? AND agent_id=? ORDER BY strategy_revision DESC LIMIT ?",
                 (branch_id, agent_id, limit),
             ).fetchall()
-            return [{"plan": json.loads(row["plan_json"]), "active": bool(row["active"])} for row in rows]
+            records = [{"plan": json.loads(row["plan_json"]), "active": bool(row["active"])} for row in rows]
+            if cursor is None:
+                return records
+            versions = self._observation_versions(branch_id)
+            return [record for record in records if versions.get(str(record["plan"]["source_observation_id"]), cursor + 1) <= cursor]
 
-    def agent_receipts(self, branch_id: str, agent_id: str, *, limit: int = 200) -> list[dict[str, object]]:
+    def agent_receipts(self, branch_id: str, agent_id: str, *, cursor: int | None = None, limit: int = 200) -> list[dict[str, object]]:
         with self.store.locked():
             rows = self.store.connection.execute(
                 "SELECT receipt_json FROM action_receipts WHERE branch_id=? AND agent_id=? ORDER BY sim_time_us DESC LIMIT ?",
                 (branch_id, agent_id, limit),
             ).fetchall()
-            return [json.loads(row["receipt_json"]) for row in rows]
+            records = [json.loads(row["receipt_json"]) for row in rows]
+            if cursor is None:
+                return records
+            return [
+                record for record in records
+                if int(record.get("result_state_refs", {}).get("portfolio_revision", cursor + 1)) <= cursor
+            ]
+
+    def _observation_versions(self, branch_id: str) -> dict[str, int]:
+        rows = self.store.connection.execute(
+            "SELECT observation_id,observation_json FROM observations WHERE branch_id=?",
+            (branch_id,),
+        ).fetchall()
+        return {
+            str(row["observation_id"]): int(json.loads(row["observation_json"])["world_version"])
+            for row in rows
+        }
+
+    def _historical_agent_summary(
+        self,
+        branch_id: str,
+        world: SimulationWorld,
+        agent_id: str,
+        cursor: int,
+        *,
+        include_private: bool = False,
+    ) -> dict[str, object]:
+        row = self.store.connection.execute(
+            "SELECT observation_json FROM observations WHERE branch_id=? AND agent_id=? ORDER BY sim_time_us DESC,rowid DESC",
+            (branch_id, agent_id),
+        ).fetchall()
+        observation = next(
+            (
+                json.loads(item["observation_json"])
+                for item in row
+                if int(json.loads(item["observation_json"])["world_version"]) <= cursor
+            ),
+            None,
+        )
+        if observation is None:
+            raise ValidationError(f"no saved Agent observation exists at or before cursor {cursor}")
+        summary = self._agent_summary(world, agent_id, include_private=include_private)
+        summary["portfolio"] = observation["portfolio_view"]
+        summary["planning_request_id"] = None
+        decisions = self.agent_decisions(branch_id, agent_id, cursor=cursor, limit=1)
+        summary["agent_revision"] = int(decisions[0]["outcome"]["resulting_agent_revision"]) if decisions else 0
+        if include_private:
+            summary["runtime_state"] = None
+        summary["historical_cursor"] = cursor
+        return summary
 
     def intervention_plans(self, branch_id: str) -> list[dict[str, object]]:
         with self.store.locked():
@@ -239,6 +302,9 @@ class RunManager:
                 (branch_id,),
             ).fetchall()
             return [json.loads(row["plan_json"]) for row in rows]
+
+    def intervention_templates(self) -> list[dict[str, object]]:
+        return self.scenario_director.templates()
 
     def intervention_plan(self, branch_id: str, plan_id: str) -> dict[str, object]:
         with self.store.locked():
@@ -543,6 +609,7 @@ class RunManager:
         return summary
 
     def submit_action(self, action: ActionContract) -> dict[str, object]:
+        queued = False
         with self.store.locked():
             command_key = deterministic_id("cmd", action.branch_id, action.client_command_id)
             existing = self._command_result(command_key)
@@ -552,15 +619,405 @@ class RunManager:
                 branch = self._branch(action.branch_id)
                 if branch["status"] != "Running":
                     raise ConflictError("actions can only execute on a Running branch", error_code="BRANCH_NOT_RUNNING")
-                self._apply_due_intervention_stages(action.branch_id, through_sim_time_us=action.expected_execution_time_us)
                 current_branch = self._branch(action.branch_id)
-                return self._apply_action(action, self._world(action.branch_id), int(current_branch["state_version"]), command_key=command_key)
+                world = self._world(action.branch_id)
+                if action.expected_execution_time_us > world.sim_time_us:
+                    result = self._queue_action(action, world, int(current_branch["state_version"]), command_key=command_key)
+                    queued = bool(result.get("queued"))
+                else:
+                    self._apply_due_intervention_stages(action.branch_id, through_sim_time_us=action.expected_execution_time_us)
+                    current_branch = self._branch(action.branch_id)
+                    result = self._apply_action(action, self._world(action.branch_id), int(current_branch["state_version"]), command_key=command_key)
+        if queued:
+            self._ensure_autonomous_runner(action.branch_id)
+        return result
+
+    def _queue_action(
+        self,
+        action: ActionContract,
+        world: SimulationWorld,
+        state_version: int,
+        *,
+        command_key: str,
+        proposal_id: str | None = None,
+        decision_id: str | None = None,
+    ) -> dict[str, object]:
+        branch = self._branch(action.branch_id)
+        try:
+            queued = world.apply_action(
+                action,
+                world_version=state_version,
+                proposal_id=proposal_id,
+                decision_id=decision_id,
+                defer_execution=True,
+            )
+        except SandboxError:
+            return self._apply_action(
+                action,
+                world,
+                state_version,
+                command_key=command_key,
+                proposal_id=proposal_id,
+                decision_id=decision_id,
+            )
+        record = self._command_record(command_key, action.action_type, {
+            "accepted": True,
+            "queued": True,
+            "outcome": "queued",
+            "action_id": action.action_id,
+            "branch_id": action.branch_id,
+            "scheduled_sim_time_us": action.expected_execution_time_us,
+        }, include_events=True)
+        self.events.append_batch(
+            str(branch["run_id"]),
+            action.branch_id,
+            queued.events,
+            world_state=queued.world.to_json(),
+            command_record=record,
+            expected_branch_version=state_version,
+        )
+        return record["persisted_result"]
 
     def command(self, branch_id: str, client_command_id: str, command_type: str, payload: dict[str, object] | None = None) -> dict[str, object]:
         if command_type == "run_for":
             return self._run_for_command(branch_id, client_command_id, payload or {})
         with self.store.locked():
-            return self._command_locked(branch_id, client_command_id, command_type, payload)
+            result = self._command_locked(branch_id, client_command_id, command_type, payload)
+        if command_type == "start":
+            self._ensure_autonomous_runner(branch_id)
+        return result
+
+    def _ensure_autonomous_runner(self, branch_id: str) -> None:
+        current = self._runner_threads.get(branch_id)
+        if current is not None and current.is_alive():
+            return
+        cancel = threading.Event()
+        self._runner_cancel[branch_id] = cancel
+        thread = threading.Thread(
+            target=self._autonomous_runner,
+            args=(branch_id, cancel),
+            name=f"sandbox-runner-{branch_id}",
+            daemon=True,
+        )
+        self._runner_threads[branch_id] = thread
+        thread.start()
+
+    def _autonomous_runner(self, branch_id: str, cancel: threading.Event) -> None:
+        # A short control-plane grace period lets an immediate Pause win without
+        # consuming another virtual-time boundary.
+        if cancel.wait(0.25):
+            return
+        while not cancel.is_set():
+            try:
+                with self.store.locked():
+                    branch = self._branch(branch_id)
+                    if branch["status"] != "Running":
+                        return
+                    manual = self.store.connection.execute(
+                        "SELECT 1 FROM commands WHERE branch_id=? AND command_type IN ('step_fixture','run_for') LIMIT 1",
+                        (branch_id,),
+                    ).fetchone()
+                    if manual is not None:
+                        return
+                if not self._advance_background_once(branch_id):
+                    planning_result = asyncio.run(self._run_planning_requests(branch_id, max_requests=1))
+                    if not planning_result["processed_requests"]:
+                        return
+                else:
+                    asyncio.run(self._run_planning_requests(branch_id, max_requests=1))
+            except Exception as error:
+                try:
+                    with self.store.locked():
+                        branch = self._branch(branch_id)
+                        if branch["status"] == "Running":
+                            world = self._world(branch_id)
+                            world.terminal_reason = "runner_failed"
+                            self.events.append_batch(
+                                str(branch["run_id"]),
+                                branch_id,
+                                [self._system_event(
+                                    "BranchFailed",
+                                    branch_id,
+                                    {"reason": "runner_failed", "error_type": type(error).__name__},
+                                    sim_time_us=world.sim_time_us,
+                                )],
+                                world_state=world.to_json(),
+                                branch_status="Failed",
+                                expected_branch_version=int(branch["state_version"]),
+                            )
+                except Exception:
+                    pass
+                return
+            if cancel.wait(0.05):
+                return
+
+    def _advance_background_once(self, branch_id: str) -> bool:
+        with self._runner_locks[branch_id], self.store.locked():
+            branch = self._branch(branch_id)
+            if branch["status"] != "Running":
+                return False
+            world = self._world(branch_id)
+            sequence = int(world.background_market_sector.get("policy_sequence", 0))
+            policy_limit = int(world.background_market_sector.get("policy_step_limit", 200))
+            background_id = str(world.background_market_sector.get("sector_id", "background"))
+            pending = sorted(
+                world.pending_actions.values(),
+                key=lambda item: (int(item["expected_execution_time_us"]), str(item["action_id"])),
+            )
+            next_pending_time = int(pending[0]["expected_execution_time_us"]) if pending else None
+            deliveries = sorted(
+                world.pending_deliveries.values(),
+                key=lambda item: (int(item["delivery_sim_time_us"]), str(item["delivery_id"])),
+            )
+            next_delivery_time = int(deliveries[0]["delivery_sim_time_us"]) if deliveries else None
+            next_background_time = (
+                world.sim_time_us + 1_000_000
+                if sequence < policy_limit and world.market.get("status", "active") == "active"
+                else None
+            )
+            intervention_times = [
+                stage.effective_sim_time_us
+                for row in self.store.connection.execute(
+                    "SELECT plan_json FROM intervention_plans WHERE branch_id=? AND status='confirmed'",
+                    (branch_id,),
+                ).fetchall()
+                for stage in InterventionPlan.model_validate(json.loads(row["plan_json"])).stages
+                if stage.status == "pending"
+            ]
+            candidates = [
+                time
+                for time in [next_pending_time, next_delivery_time, next_background_time, *intervention_times]
+                if time is not None
+            ]
+            if not candidates:
+                return False
+            next_time = min(candidates)
+            applied, failed = self._apply_due_intervention_stages(branch_id, through_sim_time_us=next_time)
+            if applied or failed:
+                return True
+            branch = self._branch(branch_id)
+            world = self._world(branch_id)
+            due_deliveries = sorted(
+                (
+                    item for item in world.pending_deliveries.values()
+                    if int(item["delivery_sim_time_us"]) <= next_time
+                ),
+                key=lambda item: (int(item["delivery_sim_time_us"]), str(item["delivery_id"])),
+            )
+            if due_deliveries:
+                return self._deliver_pending_information(
+                    branch_id,
+                    world,
+                    due_deliveries[0],
+                    int(branch["state_version"]),
+                )
+            due_pending = sorted(
+                (
+                    item for item in world.pending_actions.values()
+                    if int(item["expected_execution_time_us"]) <= next_time
+                ),
+                key=lambda item: (int(item["expected_execution_time_us"]), str(item["action_id"])),
+            )
+            if due_pending:
+                item = due_pending[0]
+                action = ActionContract.model_validate(item["action"])
+                reservation_id = str(item["reservation_id"])
+                self._apply_action(
+                    action,
+                    world,
+                    int(branch["state_version"]),
+                    proposal_id=str(item["proposal_id"]),
+                    decision_id=str(item["decision_id"]) if item.get("decision_id") is not None else None,
+                    admitted_reservation_id=reservation_id,
+                )
+                return True
+            if sequence >= policy_limit or world.market.get("status", "active") != "active":
+                return False
+            working = world.clone()
+            working.background_market_sector["policy_sequence"] = sequence + 1
+            working.background_market_sector["policy_step_limit"] = policy_limit
+            mid = int(working.market["initial_mid_price"])
+            side = "sell" if sequence % 2 == 0 else "buy"
+            distance = 15 + (sequence % 5)
+            price = max(1, (mid * ((100 + distance) if side == "sell" else (100 - distance))) // 100)
+            asset = working.market["base_asset"] if side == "sell" else working.market["quote_asset"]
+            free = working.ledger.balance(background_id, asset)
+            affordable = free if side == "sell" else free // max(1, price + 1)
+            quantity = min(1_000, max(0, affordable // 100))
+            if quantity <= 0:
+                working.background_market_sector["policy_exhausted"] = True
+                self.events.append_batch(
+                    str(branch["run_id"]),
+                    branch_id,
+                    [self._system_event(
+                        "BackgroundParticipationExhausted",
+                        background_id,
+                        {"sequence": sequence, "asset": asset},
+                        sim_time_us=working.sim_time_us,
+                    )],
+                    world_state=working.to_json(),
+                    expected_branch_version=int(branch["state_version"]),
+                )
+                return False
+            action = ActionContract(
+                action_id=deterministic_id("action", working.rng.root_seed, "background", sequence),
+                agent_id=background_id,
+                branch_id=branch_id,
+                submitted_sim_time_us=working.sim_time_us,
+                action_type="SubmitLimitOrder",
+                payload={"side": side, "quantity": quantity, "price": price},
+                expected_execution_time_us=working.sim_time_us + 1_000_000,
+                validity_window_us=2_000_000,
+                parent_observation_id=None,
+                client_command_id=f"background-policy:{sequence}",
+            )
+            return bool(self._apply_action(
+                action,
+                working,
+                int(branch["state_version"]),
+            )["accepted"])
+
+    def _deliver_pending_information(
+        self,
+        branch_id: str,
+        world: SimulationWorld,
+        delivery: dict[str, object],
+        state_version: int,
+    ) -> bool:
+        working = world.clone()
+        delivery_id = str(delivery["delivery_id"])
+        information_id = str(delivery["information_id"])
+        target_id = str(delivery["target_id"])
+        delivery_time = int(delivery["delivery_sim_time_us"])
+        working.pending_deliveries.pop(delivery_id, None)
+        working.sim_time_us = max(working.sim_time_us, delivery_time)
+        item = next(
+            (candidate for candidate in working.information_items if candidate.get("information_id") == information_id),
+            None,
+        )
+        source_id = str(delivery.get("source_id", "information_system"))
+        visibility = str(delivery.get("visibility", "public"))
+        action_id = str(delivery["action_id"]) if delivery.get("action_id") is not None else None
+        correlation_id = str(delivery["client_command_id"]) if delivery.get("client_command_id") is not None else None
+        if item is None:
+            delivery_event = EventDraft(
+                sim_time_us=working.sim_time_us,
+                priority=41,
+                tie_break_key=f"delivery:{delivery_id}:missing",
+                event_type="InformationDeliveryFailed",
+                source_id=source_id,
+                target_ids=[target_id],
+                payload={"delivery_id": delivery_id, "information_id": information_id, "reason": "information_not_found"},
+                action_id=action_id,
+                correlation_id=correlation_id,
+                visibility="agent_private" if visibility == "agent_private" else "participants",
+            )
+            self.events.append_batch(
+                str(self._branch(branch_id)["run_id"]),
+                branch_id,
+                [delivery_event],
+                world_state=working.to_json(),
+                expected_branch_version=state_version,
+            )
+            return True
+
+        expires_at = int(delivery.get("expires_sim_time_us", item.get("expires_sim_time_us", delivery_time)))
+        if expires_at < delivery_time:
+            delivery_event = EventDraft(
+                sim_time_us=working.sim_time_us,
+                priority=41,
+                tie_break_key=f"delivery:{delivery_id}:expired",
+                event_type="InformationDeliveryExpired",
+                source_id=source_id,
+                target_ids=[target_id],
+                payload={"delivery_id": delivery_id, "information_id": information_id, "expires_sim_time_us": expires_at},
+                action_id=action_id,
+                correlation_id=correlation_id,
+                visibility="agent_private" if visibility == "agent_private" else "participants",
+            )
+            self.events.append_batch(
+                str(self._branch(branch_id)["run_id"]),
+                branch_id,
+                [delivery_event],
+                world_state=working.to_json(),
+                expected_branch_version=state_version,
+            )
+            return True
+
+        delivery_event = EventDraft(
+            sim_time_us=working.sim_time_us,
+            priority=41,
+            tie_break_key=f"delivery:{delivery_id}:delivered",
+            event_type="PrivateMessageDelivered" if visibility == "agent_private" else "InformationDelivered",
+            source_id=source_id,
+            target_ids=[target_id],
+            payload={"delivery_id": delivery_id, "information_id": information_id, "target_id": target_id},
+            action_id=action_id,
+            correlation_id=correlation_id,
+            visibility="agent_private" if visibility == "agent_private" else "participants",
+        )
+        previous_observation_id = working.latest_observation_ids.get(target_id)
+        trigger_type = "private_message" if visibility == "agent_private" else "information"
+        observations = working.create_observations(
+            branch_id,
+            state_version + 1,
+            recipient_ids=[target_id],
+            triggers_by_agent={
+                target_id: [DecisionTrigger(
+                    type=trigger_type,
+                    semantic_key=f"delivery:{delivery_id}",
+                    source_event_ids=[],
+                    severity=70,
+                    first_sim_time_us=working.sim_time_us,
+                    last_sim_time_us=working.sim_time_us,
+                )]
+            },
+        )
+        observations = [observation for observation in observations if observation.information_items]
+        if not observations:
+            if previous_observation_id is None:
+                working.latest_observation_ids.pop(target_id, None)
+            else:
+                working.latest_observation_ids[target_id] = previous_observation_id
+        evaluation = self._evaluate_observations(working, observations)
+        drafts = [delivery_event]
+        drafts.extend(self._observation_event(observation, source_id) for observation in observations)
+        for observation in observations:
+            drafts.extend(
+                EventDraft(
+                    sim_time_us=working.sim_time_us,
+                    priority=55,
+                    tie_break_key=f"delivery:{delivery_id}:viewed:{visible.information_id}",
+                    event_type="InformationViewed",
+                    source_id=source_id,
+                    target_ids=[observation.agent_id],
+                    payload={"information_id": visible.information_id, "agent_id": observation.agent_id},
+                    observation_id=observation.observation_id,
+                    action_id=action_id,
+                    correlation_id=correlation_id,
+                    visibility="agent_private",
+                )
+                for visible in observation.information_items
+            )
+        drafts.extend(evaluation["events"])
+        self.events.append_batch(
+            str(self._branch(branch_id)["run_id"]),
+            branch_id,
+            drafts,
+            world_state=working.to_json(),
+            observations=[observation.model_dump(mode="json") for observation in observations],
+            agent_decisions=evaluation["decisions"],
+            planning_requests=evaluation["planning_requests"],
+            expected_branch_version=state_version,
+        )
+        return True
+
+    def close(self) -> None:
+        for cancel in self._runner_cancel.values():
+            cancel.set()
+        for thread in self._runner_threads.values():
+            if thread.is_alive():
+                thread.join(timeout=1)
 
     def _run_for_command(
         self,
@@ -611,7 +1068,7 @@ class RunManager:
                     record = self._command_record(command_key, command_type, {"branch_id": branch_id, "status": "Running", "cursor": int(branch["state_version"])})
                     self.events.append_batch(run_id, branch_id, [], command_record=record, expected_branch_version=int(branch["state_version"]))
                     result = record["persisted_result"]
-                elif status not in {"Ready", "Paused"}:
+                elif status not in {"Ready", "Paused", "Checkpointed"}:
                     raise ConflictError(f"cannot start branch from {status}")
                 else:
                     barrier = self._process_deferred_observation_barrier(branch_id, world, int(branch["state_version"])) if status == "Paused" else None
@@ -654,6 +1111,88 @@ class RunManager:
                     record = self._command_record(command_key, command_type, {"branch_id": branch_id, "status": "Paused", "cursor": int(branch["state_version"])})
                     self.events.append_batch(run_id, branch_id, [], world_state=world.to_json(), branch_status="Paused", command_record=record, expected_branch_version=int(branch["state_version"]))
                     result = record["persisted_result"]
+            elif command_type == "stop":
+                if status == "Completed":
+                    record = self._command_record(command_key, command_type, {
+                        "branch_id": branch_id,
+                        "status": "Completed",
+                        "reason": world.terminal_reason or "completed",
+                        "cursor": int(branch["state_version"]),
+                    })
+                    self.events.append_batch(
+                        run_id,
+                        branch_id,
+                        [],
+                        command_record=record,
+                        expected_branch_version=int(branch["state_version"]),
+                    )
+                    result = record["persisted_result"]
+                elif status not in {"Ready", "Running", "Paused", "Checkpointed"}:
+                    raise ConflictError(f"cannot stop branch from {status}")
+                else:
+                    working = world.clone()
+                    cancellation_events = [
+                        self._system_event(
+                            "PendingActionCanceled",
+                            branch_id,
+                            {"action_id": action_id, "reason": "user_stopped"},
+                            sim_time_us=working.sim_time_us,
+                            tie=f"00-cancel:{action_id}",
+                        )
+                        for action_id in sorted(working.pending_actions)
+                    ]
+                    cancellation_events.extend(
+                        self._system_event(
+                            "ActionReservationReleased",
+                            branch_id,
+                            {"reservation_id": reservation_id, "reason": "user_stopped"},
+                            sim_time_us=working.sim_time_us,
+                            tie=f"01-release:{reservation_id}",
+                        )
+                        for reservation_id in sorted(working.action_reservations)
+                    )
+                    cancellation_events.extend(
+                        self._system_event(
+                            "InformationDeliveryCanceled",
+                            branch_id,
+                            {
+                                "delivery_id": delivery_id,
+                                "information_id": delivery["information_id"],
+                                "target_id": delivery["target_id"],
+                                "reason": "user_stopped",
+                            },
+                            sim_time_us=working.sim_time_us,
+                            tie=f"02-delivery-cancel:{delivery_id}",
+                        )
+                        for delivery_id, delivery in sorted(working.pending_deliveries.items())
+                    )
+                    working.pending_actions.clear()
+                    working.action_reservations.clear()
+                    working.pending_deliveries.clear()
+                    working.deferred_observation_ids.clear()
+                    working.terminal_reason = "user_stopped"
+                    cancellation_events.append(self._system_event(
+                        "BranchStopped",
+                        branch_id,
+                        {"reason": "user_stopped"},
+                        sim_time_us=working.sim_time_us,
+                        tie="99-stopped",
+                    ))
+                    record = self._command_record(command_key, command_type, {
+                        "branch_id": branch_id,
+                        "status": "Completed",
+                        "reason": "user_stopped",
+                    })
+                    self.events.append_batch(
+                        run_id,
+                        branch_id,
+                        cancellation_events,
+                        world_state=working.to_json(),
+                        branch_status="Completed",
+                        command_record=record,
+                        expected_branch_version=int(branch["state_version"]),
+                    )
+                    result = record["persisted_result"]
             elif command_type == "step_fixture":
                 if status != "Running":
                     raise ConflictError("fixture step requires a Running branch")
@@ -687,7 +1226,7 @@ class RunManager:
                         expected_execution_time_us=working.sim_time_us + 1_000_000,
                         validity_window_us=2_000_000,
                         parent_observation_id=working.latest_observation_ids.get(agent_id),
-                        client_command_id=client_command_id,
+                        client_command_id=f"fixture:{client_command_id}",
                     )
                     result = self._apply_action(action, working, int(branch["state_version"]), command_key=command_key)
             elif command_type == "save":
@@ -779,7 +1318,23 @@ class RunManager:
                     )
 
             try:
-                candidate = await self.initializer.llm_gateway.plan(provider_name, provider_request, record_raw=persist_raw)
+                if provider_name in {"rule", "replay"}:
+                    candidate = PlanningResultCandidate(
+                        based_on_strategy_revision=state.active_strategy_revision,
+                        valid_for_us=300_000_000,
+                        goals=[],
+                        activation_preconditions=[],
+                        constraints=[],
+                        directives=[],
+                        replan_conditions=[],
+                        rationale=DecisionRationale(
+                            goal_summary="Hold and protect until a deterministic strategy condition is available.",
+                            uncertainty_milli=700,
+                            stated_reason="The local planner produced a bounded no-new-risk plan.",
+                        ),
+                    )
+                else:
+                    candidate = await self.initializer.llm_gateway.plan(provider_name, provider_request, record_raw=persist_raw)
                 with self.store.locked():
                     current = self._branch(branch_id)
                     self.events.append_batch(
@@ -902,11 +1457,10 @@ class RunManager:
                 world_version=int(branch["state_version"]) + len(events),
                 proposal_id=proposal.proposal_id,
                 decision_id=runtime_result.decision.decision_id,
+                defer_execution=True,
             )
             world = action_result.world
             events.extend(action_result.events)
-            action_observations.extend(action_result.observations)
-            receipts.extend(action_result.receipts)
         self.events.append_batch(
             str(branch["run_id"]),
             branch_id,
@@ -1142,10 +1696,55 @@ class RunManager:
             for item in (ObservationPacket.model_validate(json.loads(row["observation_json"])) for row in rows)
         }
         ordered = [observations_by_id[item_id] for item_id in observation_ids if item_id in observations_by_id]
+        batch = self._evaluate_observations(world, ordered)
+        events = batch["events"]
+        events = [
+            event
+            for observation in ordered
+            for event in [
+                EventDraft(
+                    sim_time_us=observation.sim_time_us,
+                    priority=55,
+                    tie_break_key=f"observation:{observation.observation_id}:viewed:{visible.information_id}",
+                    event_type="InformationViewed",
+                    source_id=observation.agent_id,
+                    target_ids=[observation.agent_id],
+                    payload={"information_id": visible.information_id, "agent_id": observation.agent_id},
+                    observation_id=observation.observation_id,
+                    visibility="agent_private",
+                )
+                for visible in observation.information_items
+            ]
+        ] + events
+        decisions = batch["decisions"]
+        planning_requests = batch["planning_requests"]
+        processed = len(ordered)
+        world.deferred_observation_ids = [item_id for item_id in world.deferred_observation_ids if item_id not in observations_by_id]
+        events.insert(0, self._system_event(
+            "ObservationBarrierProcessed",
+            branch_id,
+            {"observation_ids": observation_ids, "processed": processed},
+            sim_time_us=world.sim_time_us,
+            tie=f"observation-barrier:{state_version}",
+        ))
+        return {
+            "world": world,
+            "events": events,
+            "decisions": decisions,
+            "planning_requests": planning_requests,
+            "receipts": [],
+            "processed": processed,
+        }
+
+    def _evaluate_observations(
+        self,
+        world: SimulationWorld,
+        observations: list[ObservationPacket],
+    ) -> dict[str, list[Any]]:
         events: list[EventDraft] = []
         decisions: list[dict[str, object]] = []
         planning_requests: list[dict[str, object]] = []
-        for observation in ordered:
+        for observation in observations:
             definition = world.agent_definitions.get(observation.agent_id)
             state = world.agent_runtime_states.get(observation.agent_id)
             if definition is None or state is None:
@@ -1168,22 +1767,48 @@ class RunManager:
                 "outcome": runtime_result.outcome.model_dump(mode="json"),
             })
             events.extend(runtime_result.events)
-        processed = len(ordered)
-        world.deferred_observation_ids = [item_id for item_id in world.deferred_observation_ids if item_id not in observations_by_id]
-        events.insert(0, self._system_event(
-            "ObservationBarrierProcessed",
-            branch_id,
-            {"observation_ids": observation_ids, "processed": processed},
-            sim_time_us=world.sim_time_us,
-            tie=f"observation-barrier:{state_version}",
-        ))
+            for proposal in runtime_result.action_proposals:
+                action = ActionContract(
+                    action_id=deterministic_id("action", runtime_result.decision.decision_id, proposal.proposal_id),
+                    agent_id=observation.agent_id,
+                    branch_id=observation.branch_id,
+                    submitted_sim_time_us=observation.sim_time_us,
+                    action_type=proposal.action_type,
+                    payload=proposal.payload,
+                    expected_execution_time_us=proposal.expected_execution_time_us,
+                    validity_window_us=proposal.validity_window_us,
+                    parent_observation_id=observation.observation_id,
+                    client_command_id=deterministic_id("agent-action", runtime_result.decision.decision_id, proposal.proposal_id),
+                )
+                try:
+                    admission = world.apply_action(
+                        action,
+                        world_version=observation.world_version,
+                        proposal_id=proposal.proposal_id,
+                        decision_id=runtime_result.decision.decision_id,
+                        defer_execution=True,
+                    )
+                except SandboxError as error:
+                    events.append(EventDraft(
+                        sim_time_us=observation.sim_time_us,
+                        priority=69,
+                        tie_break_key=f"agent:{observation.agent_id}:{action.action_id}:admission-rejected",
+                        event_type="ActionAdmissionRejected",
+                        source_id=observation.agent_id,
+                        target_ids=[observation.agent_id],
+                        payload={"action_id": action.action_id, "reason": error.error_code},
+                        observation_id=observation.observation_id,
+                        action_id=action.action_id,
+                        visibility="agent_private",
+                    ))
+                    continue
+                world.pending_actions = admission.world.pending_actions
+                world.action_reservations = admission.world.action_reservations
+                events.extend(admission.events)
         return {
-            "world": world,
             "events": events,
             "decisions": decisions,
             "planning_requests": planning_requests,
-            "receipts": [],
-            "processed": processed,
         }
 
     def fork(self, branch_id: str, checkpoint_id: str, client_command_id: str) -> dict[str, object]:
@@ -1380,7 +2005,7 @@ class RunManager:
             expected_execution_time_us=proposal.expected_execution_time_us,
             validity_window_us=proposal.validity_window_us,
             parent_observation_id=activation_observation.observation_id,
-            client_command_id=client_command_id,
+                        client_command_id=f"fixture:{client_command_id}",
         )
         return self._apply_action(
             action,
@@ -1419,6 +2044,7 @@ class RunManager:
         decision_records: list[dict[str, object]] | None = None,
         planning_records: list[dict[str, object]] | None = None,
         strategy_records: list[dict[str, object]] | None = None,
+        admitted_reservation_id: str | None = None,
     ) -> dict[str, object]:
         branch = self._branch(action.branch_id)
         try:
@@ -1427,8 +2053,14 @@ class RunManager:
                 world_version=state_version,
                 proposal_id=proposal_id,
                 decision_id=decision_id,
+                admitted_reservation_id=admitted_reservation_id,
             )
-            all_events = [*(extra_events or []), *action_result.events]
+            observation_batch = (
+                {"events": [], "decisions": [], "planning_requests": []}
+                if action.client_command_id.startswith("fixture:")
+                else self._evaluate_observations(action_result.world, action_result.observations)
+            )
+            all_events = [*(extra_events or []), *action_result.events, *observation_batch["events"]]
             all_observations = [*(pre_observations or []), *action_result.observations]
             record = self._command_record(command_key, action.action_type, {"accepted": True, "action_id": action.action_id, "branch_id": action.branch_id}, include_events=True) if command_key else None
             persisted = self.events.append_batch(
@@ -1436,8 +2068,8 @@ class RunManager:
                 world_state=action_result.world.to_json(),
                 observations=[item.model_dump(mode="json") for item in all_observations],
                 action_receipts=[item.model_dump(mode="json") for item in action_result.receipts],
-                agent_decisions=decision_records or [],
-                planning_requests=planning_records or [],
+                agent_decisions=[*(decision_records or []), *observation_batch["decisions"]],
+                planning_requests=[*(planning_records or []), *observation_batch["planning_requests"]],
                 strategy_plans=strategy_records or [],
                 command_record=record,
                 expected_branch_version=state_version,
@@ -1445,6 +2077,10 @@ class RunManager:
             return record["persisted_result"] if record else {"accepted": True, "action_id": action.action_id, "branch_id": action.branch_id, "cursor": persisted[-1].branch_seq, "events": [event.model_dump(mode="json") for event in persisted]}
         except SandboxError as error:
             working = world.clone()
+            if admitted_reservation_id is not None:
+                working.pending_actions.pop(action.action_id, None)
+                working.action_reservations.pop(admitted_reservation_id, None)
+                working.sim_time_us = max(working.sim_time_us, action.expected_execution_time_us)
             rejected = working.rejection_event(action, error.message)
             receipt = ActionReceipt(
                 receipt_id=new_id("receipt"),
@@ -1478,8 +2114,38 @@ class RunManager:
                         )]
                     },
                 )
-            drafts = [*(extra_events or []), rejected]
+            observation_batch = {"events": [], "decisions": [], "planning_requests": []}
+            drafts = [*(extra_events or [])]
+            if admitted_reservation_id is not None:
+                drafts.extend([
+                    EventDraft(
+                        sim_time_us=working.sim_time_us,
+                        priority=73,
+                        tie_break_key=f"{action.agent_id}:{action.action_id}:reservation-released",
+                        event_type="ActionReservationReleased",
+                        source_id=action.agent_id,
+                        target_ids=[action.agent_id],
+                        payload={"reservation_id": admitted_reservation_id, "reason": error.error_code},
+                        action_id=action.action_id,
+                        correlation_id=action.client_command_id,
+                        visibility="participants",
+                    ),
+                    EventDraft(
+                        sim_time_us=working.sim_time_us,
+                        priority=74,
+                        tie_break_key=f"{action.agent_id}:{action.action_id}:pending-rejected",
+                        event_type="PendingActionResolved",
+                        source_id=action.agent_id,
+                        target_ids=[action.agent_id],
+                        payload={"reservation_id": admitted_reservation_id, "outcome": "rejected"},
+                        action_id=action.action_id,
+                        correlation_id=action.client_command_id,
+                        visibility="participants",
+                    ),
+                ])
+            drafts.append(rejected)
             drafts.extend(self._observation_event(observation, str(branch["run_id"])) for observation in observations)
+            drafts.extend(observation_batch["events"])
             all_observations = [*(pre_observations or []), *observations]
             record = self._command_record(command_key, action.action_type, {"accepted": False, "action_id": action.action_id, "branch_id": action.branch_id, "error": {"error_code": error.error_code, "message": error.message}}) if command_key else None
             persisted = self.events.append_batch(
@@ -1487,8 +2153,8 @@ class RunManager:
                 world_state=working.to_json(),
                 observations=[item.model_dump(mode="json") for item in all_observations],
                 action_receipts=[receipt.model_dump(mode="json")],
-                agent_decisions=decision_records or [],
-                planning_requests=planning_records or [],
+                agent_decisions=[*(decision_records or []), *observation_batch["decisions"]],
+                planning_requests=[*(planning_records or []), *observation_batch["planning_requests"]],
                 strategy_plans=strategy_records or [],
                 command_record=record,
                 expected_branch_version=state_version,
@@ -1506,18 +2172,28 @@ class RunManager:
             sim_time_us=world.sim_time_us,
             state=world.to_json(),
             control_state={
+                "branch_status": str(branch["status"]),
                 "intervention_plans": self.intervention_plans(branch_id),
                 "planning_results": self._pending_planning_results(branch_id),
             },
             runtime_version=self.runtime_version,
         )
-        drafts = [
+        drafts = [] if branch["status"] == "Completed" else [
             self._system_event("BranchQuiescing", branch_id, {}, sim_time_us=world.sim_time_us, tie="00-quiesce"),
             self._system_event("CheckpointCreated", branch_id, {"checkpoint_id": checkpoint_id, "cursor": checkpoint.branch_seq}, sim_time_us=world.sim_time_us, tie="01-checkpoint"),
         ]
-        record = self._command_record(command_key, "save", {"branch_id": branch_id, "checkpoint_id": checkpoint_id, "status": "Checkpointed"}) if command_key else None
-        persisted = self.events.append_batch(str(branch["run_id"]), branch_id, drafts, world_state=world.to_json(), branch_status="Checkpointed", checkpoint=checkpoint.model_dump(mode="json"), command_record=record)
-        return record["persisted_result"] if record else {"branch_id": branch_id, "checkpoint_id": checkpoint_id, "status": "Checkpointed", "cursor": persisted[-1].branch_seq}
+        retained_status = str(branch["status"])
+        record = self._command_record(command_key, "save", {"branch_id": branch_id, "checkpoint_id": checkpoint_id, "status": retained_status}) if command_key else None
+        persisted = self.events.append_batch(
+            str(branch["run_id"]),
+            branch_id,
+            drafts,
+            world_state=world.to_json(),
+            branch_status=retained_status,
+            checkpoint=checkpoint.model_dump(mode="json"),
+            command_record=record,
+        )
+        return record["persisted_result"] if record else {"branch_id": branch_id, "checkpoint_id": checkpoint_id, "status": retained_status, "cursor": persisted[-1].branch_seq}
 
     def _pending_planning_results(self, branch_id: str) -> list[dict[str, object]]:
         rows = self.store.connection.execute(

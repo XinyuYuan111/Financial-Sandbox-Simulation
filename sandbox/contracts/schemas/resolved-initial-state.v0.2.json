@@ -151,6 +151,152 @@
       "title": "AgentDefinition",
       "type": "object"
     },
+    "AgentRuntimeState": {
+      "additionalProperties": false,
+      "properties": {
+        "agent_id": {
+          "title": "Agent Id",
+          "type": "string"
+        },
+        "agent_revision": {
+          "default": 0,
+          "minimum": 0,
+          "title": "Agent Revision",
+          "type": "integer"
+        },
+        "component_revisions": {
+          "additionalProperties": {
+            "type": "integer"
+          },
+          "propertyNames": {
+            "enum": [
+              "memory",
+              "belief",
+              "planning",
+              "strategy",
+              "cursor",
+              "budget",
+              "attention"
+            ]
+          },
+          "title": "Component Revisions",
+          "type": "object"
+        },
+        "active_plan_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Active Plan Id"
+        },
+        "active_strategy_revision": {
+          "default": 0,
+          "minimum": 0,
+          "title": "Active Strategy Revision",
+          "type": "integer"
+        },
+        "planning_request_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Planning Request Id"
+        },
+        "trigger_accumulator": {
+          "items": {
+            "$ref": "#/$defs/ReplanTrigger"
+          },
+          "maxItems": 32,
+          "title": "Trigger Accumulator",
+          "type": "array"
+        },
+        "directive_cursors": {
+          "additionalProperties": {
+            "$ref": "#/$defs/DirectiveExecutionCursor"
+          },
+          "title": "Directive Cursors",
+          "type": "object"
+        },
+        "cognitive_budget_state": {
+          "$ref": "#/$defs/CognitiveBudgetState"
+        },
+        "attention_budget_state": {
+          "$ref": "#/$defs/AttentionBudgetState"
+        },
+        "memory_entries": {
+          "items": {
+            "$ref": "#/$defs/MemoryEntryState"
+          },
+          "maxItems": 1000,
+          "title": "Memory Entries",
+          "type": "array"
+        },
+        "beliefs": {
+          "items": {
+            "$ref": "#/$defs/BeliefState"
+          },
+          "maxItems": 1000,
+          "title": "Beliefs",
+          "type": "array"
+        },
+        "viewed_information_ids": {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 10000,
+          "title": "Viewed Information Ids",
+          "type": "array"
+        },
+        "processed_observation_ids": {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 10000,
+          "title": "Processed Observation Ids",
+          "type": "array"
+        },
+        "schema_version": {
+          "const": "agent-runtime-state.v0.1",
+          "default": "agent-runtime-state.v0.1",
+          "title": "Schema Version",
+          "type": "string"
+        }
+      },
+      "required": [
+        "agent_id"
+      ],
+      "title": "AgentRuntimeState",
+      "type": "object"
+    },
+    "AttentionBudgetState": {
+      "additionalProperties": false,
+      "properties": {
+        "window_started_sim_time_us": {
+          "default": 0,
+          "minimum": 0,
+          "title": "Window Started Sim Time Us",
+          "type": "integer"
+        },
+        "items_remaining": {
+          "default": 20,
+          "minimum": 0,
+          "title": "Items Remaining",
+          "type": "integer"
+        }
+      },
+      "title": "AttentionBudgetState",
+      "type": "object"
+    },
     "AttentionProfile": {
       "additionalProperties": false,
       "properties": {
@@ -293,6 +439,93 @@
       "title": "BasePersona",
       "type": "object"
     },
+    "BeliefState": {
+      "additionalProperties": false,
+      "properties": {
+        "belief_id": {
+          "title": "Belief Id",
+          "type": "string"
+        },
+        "subject": {
+          "title": "Subject",
+          "type": "string"
+        },
+        "predicate": {
+          "title": "Predicate",
+          "type": "string"
+        },
+        "value": {
+          "title": "Value",
+          "type": "string"
+        },
+        "confidence_milli": {
+          "maximum": 1000,
+          "minimum": 0,
+          "title": "Confidence Milli",
+          "type": "integer"
+        },
+        "evidence_memory_ids": {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 32,
+          "title": "Evidence Memory Ids",
+          "type": "array"
+        },
+        "updated_sim_time_us": {
+          "minimum": 0,
+          "title": "Updated Sim Time Us",
+          "type": "integer"
+        },
+        "stated_reason": {
+          "default": "",
+          "maxLength": 500,
+          "title": "Stated Reason",
+          "type": "string"
+        }
+      },
+      "required": [
+        "belief_id",
+        "subject",
+        "predicate",
+        "value",
+        "confidence_milli",
+        "updated_sim_time_us"
+      ],
+      "title": "BeliefState",
+      "type": "object"
+    },
+    "CognitiveBudgetState": {
+      "additionalProperties": false,
+      "properties": {
+        "window_started_sim_time_us": {
+          "default": 0,
+          "minimum": 0,
+          "title": "Window Started Sim Time Us",
+          "type": "integer"
+        },
+        "plans_remaining": {
+          "default": 2,
+          "minimum": 0,
+          "title": "Plans Remaining",
+          "type": "integer"
+        },
+        "plans_reserved": {
+          "default": 0,
+          "minimum": 0,
+          "title": "Plans Reserved",
+          "type": "integer"
+        },
+        "searches_remaining": {
+          "default": 5,
+          "minimum": 0,
+          "title": "Searches Remaining",
+          "type": "integer"
+        }
+      },
+      "title": "CognitiveBudgetState",
+      "type": "object"
+    },
     "CognitiveProfile": {
       "additionalProperties": false,
       "properties": {
@@ -330,6 +563,92 @@
         }
       },
       "title": "CognitiveProfile",
+      "type": "object"
+    },
+    "DirectiveExecutionCursor": {
+      "additionalProperties": false,
+      "properties": {
+        "plan_revision": {
+          "minimum": 1,
+          "title": "Plan Revision",
+          "type": "integer"
+        },
+        "directive_id": {
+          "maxLength": 256,
+          "minLength": 1,
+          "title": "Directive Id",
+          "type": "string"
+        },
+        "last_observation_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Last Observation Id"
+        },
+        "previous_guard": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Previous Guard"
+        },
+        "emission_count": {
+          "default": 0,
+          "minimum": 0,
+          "title": "Emission Count",
+          "type": "integer"
+        },
+        "last_eligible_sim_time_us": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Last Eligible Sim Time Us"
+        },
+        "next_eligible_sim_time_us": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Next Eligible Sim Time Us"
+        },
+        "action_ids": {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 10000,
+          "title": "Action Ids",
+          "type": "array"
+        }
+      },
+      "required": [
+        "plan_revision",
+        "directive_id"
+      ],
+      "title": "DirectiveExecutionCursor",
       "type": "object"
     },
     "LatencyProfile": {
@@ -415,6 +734,101 @@
       },
       "title": "MarketConfig",
       "type": "object"
+    },
+    "MemoryEntryState": {
+      "additionalProperties": false,
+      "properties": {
+        "memory_id": {
+          "title": "Memory Id",
+          "type": "string"
+        },
+        "summary": {
+          "maxLength": 1000,
+          "title": "Summary",
+          "type": "string"
+        },
+        "source_ids": {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 32,
+          "title": "Source Ids",
+          "type": "array"
+        },
+        "confidence_milli": {
+          "maximum": 1000,
+          "minimum": 0,
+          "title": "Confidence Milli",
+          "type": "integer"
+        },
+        "salience": {
+          "maximum": 100,
+          "minimum": 0,
+          "title": "Salience",
+          "type": "integer"
+        },
+        "created_sim_time_us": {
+          "minimum": 0,
+          "title": "Created Sim Time Us",
+          "type": "integer"
+        },
+        "accessible": {
+          "default": true,
+          "title": "Accessible",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "memory_id",
+        "summary",
+        "confidence_milli",
+        "salience",
+        "created_sim_time_us"
+      ],
+      "title": "MemoryEntryState",
+      "type": "object"
+    },
+    "ReplanTrigger": {
+      "additionalProperties": false,
+      "properties": {
+        "semantic_key": {
+          "maxLength": 128,
+          "minLength": 1,
+          "title": "Semantic Key",
+          "type": "string"
+        },
+        "count": {
+          "default": 1,
+          "minimum": 1,
+          "title": "Count",
+          "type": "integer"
+        },
+        "first_sim_time_us": {
+          "minimum": 0,
+          "title": "First Sim Time Us",
+          "type": "integer"
+        },
+        "last_sim_time_us": {
+          "minimum": 0,
+          "title": "Last Sim Time Us",
+          "type": "integer"
+        },
+        "source_event_ids": {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 32,
+          "title": "Source Event Ids",
+          "type": "array"
+        }
+      },
+      "required": [
+        "semantic_key",
+        "first_sim_time_us",
+        "last_sim_time_us"
+      ],
+      "title": "ReplanTrigger",
+      "type": "object"
     }
   },
   "additionalProperties": false,
@@ -469,6 +883,13 @@
         "$ref": "#/$defs/AgentDefinition"
       },
       "title": "Agent Definitions",
+      "type": "array"
+    },
+    "initial_agent_states": {
+      "items": {
+        "$ref": "#/$defs/AgentRuntimeState"
+      },
+      "title": "Initial Agent States",
       "type": "array"
     },
     "background_market_sector": {
