@@ -1,5 +1,5 @@
 {
-  "preset_version": "framework-alpha.default.v0.2",
+  "preset_version": "framework-alpha.default.v0.3",
   "mode": "test_fixture",
   "seed": 20260723,
   "market": {
@@ -12,6 +12,11 @@
     "maker_fee_bps": 5,
     "taker_fee_bps": 10,
     "initial_mid_price": 10000
+  },
+  "portfolio": {
+    "quote_coverage_ratio_ppm": 1000000,
+    "synthesis_distribution_version": "portfolio-synthesis.v0.1",
+    "composition_distribution_version": "portfolio-composition.v0.1"
   },
   "agents": [
     {

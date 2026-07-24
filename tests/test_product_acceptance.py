@@ -19,7 +19,7 @@ from sandbox.control.initialization import (
     fixture_agents,
 )
 from sandbox.control.run_manager import RunManager
-from sandbox.core.errors import ConflictError
+from sandbox.core.errors import ConflictError, ValidationError
 from sandbox.core.ids import new_id
 from sandbox.store.archive import ArchiveService
 from sandbox.store.sqlite import SQLiteStore
@@ -44,8 +44,8 @@ class ProductAcceptanceTests(unittest.TestCase):
 
     def create_fixture(self) -> tuple[str, str]:
         scenario = self.manager.create_scenario(ScenarioDraft())
-        asyncio.run(self.manager.resolve_scenario(str(scenario["scenario_id"])))
-        run = self.manager.create_run(str(scenario["scenario_id"]))
+        resolved = asyncio.run(self.manager.resolve_scenario(str(scenario["scenario_id"])))
+        run = self.manager.create_run(str(scenario["scenario_id"]), resolved.resolution_hash)
         return str(run["run_id"]), str(run["branches"][0]["branch_id"])
 
     def wait_for_information_view(self, branch_id: str, action_id: str, agent_id: str, timeout: float = 2.0) -> None:
@@ -60,6 +60,141 @@ class ProductAcceptanceTests(unittest.TestCase):
                 return
             time.sleep(0.02)
         self.fail("the information was not viewed before the timeout")
+
+    def test_opening_book_is_asset_backed_tight_and_visible_to_the_first_observation(self) -> None:
+        _, branch_id = self.create_fixture()
+        world = self.manager._world(branch_id)
+        projection = self.manager.branch_projection(branch_id)
+        bids = projection["market"]["bids"]
+        asks = projection["market"]["asks"]
+        self.assertEqual((len(bids), len(asks)), (5, 5))
+        best_bid = int(bids[0]["price"])
+        best_ask = int(asks[0]["price"])
+        mid = int(world.market["initial_mid_price"])
+        self.assertEqual((best_ask - best_bid) * 10_000 // mid, 20)
+        self.assertGreaterEqual((mid - int(bids[-1]["price"])) * 10_000 // mid, 300)
+        self.assertLessEqual((mid - int(bids[-1]["price"])) * 10_000 // mid, 500)
+        self.assertEqual({item["agent_id"] for item in [*bids, *asks]}, {"background"})
+
+        balances = world.ledger.to_json()["balances"]["background"]
+        self.assertGreater(balances[world.market["base_asset"]]["locked"], 0)
+        self.assertGreater(balances[world.market["quote_asset"]]["locked"], 0)
+        first_observation = self.manager.observations(branch_id, "rule_alpha")[-1]
+        self.assertEqual(first_observation["market_view"]["bids"][0]["price"], best_bid)
+        self.assertEqual(first_observation["market_view"]["asks"][0]["price"], best_ask)
+        events = self.manager.events.list_events(branch_id, limit=10_000)
+        last_opening_seq = max(
+            event.branch_seq for event in events
+            if event.source_id == "background" and event.event_type != "ObservationCreated"
+        )
+        first_observation_seq = min(event.branch_seq for event in events if event.event_type == "ObservationCreated")
+        self.assertLess(last_opening_seq, first_observation_seq)
+
+    def test_background_assets_are_the_dynamic_residual_of_visible_agents(self) -> None:
+        scenario = self.manager.create_scenario(ScenarioDraft())
+        resolved = asyncio.run(self.manager.resolve_scenario(str(scenario["scenario_id"])))
+        token_asset = resolved.market.base_asset
+        quote_asset = resolved.market.quote_asset
+        explicit_token = sum(agent.token_balance for agent in resolved.agents)
+        explicit_usdx = sum(agent.usdx_balance for agent in resolved.agents)
+        self.assertNotIn("background", {agent.agent_id for agent in resolved.agents})
+        self.assertEqual(
+            resolved.background_market_sector.token_balance,
+            resolved.chain_snapshot.eligible_active_supply - explicit_token,
+        )
+        self.assertEqual(
+            resolved.background_market_sector.usdx_balance,
+            resolved.total_supply[quote_asset] - explicit_usdx,
+        )
+        self.assertEqual(
+            resolved.preview["assets"]["background_derivation"],
+            "eligible_or_active_supply_minus_explicit_accounts",
+        )
+
+        configured = fixture_agents()
+        configured[0] = configured[0].model_copy(update={
+            "token_balance": configured[0].token_balance - 123,
+            "usdx_balance": configured[0].usdx_balance - 456,
+        })
+        changed_scenario = self.manager.create_scenario(ScenarioDraft(agents=configured))
+        changed = asyncio.run(self.manager.resolve_scenario(str(changed_scenario["scenario_id"])))
+        self.assertEqual(
+            changed.background_market_sector.token_balance,
+            resolved.background_market_sector.token_balance + 123,
+        )
+        self.assertEqual(
+            changed.background_market_sector.usdx_balance,
+            resolved.background_market_sector.usdx_balance + 456,
+        )
+
+        expanded_quote_coverage = 1_500_000
+        expanded_draft = ScenarioDraft(
+            agents=fixture_agents(),
+            portfolio=ScenarioDraft().portfolio.model_copy(update={"quote_coverage_ratio_ppm": expanded_quote_coverage}),
+        )
+        expanded_scenario = self.manager.create_scenario(expanded_draft)
+        expanded = asyncio.run(self.manager.resolve_scenario(str(expanded_scenario["scenario_id"])))
+        self.assertEqual(
+            expanded.total_supply[quote_asset],
+            expanded.chain_snapshot.eligible_active_supply
+            * expanded.market.initial_mid_price
+            * expanded_quote_coverage
+            // 1_000_000,
+        )
+
+    def test_visible_agents_cannot_expand_the_initial_asset_supply(self) -> None:
+        configured = fixture_agents()
+        configured[0] = configured[0].model_copy(update={"token_balance": 1_000_001})
+        scenario = self.manager.create_scenario(ScenarioDraft(agents=configured))
+        with self.assertRaises(ValidationError):
+            asyncio.run(self.manager.resolve_scenario(str(scenario["scenario_id"])))
+
+    def test_initial_accounts_cannot_collide_with_reserved_accounts(self) -> None:
+        scenario = self.manager.create_scenario(ScenarioDraft(portfolio={
+            "other_explicit_accounts": [{"account_id": "background", "token_amount": 1}],
+        }))
+        with self.assertRaisesRegex(ValidationError, "account ids collide"):
+            asyncio.run(self.manager.resolve_scenario(str(scenario["scenario_id"])))
+
+    def test_background_refreshes_quotes_cancels_and_takes_only_external_top_of_book(self) -> None:
+        _, branch_id = self.create_fixture()
+        world = self.manager._world(branch_id)
+        token_total = world.ledger.total(world.market["base_asset"])
+        quote_total = world.ledger.total(world.market["quote_asset"])
+        self.manager.command(branch_id, "background-start", "start")
+        self.manager._runner_cancel[branch_id].set()
+
+        external_offer = ActionContract(
+            action_id="external-top-offer",
+            agent_id="rule_alpha",
+            branch_id=branch_id,
+            submitted_sim_time_us=0,
+            action_type="SubmitLimitOrder",
+            payload={"side": "sell", "quantity": 50, "price": 10_000},
+            expected_execution_time_us=0,
+            validity_window_us=1_000_000,
+            client_command_id="external-top-offer",
+        )
+        self.assertTrue(self.manager.submit_action(external_offer)["accepted"])
+        for _ in range(11):
+            self.assertTrue(self.manager._advance_background_once(branch_id))
+
+        current = self.manager._world(branch_id)
+        projection = self.manager.branch_projection(branch_id)
+        best_bid = int(projection["market"]["bids"][0]["price"])
+        best_ask = int(projection["market"]["asks"][0]["price"])
+        self.assertLessEqual((best_ask - best_bid) * 10_000 // ((best_ask + best_bid) // 2), 50)
+        self.assertTrue(any(
+            trade["buyer_id"] == "background" and trade["seller_id"] == "rule_alpha"
+            for trade in projection["market"]["trades"]
+        ))
+        event_types = [event.event_type for event in self.manager.events.list_events(branch_id, limit=10_000)]
+        self.assertIn("BackgroundParticipationActivated", event_types)
+        self.assertIn("OrderCancelled", event_types)
+        self.assertIn("OrderReplaced", event_types)
+        self.assertEqual(current.ledger.total(current.market["base_asset"]), token_total)
+        self.assertEqual(current.ledger.total(current.market["quote_asset"]), quote_total)
+        self.assertTrue(self.manager.events.verify_chain(branch_id))
 
     def test_running_advances_and_pause_freezes_a_complete_boundary(self) -> None:
         _, branch_id = self.create_fixture()
@@ -85,6 +220,10 @@ class ProductAcceptanceTests(unittest.TestCase):
         paused_cursor = int(paused["cursor"])
         time.sleep(0.15)
         self.assertEqual(self.manager.branch_projection(branch_id)["cursor"], paused_cursor)
+        event_types = [event.event_type for event in self.manager.events.list_events(branch_id, limit=10_000)]
+        self.assertIn("BranchStarted", event_types)
+        self.assertIn("PauseRequested", event_types)
+        self.assertIn("BranchPaused", event_types)
         self.assertTrue(self.manager.events.verify_chain(branch_id))
 
     def test_private_delivery_wakes_only_visible_agents_and_builds_belief(self) -> None:
@@ -173,6 +312,11 @@ class ProductAcceptanceTests(unittest.TestCase):
             event.event_type == "InformationDeliveryCanceled"
             for event in self.manager.events.list_events(branch_id, limit=10_000)
         ))
+        terminal_event_types = [
+            event.event_type for event in self.manager.events.list_events(branch_id, limit=10_000)
+        ]
+        self.assertIn("StopRequested", terminal_event_types)
+        self.assertIn("BranchCompleted", terminal_event_types)
         event_count = len(self.manager.events.list_events(branch_id, limit=10_000))
         repeated = self.manager.command(branch_id, "stop-twice", "stop")
         self.assertEqual(repeated["reason"], "user_stopped")
@@ -181,6 +325,87 @@ class ProductAcceptanceTests(unittest.TestCase):
         self.assertEqual(len(self.manager.events.list_events(branch_id, limit=10_000)), event_count)
         with self.assertRaises(ConflictError):
             self.manager.command(branch_id, "restart-completed", "start")
+
+    def test_completed_branch_can_be_exported_without_appending_history(self) -> None:
+        run_id, branch_id = self.create_fixture()
+        self.manager.command(branch_id, "completed-export-stop", "stop")
+        event_count = len(self.manager.events.list_events(branch_id, limit=10_000))
+        target = self.root / "completed.sandbox"
+        exported = self.manager.export_archive(run_id, target)
+        self.assertTrue(target.exists())
+        self.assertEqual(exported["manifest"]["included_branches"], [branch_id])
+        self.assertEqual(len(self.manager.events.list_events(branch_id, limit=10_000)), event_count)
+
+    def test_fork_remaps_queued_action_to_the_child_branch(self) -> None:
+        _, branch_id = self.create_fixture()
+        self.manager.command(branch_id, "fork-pending-start", "start")
+        self.manager._runner_cancel[branch_id].set()
+        action = ActionContract(
+            action_id="fork-pending-action",
+            agent_id="rule_alpha",
+            branch_id=branch_id,
+            submitted_sim_time_us=0,
+            action_type="SubmitLimitOrder",
+            payload={"side": "buy", "quantity": 1, "price": 9_000},
+            expected_execution_time_us=2_000_000,
+            validity_window_us=4_000_000,
+            client_command_id="fork-pending-action-command",
+        )
+        self.assertTrue(self.manager.submit_action(action)["queued"])
+        self.manager.command(branch_id, "fork-pending-pause", "pause")
+        saved = self.manager.command(branch_id, "fork-pending-save", "save")
+        child = self.manager.fork(branch_id, str(saved["checkpoint_id"]), "fork-pending-child")
+        child_id = str(child["branch_id"])
+        child_pending = self.manager._world(child_id).pending_actions[action.action_id]
+        self.assertEqual(child_pending["action"]["branch_id"], child_id)
+
+        self.manager.command(child_id, "fork-pending-child-start", "start")
+        self.manager._runner_cancel[child_id].set()
+        for _ in range(4):
+            self.manager._advance_background_once(child_id)
+            if action.action_id not in self.manager._world(child_id).pending_actions:
+                break
+        self.assertNotIn(action.action_id, self.manager._world(child_id).pending_actions)
+        self.assertIn(action.action_id, self.manager._world(branch_id).pending_actions)
+        self.assertTrue(any(
+            receipt["action_id"] == action.action_id
+            for receipt in self.manager.agent_receipts(child_id, "rule_alpha")
+        ))
+
+    def test_action_past_its_validity_window_is_rejected(self) -> None:
+        _, branch_id = self.create_fixture()
+        self.manager.command(branch_id, "expired-start", "start")
+        self.manager._runner_cancel[branch_id].set()
+        self.assertTrue(self.manager._advance_background_once(branch_id))
+        action = ActionContract(
+            action_id="already-expired-action",
+            agent_id="rule_alpha",
+            branch_id=branch_id,
+            submitted_sim_time_us=0,
+            action_type="SubmitLimitOrder",
+            payload={"side": "buy", "quantity": 1, "price": 9_000},
+            expected_execution_time_us=1,
+            validity_window_us=10,
+            client_command_id="already-expired-command",
+        )
+        result = self.manager.submit_action(action)
+        self.assertFalse(result["accepted"])
+        receipt = next(
+            item for item in self.manager.agent_receipts(branch_id, "rule_alpha")
+            if item["action_id"] == action.action_id
+        )
+        self.assertEqual(receipt["outcome"], "rejected")
+
+    def test_explicit_definition_cannot_widen_or_narrow_agent_capabilities(self) -> None:
+        agents = fixture_agents()[:2]
+        definitions = [definition_from_config(agent, seed=9) for agent in agents]
+        definitions[0] = definitions[0].model_copy(update={"capability_set": []})
+        scenario = self.manager.create_scenario(ScenarioDraft(
+            agents=agents,
+            agent_definitions=definitions,
+        ))
+        with self.assertRaises(ValidationError):
+            asyncio.run(self.manager.resolve_scenario(str(scenario["scenario_id"])))
 
     def test_future_halt_rejects_pending_action_and_releases_reservation(self) -> None:
         _, branch_id = self.create_fixture()
@@ -281,7 +506,8 @@ class ProductAcceptanceTests(unittest.TestCase):
     def test_finalized_snapshot_provider_rejects_mismatch_without_fixture_fallback(self) -> None:
         path = self.root / "ethereum-token.snapshot.json"
         path.write_text(json.dumps({
-            "schema_version": "holder-snapshot.v0.2",
+            "schema_version": "holder-snapshot.v0.3",
+            "provider": "test-provider",
             "chain_id": "ethereum",
             "target_token": "TOKEN",
             "block_height": 123,
@@ -289,6 +515,32 @@ class ProductAcceptanceTests(unittest.TestCase):
             "finalized": True,
             "coverage_ratio_milli": 900,
             "total_supply": 1_000_000,
+            "eligible_active_supply": 900_000,
+            "covered_eligible_supply": 810_000,
+            "source_buckets": [
+                {
+                    "bucket_id": "eligible",
+                    "category": "eligible_active",
+                    "amount": 900_000,
+                    "eligible_for_active_market": True,
+                },
+                {
+                    "bucket_id": "locked",
+                    "category": "locked",
+                    "amount": 100_000,
+                    "eligible_for_active_market": False,
+                },
+            ],
+            "holder_distribution": {
+                "distribution_version": "holder-distribution.v0.1",
+                "active_holder_count": 100,
+                "p25_balance": 100,
+                "p50_balance": 500,
+                "p75_balance": 1_000,
+                "p90_balance": 5_000,
+                "p99_balance": 20_000,
+                "top_10_concentration_milli": 500,
+            },
         }), encoding="utf-8")
         provider = FinalizedSnapshotFileProvider(path=path, chain_id="ethereum")
         report = asyncio.run(provider.preflight("ethereum", "TOKEN"))

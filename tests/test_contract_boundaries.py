@@ -45,11 +45,10 @@ class ContractBoundaryTests(unittest.TestCase):
 
     def test_live_mode_does_not_fall_back_to_fixture(self) -> None:
         initializer = Initializer({}, LLMGateway({}))
-        draft = ScenarioDraft(mode="live", chain_id="ethereum", llm_provider="openai")
+        draft = ScenarioDraft(mode="live", chain_id="ethereum", target_token="TOKEN", llm_provider="openai")
         with self.assertRaisesRegex(ValidationError, "holder provider"):
             asyncio.run(initializer.resolve("scenario-live", draft))
 
 
 if __name__ == "__main__":
     unittest.main()
-

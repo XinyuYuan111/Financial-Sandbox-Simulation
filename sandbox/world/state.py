@@ -87,19 +87,22 @@ class SimulationWorld:
             "display_name": resolved.market.market_id,
             "created_sim_time_us": 0,
         }
-        world.chain_snapshot = deepcopy(resolved.chain_snapshot)
+        world.chain_snapshot = resolved.chain_snapshot.model_dump(mode="json")
         world.rng = NamedRandomStreams(resolved.seed)
         definitions = {definition.agent_id: definition for definition in resolved.agent_definitions}
         initial_states = {state.agent_id: state for state in resolved.initial_agent_states}
+        base_asset = resolved.market.base_asset
+        quote_asset = resolved.market.quote_asset
+        genesis_account = "genesis_asset_pool"
+        world.ledger.open_account(genesis_account, [base_asset, quote_asset], reason="genesis_pool_opened")
+        world.ledger.credit(genesis_account, base_asset, resolved.total_supply[base_asset], reason="genesis_supply")
+        world.ledger.credit(genesis_account, quote_asset, resolved.total_supply[quote_asset], reason="genesis_supply")
         for config in resolved.agents:
-            if config.strategy == "background":
-                continue
             world.agents[config.agent_id] = AgentState(
                 agent_id=config.agent_id,
                 display_name=config.display_name,
                 strategy=config.strategy,
                 role_tags=config.role_tags,
-                funding_profile=config.funding_profile,
                 capabilities=config.capabilities,
             )
             world.world_entities[config.agent_id] = {
@@ -108,8 +111,9 @@ class SimulationWorld:
                 "display_name": config.display_name,
                 "created_sim_time_us": 0,
             }
-            world.ledger.credit(config.agent_id, resolved.market.base_asset, config.token_balance, reason="initial_mint")
-            world.ledger.credit(config.agent_id, resolved.market.quote_asset, config.usdx_balance, reason="initial_mint")
+            world.ledger.open_account(config.agent_id, [base_asset, quote_asset], reason="initial_agent_account")
+            world.ledger.transfer_free(genesis_account, config.agent_id, base_asset, config.token_balance, reason="initial_allocation")
+            world.ledger.transfer_free(genesis_account, config.agent_id, quote_asset, config.usdx_balance, reason="initial_allocation")
             definition = definitions.get(config.agent_id)
             if definition is not None:
                 world.agent_definitions[config.agent_id] = definition
@@ -134,14 +138,22 @@ class SimulationWorld:
             "display_name": background.sector_id,
             "created_sim_time_us": 0,
         }
-        world.ledger.credit(background.sector_id, resolved.market.base_asset, background.token_balance, reason="initial_mint")
-        world.ledger.credit(background.sector_id, resolved.market.quote_asset, background.usdx_balance, reason="initial_mint")
-        token_remainder = resolved.total_supply[resolved.market.base_asset] - world.ledger.total(resolved.market.base_asset)
-        usdx_remainder = resolved.total_supply[resolved.market.quote_asset] - world.ledger.total(resolved.market.quote_asset)
-        world.ledger.credit("inactive_reserve", resolved.market.base_asset, token_remainder, reason="initial_mint")
-        world.ledger.credit("inactive_reserve", resolved.market.quote_asset, usdx_remainder, reason="initial_mint")
-        world.ledger.credit("fee_account", resolved.market.base_asset, 0, reason="account_opened")
-        world.ledger.credit("fee_account", resolved.market.quote_asset, 0, reason="account_opened")
+        world.ledger.open_account(background.sector_id, [base_asset, quote_asset], reason="initial_background_account")
+        world.ledger.transfer_free(genesis_account, background.sector_id, base_asset, background.token_balance, reason="initial_allocation")
+        world.ledger.transfer_free(genesis_account, background.sector_id, quote_asset, background.usdx_balance, reason="initial_allocation")
+        for account in resolved.other_explicit_accounts:
+            world.ledger.open_account(account.account_id, [base_asset, quote_asset], reason="initial_explicit_account")
+            world.ledger.transfer_free(genesis_account, account.account_id, base_asset, account.token_amount, reason="initial_allocation")
+            world.ledger.transfer_free(genesis_account, account.account_id, quote_asset, account.usdx_amount, reason="initial_allocation")
+        for bucket in resolved.chain_snapshot.source_buckets:
+            if bucket.eligible_for_active_market:
+                continue
+            account_id = f"source:{bucket.bucket_id}"
+            world.ledger.open_account(account_id, [base_asset, quote_asset], reason="source_bucket_account")
+            world.ledger.transfer_free(genesis_account, account_id, base_asset, bucket.amount, reason="source_bucket_allocation")
+        world.ledger.open_account("fee_account", [base_asset, quote_asset], reason="fee_account_opened")
+        if world.ledger.balance(genesis_account, base_asset) != 0 or world.ledger.balance(genesis_account, quote_asset) != 0:
+            raise ValidationError("genesis allocation did not exhaust the initialized asset pools")
         return world
 
     @classmethod
@@ -189,6 +201,7 @@ class SimulationWorld:
         decision_id: str | None = None,
         defer_execution: bool = False,
         admitted_reservation_id: str | None = None,
+        emit_observations: bool = True,
     ) -> ActionResult:
         world = self.clone()
         if action.branch_id == "":
@@ -202,6 +215,8 @@ class SimulationWorld:
             raise ValidationError("action execution time cannot precede submission")
         if action.expected_execution_time_us > action.submitted_sim_time_us + action.validity_window_us:
             raise ValidationError("action expires before its expected execution time")
+        if not defer_execution and world.sim_time_us > action.submitted_sim_time_us + action.validity_window_us:
+            raise ValidationError("action validity window has expired")
         if defer_execution:
             # Validate the complete domain action on a discarded clone before
             # admitting a durable future commitment.
@@ -362,11 +377,15 @@ class SimulationWorld:
                 last_sim_time_us=world.sim_time_us,
             ))
         previous_observation_ids = dict(world.latest_observation_ids)
-        observations = world.create_observations(
-            action.branch_id,
-            world_version + len(events),
-            recipient_ids=recipients,
-            triggers_by_agent=triggers_by_agent,
+        observations = (
+            world.create_observations(
+                action.branch_id,
+                world_version + len(events),
+                recipient_ids=recipients,
+                triggers_by_agent=triggers_by_agent,
+            )
+            if emit_observations
+            else []
         )
         if action.action_type == "PublishInformation":
             information_id = str(world.information_items[-1]["information_id"])
@@ -434,28 +453,28 @@ class SimulationWorld:
             missing_targets = sorted(set(effect.target_ids) - set(world.agents))
             if missing_targets:
                 raise MissingCausalStateError(f"information target Agents do not exist: {', '.join(missing_targets)}")
-            item = publish_information(
+            item, immediate_recipients, _ = world._publish_information_item(
                 source_id=effect.source_id,
                 channel=effect.channel,
                 content=effect.content,
-                sim_time_us=world.sim_time_us,
                 target_ids=effect.target_ids,
                 information_id=deterministic_id("information", plan_id, stage.stage_id, effect.effect_id),
+                correlation_id=plan_id,
+                event_metadata={
+                    "intervention_plan_id": plan_id,
+                    "intervention_stage_id": stage.stage_id,
+                    "effect_id": effect.effect_id,
+                },
             )
-            recipients = list(item["target_ids"]) if item["visibility"] == "agent_private" else sorted(world.agents)
-            item["delivery_times_us"] = {target: world.sim_time_us for target in recipients}
-            item["expires_sim_time_us"] = world.sim_time_us + 86_400_000_000
-            item["salience"] = 90 if item["visibility"] == "agent_private" else 80
             item["intervention_plan_id"] = plan_id
             item["intervention_stage_id"] = stage.stage_id
             item["effect_id"] = effect.effect_id
-            world.information_items.append(item)
             visibility = "agent_private" if item["visibility"] == "agent_private" else "public"
             events.append(world._intervention_event(
                 plan_id, stage.stage_id, effect.effect_id, "InformationPublished", item,
                 priority=40, visibility=visibility, phase="published",
             ))
-            for target in recipients:
+            for target in immediate_recipients:
                 delivery_type = "PrivateMessageDelivered" if item["visibility"] == "agent_private" else "InformationDelivered"
                 events.append(world._intervention_event(
                     plan_id, stage.stage_id, effect.effect_id, delivery_type,
@@ -660,11 +679,15 @@ class SimulationWorld:
         quantity = require_int(payload.get("quantity"), "payload.quantity", minimum=1)
         if action.action_type in {"SubmitLimitOrder", "ReplaceOrder"}:
             price = require_int(payload.get("price"), "payload.price", minimum=1)
+            if price % int(self.market["price_tick"]) != 0:
+                raise ValidationError("limit order price must align with market price_tick")
             order_type: Literal["limit", "protected_market"] = "limit"
             worst_price = None
         else:
             price = None
             worst_price = require_int(payload.get("worst_price"), "payload.worst_price", minimum=1)
+            if worst_price % int(self.market["price_tick"]) != 0:
+                raise ValidationError("protected market worst_price must align with market price_tick")
             order_type = "protected_market"
         order, trades = self.clob.submit(
             agent_id=action.agent_id,
@@ -697,44 +720,72 @@ class SimulationWorld:
             item.get("information_id") == derived_from for item in self.information_items
         ):
             raise ValidationError("derived information source does not exist")
-        item = publish_information(
+        item, immediate_recipients, _ = self._publish_information_item(
             source_id=action.agent_id,
             channel=str(action.payload.get("channel", "PublicFeed")),
             content=str(action.payload.get("content", "")),
-            sim_time_us=self.sim_time_us,
             target_ids=list(action.payload.get("target_ids", [])),
             derived_from_info_id=str(derived_from) if derived_from is not None else None,
             information_id=deterministic_id("information", action.action_id),
+            action_id=action.action_id,
+            correlation_id=action.client_command_id,
+        )
+        events = [self._event(action, "InformationPublished", item, priority=40, visibility="agent_private" if item["visibility"] == "agent_private" else "public", phase="00-published")]
+        for target in immediate_recipients:
+            delivery_type = "PrivateMessageDelivered" if item["visibility"] == "agent_private" else "InformationDelivered"
+            events.append(self._event(action, delivery_type, {"information_id": item["information_id"], "target_id": target}, priority=40, visibility="agent_private" if item["visibility"] == "agent_private" else "participants", phase=f"01-delivered:{target}").model_copy(update={"sim_time_us": int(item["delivery_times_us"][target]), "target_ids": [target]}))
+        return events
+
+    def _publish_information_item(
+        self,
+        *,
+        source_id: str,
+        channel: str,
+        content: str,
+        target_ids: list[str],
+        information_id: str,
+        derived_from_info_id: str | None = None,
+        action_id: str | None = None,
+        correlation_id: str | None = None,
+        event_metadata: dict[str, object] | None = None,
+    ) -> tuple[dict[str, object], list[str], list[str]]:
+        item = publish_information(
+            source_id=source_id,
+            channel=channel,
+            content=content,
+            sim_time_us=self.sim_time_us,
+            target_ids=target_ids,
+            derived_from_info_id=derived_from_info_id,
+            information_id=information_id,
         )
         recipients: list[str] = []
         if item["visibility"] == "agent_private":
-            recipients = sorted(set([action.agent_id, *list(item["target_ids"])]) & set(self.agents))
+            recipients = sorted(set([source_id, *list(item["target_ids"])]) & set(self.agents))
             item["salience"] = 90
         else:
             for agent_id, definition in sorted(self.agent_definitions.items()):
-                if "information.read" not in definition.capability_set and agent_id != action.agent_id:
+                if "information.read" not in definition.capability_set and agent_id != source_id:
                     continue
                 digest = hashlib.sha256(f"{item['information_id']}:{agent_id}".encode()).digest()
-                if agent_id == action.agent_id or int.from_bytes(digest[:2], "big") % 100 < 70:
+                if agent_id == source_id or int.from_bytes(digest[:2], "big") % 100 < 70:
                     recipients.append(agent_id)
             item["salience"] = 80 if item["channel"] == "OfficialAnnouncement" else 50
         delivery_times: dict[str, int] = {}
         for target in recipients:
             definition = self.agent_definitions.get(target)
-            base_latency = 0 if target == action.agent_id else max(
+            base_latency = 0 if target == source_id else max(
                 1,
                 (definition.latency_profile.action_latency_us // 4) if definition is not None else 250_000,
             )
             jitter = int.from_bytes(hashlib.sha256(f"delivery:{item['information_id']}:{target}".encode()).digest()[:2], "big") % 1_000
-            delivery_times[target] = self.sim_time_us + base_latency + (0 if target == action.agent_id else jitter)
+            delivery_times[target] = self.sim_time_us + base_latency + (0 if target == source_id else jitter)
         item["delivery_times_us"] = delivery_times
         item["expires_sim_time_us"] = self.sim_time_us + 86_400_000_000
         self.information_items.append(item)
-        events = [self._event(action, "InformationPublished", item, priority=40, visibility="agent_private" if item["visibility"] == "agent_private" else "public", phase="00-published")]
+        immediate_recipients: list[str] = []
         for target in recipients:
-            delivery_type = "PrivateMessageDelivered" if item["visibility"] == "agent_private" else "InformationDelivered"
             if delivery_times[target] <= self.sim_time_us:
-                events.append(self._event(action, delivery_type, {"information_id": item["information_id"], "target_id": target}, priority=40, visibility="agent_private" if item["visibility"] == "agent_private" else "participants", phase=f"01-delivered:{target}").model_copy(update={"sim_time_us": delivery_times[target], "target_ids": [target]}))
+                immediate_recipients.append(target)
             else:
                 delivery_id = deterministic_id("delivery", str(item["information_id"]), target)
                 self.pending_deliveries[delivery_id] = {
@@ -744,11 +795,12 @@ class SimulationWorld:
                     "delivery_sim_time_us": delivery_times[target],
                     "expires_sim_time_us": item["expires_sim_time_us"],
                     "visibility": item["visibility"],
-                    "source_id": action.agent_id,
-                    "action_id": action.action_id,
-                    "client_command_id": action.client_command_id,
+                    "source_id": source_id,
+                    "action_id": action_id,
+                    "client_command_id": correlation_id,
+                    "event_metadata": event_metadata or {},
                 }
-        return events
+        return item, immediate_recipients, recipients
 
     def _event(self, action: ActionContract, event_type: str, payload: dict[str, object], *, priority: int, visibility: str = "public", observation_id: str | None = None, phase: str | None = None) -> EventDraft:
         return EventDraft(
@@ -839,7 +891,6 @@ class SimulationWorld:
             "display_name": agent.display_name,
             "strategy": agent.strategy,
             "role_tags": agent.role_tags,
-            "funding_profile": agent.funding_profile,
             "capabilities": agent.capabilities,
             "planner_profile_id": definition.planner_profile_id if definition else agent.strategy,
             "agent_revision": state.agent_revision if state else 0,

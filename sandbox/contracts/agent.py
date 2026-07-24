@@ -1,8 +1,10 @@
 from __future__ import annotations
 
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
+
+from sandbox.contracts.agent_configuration import ConfigurationProvenance
 
 
 ComponentName = Literal["memory", "belief", "planning", "strategy", "cursor", "budget", "attention"]
@@ -57,7 +59,6 @@ class AgentDefinition(StrictFrozenModel):
     display_name: str = Field(min_length=1, max_length=128)
     public_identity: str = Field(default="", max_length=500)
     role_tags: list[str] = Field(default_factory=list, max_length=16)
-    funding_profile: Literal["ordinary", "capital", "liquidity", "issuer", "information"]
     capability_set: list[str] = Field(default_factory=list, max_length=32)
     base_persona: BasePersona
     planner_profile_id: str = Field(min_length=1, max_length=128)
@@ -65,7 +66,18 @@ class AgentDefinition(StrictFrozenModel):
     cognitive_profile: CognitiveProfile = Field(default_factory=CognitiveProfile)
     attention_profile: AttentionProfile = Field(default_factory=AttentionProfile)
     latency_profile: LatencyProfile = Field(default_factory=LatencyProfile)
-    schema_version: Literal["agent-definition.v0.1"] = "agent-definition.v0.1"
+    configuration_provenance: dict[str, ConfigurationProvenance] = Field(default_factory=dict)
+    schema_version: Literal["agent-definition.v0.2"] = "agent-definition.v0.2"
+
+    @model_validator(mode="before")
+    @classmethod
+    def migrate_v0_1(cls, value: Any) -> Any:
+        if isinstance(value, dict) and value.get("schema_version") == "agent-definition.v0.1":
+            migrated = dict(value)
+            migrated.pop("funding_profile", None)
+            migrated["schema_version"] = "agent-definition.v0.2"
+            return migrated
+        return value
 
 
 class CognitiveBudgetState(StrictFrozenModel):

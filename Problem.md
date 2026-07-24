@@ -28,7 +28,7 @@ Status meanings:
 | P-005 | Memory, belief, budget, replan, and directive wakeup contracts are disconnected | High | PARTIAL / 部分解决 |
 | P-006 | Agent-to-Agent interaction lacks a behavioral response and derivation loop | Blocker | PARTIAL / 部分解决 |
 | P-007 | Pending Action and Action Reservation are not used by the execution path | High | RESOLVED / 已解决 |
-| P-008 | Background Market Sector is a fixed fixture script, not an autonomous bounded environment | High | PARTIAL / 部分解决 |
+| P-008 | Background Market Sector is a fixed fixture script, not an autonomous bounded environment | High | RESOLVED / 已解决 |
 | P-009 | There is no user Stop command or `user_stopped` terminal boundary | Blocker | RESOLVED / 已解决 |
 | P-010 | Save/checkpoint cannot resume the same branch | High | PARTIAL / 部分解决 |
 | P-011 | Event log, Kernel, and replay are not one authoritative execution path | High | PARTIAL / 部分解决 |
@@ -76,7 +76,7 @@ Acceptance:
 ### P-003 - Information bypasses delivery and attention semantics
 
 Status: **PARTIAL / 部分解决**  
-Implemented 2026-07-24: immutable information ids, deterministic public subsets, private targets, per-Agent delivery timestamps, a durable pending-delivery queue, expiry, salience/capacity selection, Viewed provenance, remembered evidence, and separate Published/Delivered/Viewed boundaries.  
+Implemented 2026-07-24: immutable information ids, deterministic public subsets, private targets, per-Agent delivery timestamps, a durable pending-delivery queue, expiry, salience/capacity selection, Viewed provenance, remembered evidence, and separate Published/Delivered/Viewed boundaries. Agent-authored and Scenario Director information now share this same delivery path.
 Remaining: subscription/relationship routing, modeled delivery failure, richer unread state, and archive/replay acceptance for attention provenance are incomplete.
 
 Required resolution:
@@ -144,7 +144,7 @@ Acceptance:
 ### P-007 - Pending Action and Action Reservation are not active
 
 Status: **RESOLVED / 已解决**  
-Implemented 2026-07-24: every future action is admitted into durable Pending Action and Action Reservation state; the runner orders it against interventions and deliveries, execution consumes the reservation, and rejection/Stop release it. The future-halt acceptance test proves no reservation leak.
+Implemented 2026-07-24: every future action is admitted into durable Pending Action and Action Reservation state; the runner orders it against interventions and deliveries, execution consumes the reservation, and rejection/expiry/Stop release it. The future-halt and expired-action acceptance tests prove that invalidated actions do not execute or leak reservations.
 
 Required resolution:
 
@@ -158,9 +158,8 @@ Acceptance:
 
 ### P-008 - Background Market Sector is not autonomous
 
-Status: **PARTIAL / 部分解决**  
-Implemented 2026-07-24: an autonomous seeded Background Market policy uses finite balances and the normal Action/CLOB/Ledger pipeline with a bounded step horizon.  
-Remaining: the policy does not yet generate cancellations/activation events or expose configurable participation profiles, and legacy Fixture stepping remains available for tests.
+Status: **RESOLVED / 已解决**
+Implemented 2026-07-24: an autonomous seeded Background Market policy establishes a five-level, asset-backed opening book before the first Observation, then uses finite balances and the normal Action/CLOB/Ledger pipeline for bounded quote refresh, cancellation, replacement, and protected taking of external top-of-book liquidity. Background balances are derived as initial total supply minus all visible Agent allocations; they are not preset inputs. Spread, outer-depth impact, level count, refresh interval, and quote-size fraction are typed scenario parameters. Autonomous flow begins after Start; the deterministic Fixture step remains an explicit test control only.
 
 Required resolution:
 
@@ -204,7 +203,7 @@ Acceptance:
 ### P-011 - Kernel, event log, state, and replay are not one path
 
 Status: **PARTIAL / 部分解决**  
-Implemented: append-only events, branch sequence, hashes, current world snapshots, checkpoints, archive import/export, and historical ObservationPackets.  
+Implemented: append-only events, branch sequence, hashes, current world snapshots, checkpoints, archive import/export, historical ObservationPackets, exact manifest-to-member archive validation, and rejection of duplicate or unhashed archive members.
 Missing: the Kernel as the sole commit path, persisted scheduler state, replay from checkpoint plus events, and recovery tests after an interrupted run.
 
 Required resolution:
@@ -250,7 +249,7 @@ Acceptance:
 ### P-014 - Acceptance coverage is incomplete
 
 Status: **PARTIAL / 部分解决**  
-Current verification: 42 Python tests pass, including product acceptance, API workflow, Stop, reservation/intervention ordering, private Agent isolation, advanced Agent configuration, and holder snapshot tests; TypeScript check and production frontend build pass.  
+Current verification: 53 Python tests pass, including product acceptance, API workflow, Stop, reservation/intervention ordering, private Agent isolation, advanced Agent configuration, holder snapshot tests, dynamic Background Market residual allocation, bounded Background Market behavior, delayed Director information delivery, completed-branch export, forked pending actions, and archive tamper rejection; TypeScript check and production frontend build pass.
 Gaps: Kernel/recovery/property/SSE coverage remains incomplete. Browser QA was attempted on 2026-07-24 but the active browser policy blocked access to the local app, so no rendered workflow or component evidence is claimed.
 
 Required resolution:

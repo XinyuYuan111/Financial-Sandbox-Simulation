@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import tempfile
 import threading
+import time
 import unittest
 import zipfile
 from pathlib import Path
@@ -111,12 +112,13 @@ class InterventionTests(unittest.TestCase):
             "0.2.0",
         )
         scenario = self.manager.create_scenario(ScenarioDraft())
-        asyncio.run(self.manager.resolve_scenario(str(scenario["scenario_id"])))
-        run = self.manager.create_run(str(scenario["scenario_id"]))
+        resolved = asyncio.run(self.manager.resolve_scenario(str(scenario["scenario_id"])))
+        run = self.manager.create_run(str(scenario["scenario_id"]), resolved.resolution_hash)
         self.run_id = str(run["run_id"])
         self.branch_id = str(run["branches"][0]["branch_id"])
 
     def tearDown(self) -> None:
+        self.manager.close()
         self.store.close()
         self.temp.cleanup()
 
@@ -253,6 +255,41 @@ class InterventionTests(unittest.TestCase):
         self.assertEqual((record["category"], record["target_id"]), ("belief", "rule_alpha"))
         self.assertIsInstance(record["state_revision"], int)
 
+    def test_private_information_intervention_uses_the_delivery_queue(self) -> None:
+        self.pause()
+        draft = self.draft(sim_time_us=0, effects=[{
+            "effect_id": "delayed-private-info", "effect_type": "publish_information",
+            "source_id": "scenario_director", "channel": "PrivateChannel",
+            "content": "Delivered only after channel latency.", "target_ids": ["rule_beta"],
+            "depends_on_state_effect_ids": [], "private_source_refs": [],
+        }])
+        created = self.manager.create_intervention_plan(self.branch_id, "draft-delayed-private", draft)
+        self.manager.confirm_intervention_plan(self.branch_id, str(created["plan_id"]), "confirm-delayed-private")
+        projection = self.manager.branch_projection(self.branch_id)
+        self.assertEqual(projection["deferred_observation_count"], 0)
+        self.assertEqual(projection["pending_delivery_count"], 1)
+        related = [
+            event for event in self.manager.events.list_events(self.branch_id, limit=10_000)
+            if event.correlation_id == created["plan_id"]
+        ]
+        self.assertTrue(any(event.event_type == "InformationPublished" for event in related))
+        self.assertFalse(any(event.event_type == "PrivateMessageDelivered" for event in related))
+
+        self.manager.command(self.branch_id, "resume-delayed-private", "start")
+        deadline = time.monotonic() + 2
+        while time.monotonic() < deadline:
+            if self.manager.branch_projection(self.branch_id)["pending_delivery_count"] == 0:
+                break
+            time.sleep(0.02)
+        self.assertEqual(self.manager.branch_projection(self.branch_id)["pending_delivery_count"], 0)
+        related = [
+            event for event in self.manager.events.list_events(self.branch_id, limit=10_000)
+            if event.correlation_id == created["plan_id"]
+        ]
+        delivered = next(event for event in related if event.event_type == "PrivateMessageDelivered")
+        self.assertEqual(delivered.payload["target_id"], "rule_beta")
+        self.assertGreater(delivered.sim_time_us, 0)
+
     def test_information_intervention_cannot_impersonate_an_agent(self) -> None:
         self.pause()
         draft = self.draft(sim_time_us=0, effects=[{
@@ -383,8 +420,8 @@ class InterventionTests(unittest.TestCase):
             llm_provider="openai",
             population={"preset": "smoke"},
         ))
-        asyncio.run(self.manager.resolve_scenario(str(scenario["scenario_id"])))
-        run = self.manager.create_run(str(scenario["scenario_id"]))
+        resolved = asyncio.run(self.manager.resolve_scenario(str(scenario["scenario_id"])))
+        run = self.manager.create_run(str(scenario["scenario_id"]), resolved.resolution_hash)
         branch_id = str(run["branches"][0]["branch_id"])
         self.manager.command(branch_id, "live-start", "start")
         output: list[dict[str, object]] = []

@@ -93,8 +93,8 @@ class AgentRuntimeTests(unittest.TestCase):
 
     def create_running(self) -> tuple[str, str]:
         scenario = self.manager.create_scenario(ScenarioDraft())
-        asyncio.run(self.manager.resolve_scenario(str(scenario["scenario_id"])))
-        run = self.manager.create_run(str(scenario["scenario_id"]))
+        resolved = asyncio.run(self.manager.resolve_scenario(str(scenario["scenario_id"])))
+        run = self.manager.create_run(str(scenario["scenario_id"]), resolved.resolution_hash)
         branch_id = str(run["branches"][0]["branch_id"])
         self.manager.command(branch_id, "start", "start")
         return str(run["run_id"]), branch_id
@@ -230,7 +230,7 @@ class AgentRuntimeTests(unittest.TestCase):
         ))
         resolved = asyncio.run(self.manager.resolve_scenario(str(scenario["scenario_id"])))
         self.assertEqual(len(resolved.agent_definitions), 4)
-        run = self.manager.create_run(str(scenario["scenario_id"]))
+        run = self.manager.create_run(str(scenario["scenario_id"]), resolved.resolution_hash)
         branch_id = str(run["branches"][0]["branch_id"])
         self.manager.command(branch_id, "live-start", "start")
         result = self.manager.command(branch_id, "live-run", "run_for", {"max_requests": 1})

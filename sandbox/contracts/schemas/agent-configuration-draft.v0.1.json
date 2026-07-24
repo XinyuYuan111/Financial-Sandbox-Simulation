@@ -1,0 +1,646 @@
+{
+  "$defs": {
+    "AgentPortfolioDraft": {
+      "additionalProperties": false,
+      "properties": {
+        "token_amount": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Token Amount"
+        },
+        "usdx_amount": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Usdx Amount"
+        }
+      },
+      "title": "AgentPortfolioDraft",
+      "type": "object"
+    },
+    "AttentionProfileDraft": {
+      "additionalProperties": false,
+      "properties": {
+        "information_capacity": {
+          "anyOf": [
+            {
+              "maximum": 10000,
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Information Capacity"
+        },
+        "minimum_salience": {
+          "anyOf": [
+            {
+              "maximum": 100,
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Minimum Salience"
+        }
+      },
+      "title": "AttentionProfileDraft",
+      "type": "object"
+    },
+    "BasePersonaDraft": {
+      "additionalProperties": false,
+      "properties": {
+        "private_goals": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "maxItems": 8,
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Private Goals"
+        },
+        "risk_tolerance_milli": {
+          "anyOf": [
+            {
+              "maximum": 1000,
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Risk Tolerance Milli"
+        },
+        "time_horizon": {
+          "anyOf": [
+            {
+              "enum": [
+                "short",
+                "medium",
+                "long"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Time Horizon"
+        },
+        "loss_aversion_milli": {
+          "anyOf": [
+            {
+              "maximum": 1000,
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Loss Aversion Milli"
+        },
+        "trend_bias_milli": {
+          "anyOf": [
+            {
+              "maximum": 1000,
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Trend Bias Milli"
+        },
+        "skepticism_milli": {
+          "anyOf": [
+            {
+              "maximum": 1000,
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Skepticism Milli"
+        },
+        "communication_propensity_milli": {
+          "anyOf": [
+            {
+              "maximum": 1000,
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Communication Propensity Milli"
+        },
+        "bounded_notes": {
+          "anyOf": [
+            {
+              "maxLength": 500,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Bounded Notes"
+        }
+      },
+      "title": "BasePersonaDraft",
+      "type": "object"
+    },
+    "CognitiveProfileDraft": {
+      "additionalProperties": false,
+      "properties": {
+        "max_plans_per_window": {
+          "anyOf": [
+            {
+              "maximum": 100,
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Max Plans Per Window"
+        },
+        "planning_window_us": {
+          "anyOf": [
+            {
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Planning Window Us"
+        },
+        "context_capacity": {
+          "anyOf": [
+            {
+              "maximum": 1000000,
+              "minimum": 256,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Context Capacity"
+        },
+        "memory_search_limit": {
+          "anyOf": [
+            {
+              "maximum": 100,
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Memory Search Limit"
+        }
+      },
+      "title": "CognitiveProfileDraft",
+      "type": "object"
+    },
+    "ConfigurationProvenance": {
+      "additionalProperties": false,
+      "properties": {
+        "source": {
+          "enum": [
+            "default",
+            "archetype",
+            "random",
+            "user",
+            "llm_interpreted"
+          ],
+          "title": "Source",
+          "type": "string"
+        },
+        "source_ref": {
+          "anyOf": [
+            {
+              "maxLength": 256,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Source Ref"
+        },
+        "distribution_version": {
+          "anyOf": [
+            {
+              "maxLength": 128,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Distribution Version"
+        },
+        "seed": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Seed"
+        },
+        "interpreter_request_id": {
+          "anyOf": [
+            {
+              "maxLength": 256,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Interpreter Request Id"
+        },
+        "user_confirmed": {
+          "default": false,
+          "title": "User Confirmed",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "source"
+      ],
+      "title": "ConfigurationProvenance",
+      "type": "object"
+    },
+    "ConfigurationSuggestion": {
+      "additionalProperties": false,
+      "properties": {
+        "suggestion_id": {
+          "maxLength": 256,
+          "minLength": 1,
+          "title": "Suggestion Id",
+          "type": "string"
+        },
+        "kind": {
+          "enum": [
+            "archetype",
+            "role_tag",
+            "capability"
+          ],
+          "title": "Kind",
+          "type": "string"
+        },
+        "value": {
+          "maxLength": 256,
+          "minLength": 1,
+          "title": "Value",
+          "type": "string"
+        },
+        "reason": {
+          "maxLength": 500,
+          "minLength": 1,
+          "title": "Reason",
+          "type": "string"
+        },
+        "confidence_milli": {
+          "maximum": 1000,
+          "minimum": 0,
+          "title": "Confidence Milli",
+          "type": "integer"
+        },
+        "ambiguity": {
+          "default": "",
+          "maxLength": 500,
+          "title": "Ambiguity",
+          "type": "string"
+        }
+      },
+      "required": [
+        "suggestion_id",
+        "kind",
+        "value",
+        "reason",
+        "confidence_milli"
+      ],
+      "title": "ConfigurationSuggestion",
+      "type": "object"
+    },
+    "LatencyProfileDraft": {
+      "additionalProperties": false,
+      "properties": {
+        "planning_latency_us": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Planning Latency Us"
+        },
+        "action_latency_us": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Action Latency Us"
+        }
+      },
+      "title": "LatencyProfileDraft",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "draft_id": {
+      "maxLength": 256,
+      "minLength": 1,
+      "title": "Draft Id",
+      "type": "string"
+    },
+    "input_mode": {
+      "enum": [
+        "preset",
+        "random",
+        "natural_language",
+        "detailed"
+      ],
+      "title": "Input Mode",
+      "type": "string"
+    },
+    "agent_id": {
+      "anyOf": [
+        {
+          "maxLength": 256,
+          "minLength": 1,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Agent Id"
+    },
+    "display_name": {
+      "anyOf": [
+        {
+          "maxLength": 128,
+          "minLength": 1,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Display Name"
+    },
+    "public_identity": {
+      "anyOf": [
+        {
+          "maxLength": 500,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Public Identity"
+    },
+    "strategy": {
+      "anyOf": [
+        {
+          "enum": [
+            "rule",
+            "replay",
+            "openai"
+          ],
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Strategy"
+    },
+    "archetype_ids": {
+      "items": {
+        "enum": [
+          "ordinary_participant",
+          "capital_holder",
+          "liquidity_provider",
+          "asset_issuer",
+          "information_participant"
+        ],
+        "type": "string"
+      },
+      "maxItems": 5,
+      "title": "Archetype Ids",
+      "type": "array"
+    },
+    "role_tags": {
+      "anyOf": [
+        {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 16,
+          "type": "array"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Role Tags"
+    },
+    "capability_set": {
+      "anyOf": [
+        {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 32,
+          "type": "array"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Capability Set"
+    },
+    "base_persona": {
+      "$ref": "#/$defs/BasePersonaDraft"
+    },
+    "cognitive_profile": {
+      "$ref": "#/$defs/CognitiveProfileDraft"
+    },
+    "attention_profile": {
+      "$ref": "#/$defs/AttentionProfileDraft"
+    },
+    "latency_profile": {
+      "$ref": "#/$defs/LatencyProfileDraft"
+    },
+    "planner_profile_id": {
+      "anyOf": [
+        {
+          "maxLength": 128,
+          "minLength": 1,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Planner Profile Id"
+    },
+    "portfolio": {
+      "$ref": "#/$defs/AgentPortfolioDraft"
+    },
+    "random_fields": {
+      "items": {
+        "enum": [
+          "base_persona.risk_tolerance_milli",
+          "base_persona.time_horizon",
+          "base_persona.loss_aversion_milli",
+          "base_persona.trend_bias_milli",
+          "base_persona.skepticism_milli",
+          "base_persona.communication_propensity_milli",
+          "cognitive_profile.context_capacity",
+          "cognitive_profile.memory_search_limit",
+          "attention_profile.information_capacity",
+          "attention_profile.minimum_salience",
+          "latency_profile.planning_latency_us",
+          "latency_profile.action_latency_us"
+        ],
+        "type": "string"
+      },
+      "maxItems": 32,
+      "title": "Random Fields",
+      "type": "array"
+    },
+    "provenance": {
+      "additionalProperties": {
+        "$ref": "#/$defs/ConfigurationProvenance"
+      },
+      "title": "Provenance",
+      "type": "object"
+    },
+    "suggestions": {
+      "items": {
+        "$ref": "#/$defs/ConfigurationSuggestion"
+      },
+      "maxItems": 32,
+      "title": "Suggestions",
+      "type": "array"
+    },
+    "accepted_suggestion_ids": {
+      "items": {
+        "type": "string"
+      },
+      "maxItems": 32,
+      "title": "Accepted Suggestion Ids",
+      "type": "array"
+    },
+    "declined_suggestion_ids": {
+      "items": {
+        "type": "string"
+      },
+      "maxItems": 32,
+      "title": "Declined Suggestion Ids",
+      "type": "array"
+    },
+    "ambiguities": {
+      "items": {
+        "type": "string"
+      },
+      "maxItems": 32,
+      "title": "Ambiguities",
+      "type": "array"
+    },
+    "schema_version": {
+      "const": "agent-configuration-draft.v0.1",
+      "default": "agent-configuration-draft.v0.1",
+      "title": "Schema Version",
+      "type": "string"
+    }
+  },
+  "required": [
+    "draft_id",
+    "input_mode"
+  ],
+  "title": "AgentConfigurationDraft",
+  "type": "object"
+}

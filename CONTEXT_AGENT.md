@@ -8,6 +8,46 @@
 沙盒中独立初始化的认知与决策主体。每个 Agent 拥有彼此隔离的 Persona、Observation、Memory、Belief、认知预算、策略状态与随机流。
 _Avoid_: 角色类型、共享决策群组、LLM 会话
 
+**Participant Archetype**:
+面向用户的一次性可组合参与者预设，用于把身份标签、资金初始化建议、能力配置建议和 Persona 倾向展开为可独立编辑的配置草稿；它不是 Agent 的运行时子类、持续绑定的配置包，也不决定实际行为。
+_Avoid_: Agent 子类、互斥硬类型、持续配置继承、资金档位
+
+**Configuration Provenance**:
+Agent 初始化草稿中每个最终字段的来源记录，区分版本化默认值、Archetype 建议、随机采样、用户输入和 LLM 解释。它只解释值从何而来，不参与 Agent 的运行时决策。
+_Avoid_: 配置优先级实体、运行时 Persona、审计后补来源
+
+**Agent Configuration Draft**:
+Agent 初始化确认前使用的统一结构化草稿；Random、自然语言和详细配置都只是在该草稿中提供不同来源的候选字段。草稿不是可运行 Agent，只有经过默认补齐、确定性校验、Preview 和用户确认后才能冻结为 Agent Definition。
+_Avoid_: 自由文本 Prompt、已初始化 Agent、三套输入 Schema
+
+**Agent Configuration Compiler**:
+统一初始化解析管线中把 Agent Configuration Draft 确定性解析为候选 Agent Definition 的边界。它补齐版本化默认值并校验字段与跨字段约束，但不调用 LLM 决定业务含义，也不绕过 Resolved Initial State Preview。
+_Avoid_: 自治 Agent、LLM 配置者、第二套初始化器
+
+**Configuration Field Authority**:
+Agent 配置字段允许被谁提供或确认的边界：用户明确陈述可被解析，软倾向可由 LLM 建议，链状态、资产来源、最终余额和未注册能力必须由系统或用户显式确定。它不是运行时权限，也不允许 LLM 绕过初始化校验。
+_Avoid_: LLM 全局写权限、Persona 继承权、隐式资产授予
+
+**Explicit Randomization**:
+只有被配置来源明确标记为随机的字段才可使用命名 seed 从版本化分布采样；普通空缺字段使用默认值或保持未设置。所有采样后的最终值和来源都必须在 Preview 中展开。
+_Avoid_: 隐式随机、LLM 随机补全、未保存采样结果
+
+**Eligible Active Supply**:
+经过链上来源分类后允许进入本地市场并由显式 Agent 或已记账背景账户使用的可交易资产供给。它排除销毁、锁仓、协议/桥接约束和无法确认受益人的非活跃托管余额；原始链上总供给仍只作为守恒基准。
+_Avoid_: 原始 totalSupply、全部流通量、未分类余额、即时购买力
+
+**Portfolio Synthesis Distribution**:
+把 Eligible Active Supply 拆分为指定数量合成 Portfolio 的版本化分布规则。默认规则由链上 Holder 的余额分位与集中度校准为可复现的长尾分布，但不复制真实地址身份，也不根据 Role Tag 或 Persona 固定财富。
+_Avoid_: 角色资金比例、地址数字孪生、平均分配默认值
+
+**Portfolio Composition Distribution**:
+在场景级 Token 与 USDx 总额确定后，为各合成 Portfolio 分配资产构成的版本化规则。Token 与 USDx 的个体权重可以相关但不得机械同比，使不同 Agent 可呈现偏 Token、偏 USDx 或相对均衡的初始构成。
+_Avoid_: 角色资产配比、Token 持仓同比 USDx、LLM 决定余额
+
+**Role Tag**:
+附着在 Agent 上的零个或多个身份与分析标签，例如普通参与者、资本型持有者、流动性提供者、资产发行方或信息参与者。Role Tag 只用于展示和分析，不能自动授予 Capability 或重复分配资产。
+_Avoid_: 资金档位、Capability、行为结论
+
 **Agent Component**:
 Agent 作为沙盒参与者时的可配置决策边界；它只根据自身观察与私有状态形成提案，无权直接修改世界事实。
 _Avoid_: 世界执行器、角色子类

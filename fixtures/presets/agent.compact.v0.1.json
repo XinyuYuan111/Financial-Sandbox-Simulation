@@ -3,11 +3,11 @@
   "mode": "live",
   "population": "compact",
   "agent_count": 20,
-  "funding_profile_counts": {
-    "ordinary": 14,
-    "capital": 2,
-    "liquidity": 2,
-    "issuer": 1,
-    "information": 1
+  "archetype_counts": {
+    "ordinary_participant": 14,
+    "capital_holder": 2,
+    "liquidity_provider": 2,
+    "asset_issuer": 1,
+    "information_participant": 1
   }
 }

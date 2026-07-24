@@ -119,6 +119,8 @@ class ArchiveService:
             raise ValidationError("archive exceeds the import size limit")
         with zipfile.ZipFile(path) as archive:
             names = archive.namelist()
+            if len(names) != len(set(names)):
+                raise ValidationError("archive contains duplicate member names")
             if len(names) > 10_000 or any(name.startswith("/") or ".." in Path(name).parts for name in names):
                 raise ValidationError("archive contains unsafe paths")
             expanded_size = sum(item.file_size for item in archive.infolist())
@@ -127,9 +129,14 @@ class ArchiveService:
             if any(item.flag_bits & 0x1 for item in archive.infolist()):
                 raise ValidationError("encrypted archive members are not supported")
             manifest = ArchiveManifest.model_validate(json.loads(archive.read("manifest.json")))
+            expected_names = {"manifest.json", *manifest.file_hashes}
+            unexpected = sorted(set(names) - expected_names)
+            missing = sorted(expected_names - set(names))
+            if unexpected or missing:
+                raise ValidationError(
+                    f"archive members do not match the manifest; unexpected={unexpected}, missing={missing}"
+                )
             for name, expected in manifest.file_hashes.items():
-                if name not in names:
-                    raise ValidationError(f"archive is missing {name}")
                 actual = "sha256:" + hashlib.sha256(archive.read(name)).hexdigest()
                 if actual != expected:
                     raise ValidationError(f"hash mismatch for {name}")

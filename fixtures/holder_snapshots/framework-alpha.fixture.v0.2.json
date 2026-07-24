@@ -6,6 +6,6 @@
   "block_height": 20260723,
   "block_hash": "fixture:framework-alpha-v0.2",
   "finalized": true,
-  "coverage_ratio_milli": 1000
+  "coverage_ratio_milli": 1000,
+  "total_supply": 1000000
 }
-

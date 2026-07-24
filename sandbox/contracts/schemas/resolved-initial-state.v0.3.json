@@ -27,10 +27,6 @@
           "title": "Role Tags",
           "type": "array"
         },
-        "funding_profile": {
-          "title": "Funding Profile",
-          "type": "string"
-        },
         "capabilities": {
           "items": {
             "type": "string"
@@ -47,13 +43,19 @@
           "minimum": 0,
           "title": "Usdx Balance",
           "type": "integer"
+        },
+        "configuration_provenance": {
+          "additionalProperties": {
+            "$ref": "#/$defs/ConfigurationProvenance"
+          },
+          "title": "Configuration Provenance",
+          "type": "object"
         }
       },
       "required": [
         "agent_id",
         "display_name",
         "strategy",
-        "funding_profile",
         "token_balance",
         "usdx_balance"
       ],
@@ -89,17 +91,6 @@
           "title": "Role Tags",
           "type": "array"
         },
-        "funding_profile": {
-          "enum": [
-            "ordinary",
-            "capital",
-            "liquidity",
-            "issuer",
-            "information"
-          ],
-          "title": "Funding Profile",
-          "type": "string"
-        },
         "capability_set": {
           "items": {
             "type": "string"
@@ -133,9 +124,16 @@
         "latency_profile": {
           "$ref": "#/$defs/LatencyProfile"
         },
+        "configuration_provenance": {
+          "additionalProperties": {
+            "$ref": "#/$defs/ConfigurationProvenance"
+          },
+          "title": "Configuration Provenance",
+          "type": "object"
+        },
         "schema_version": {
-          "const": "agent-definition.v0.1",
-          "default": "agent-definition.v0.1",
+          "const": "agent-definition.v0.2",
+          "default": "agent-definition.v0.2",
           "title": "Schema Version",
           "type": "string"
         }
@@ -143,7 +141,6 @@
       "required": [
         "agent_id",
         "display_name",
-        "funding_profile",
         "base_persona",
         "planner_profile_id"
       ],
@@ -341,6 +338,16 @@
           "minimum": 0,
           "title": "Usdx Balance",
           "type": "integer"
+        },
+        "enabled": {
+          "default": true,
+          "title": "Enabled",
+          "type": "boolean"
+        },
+        "two_sided_ready": {
+          "default": false,
+          "title": "Two Sided Ready",
+          "type": "boolean"
         },
         "participation_policy_id": {
           "default": "background.seeded.v0.1",
@@ -598,6 +605,83 @@
       "title": "CognitiveProfile",
       "type": "object"
     },
+    "ConfigurationProvenance": {
+      "additionalProperties": false,
+      "properties": {
+        "source": {
+          "enum": [
+            "default",
+            "archetype",
+            "random",
+            "user",
+            "llm_interpreted"
+          ],
+          "title": "Source",
+          "type": "string"
+        },
+        "source_ref": {
+          "anyOf": [
+            {
+              "maxLength": 256,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Source Ref"
+        },
+        "distribution_version": {
+          "anyOf": [
+            {
+              "maxLength": 128,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Distribution Version"
+        },
+        "seed": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Seed"
+        },
+        "interpreter_request_id": {
+          "anyOf": [
+            {
+              "maxLength": 256,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Interpreter Request Id"
+        },
+        "user_confirmed": {
+          "default": false,
+          "title": "User Confirmed",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "source"
+      ],
+      "title": "ConfigurationProvenance",
+      "type": "object"
+    },
     "DirectiveExecutionCursor": {
       "additionalProperties": false,
       "properties": {
@@ -684,6 +768,238 @@
       "title": "DirectiveExecutionCursor",
       "type": "object"
     },
+    "ExplicitAssetAccount": {
+      "additionalProperties": false,
+      "properties": {
+        "account_id": {
+          "maxLength": 256,
+          "minLength": 1,
+          "title": "Account Id",
+          "type": "string"
+        },
+        "token_amount": {
+          "default": 0,
+          "minimum": 0,
+          "title": "Token Amount",
+          "type": "integer"
+        },
+        "usdx_amount": {
+          "default": 0,
+          "minimum": 0,
+          "title": "Usdx Amount",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "account_id"
+      ],
+      "title": "ExplicitAssetAccount",
+      "type": "object"
+    },
+    "HolderDistribution": {
+      "additionalProperties": false,
+      "properties": {
+        "distribution_version": {
+          "const": "holder-distribution.v0.1",
+          "default": "holder-distribution.v0.1",
+          "title": "Distribution Version",
+          "type": "string"
+        },
+        "active_holder_count": {
+          "minimum": 1,
+          "title": "Active Holder Count",
+          "type": "integer"
+        },
+        "p25_balance": {
+          "minimum": 0,
+          "title": "P25 Balance",
+          "type": "integer"
+        },
+        "p50_balance": {
+          "minimum": 0,
+          "title": "P50 Balance",
+          "type": "integer"
+        },
+        "p75_balance": {
+          "minimum": 0,
+          "title": "P75 Balance",
+          "type": "integer"
+        },
+        "p90_balance": {
+          "minimum": 0,
+          "title": "P90 Balance",
+          "type": "integer"
+        },
+        "p99_balance": {
+          "minimum": 0,
+          "title": "P99 Balance",
+          "type": "integer"
+        },
+        "top_10_concentration_milli": {
+          "maximum": 1000,
+          "minimum": 0,
+          "title": "Top 10 Concentration Milli",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "active_holder_count",
+        "p25_balance",
+        "p50_balance",
+        "p75_balance",
+        "p90_balance",
+        "p99_balance",
+        "top_10_concentration_milli"
+      ],
+      "title": "HolderDistribution",
+      "type": "object"
+    },
+    "HolderSnapshot": {
+      "additionalProperties": false,
+      "properties": {
+        "schema_version": {
+          "const": "holder-snapshot.v0.3",
+          "default": "holder-snapshot.v0.3",
+          "title": "Schema Version",
+          "type": "string"
+        },
+        "provider": {
+          "maxLength": 128,
+          "minLength": 1,
+          "title": "Provider",
+          "type": "string"
+        },
+        "chain_id": {
+          "maxLength": 128,
+          "minLength": 1,
+          "title": "Chain Id",
+          "type": "string"
+        },
+        "target_token": {
+          "maxLength": 128,
+          "minLength": 1,
+          "title": "Target Token",
+          "type": "string"
+        },
+        "block_height": {
+          "minimum": 0,
+          "title": "Block Height",
+          "type": "integer"
+        },
+        "block_hash": {
+          "maxLength": 256,
+          "minLength": 1,
+          "title": "Block Hash",
+          "type": "string"
+        },
+        "finalized": {
+          "const": true,
+          "title": "Finalized",
+          "type": "boolean"
+        },
+        "coverage_ratio_milli": {
+          "exclusiveMinimum": 0,
+          "maximum": 1000,
+          "title": "Coverage Ratio Milli",
+          "type": "integer"
+        },
+        "total_supply": {
+          "exclusiveMinimum": 0,
+          "title": "Total Supply",
+          "type": "integer"
+        },
+        "eligible_active_supply": {
+          "exclusiveMinimum": 0,
+          "title": "Eligible Active Supply",
+          "type": "integer"
+        },
+        "covered_eligible_supply": {
+          "exclusiveMinimum": 0,
+          "title": "Covered Eligible Supply",
+          "type": "integer"
+        },
+        "source_buckets": {
+          "items": {
+            "$ref": "#/$defs/TokenSourceBucket"
+          },
+          "maxItems": 64,
+          "minItems": 1,
+          "title": "Source Buckets",
+          "type": "array"
+        },
+        "holder_distribution": {
+          "$ref": "#/$defs/HolderDistribution"
+        },
+        "content_hash": {
+          "anyOf": [
+            {
+              "maxLength": 256,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Content Hash"
+        },
+        "source_name": {
+          "anyOf": [
+            {
+              "maxLength": 256,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Source Name"
+        },
+        "retrieved_at": {
+          "anyOf": [
+            {
+              "maxLength": 128,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Retrieved At"
+        },
+        "mode": {
+          "anyOf": [
+            {
+              "maxLength": 128,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Mode"
+        }
+      },
+      "required": [
+        "provider",
+        "chain_id",
+        "target_token",
+        "block_height",
+        "block_hash",
+        "finalized",
+        "coverage_ratio_milli",
+        "total_supply",
+        "eligible_active_supply",
+        "covered_eligible_supply",
+        "source_buckets",
+        "holder_distribution"
+      ],
+      "title": "HolderSnapshot",
+      "type": "object"
+    },
     "LatencyProfile": {
       "additionalProperties": false,
       "properties": {
@@ -763,19 +1079,6 @@
           "minimum": 1,
           "title": "Initial Mid Price",
           "type": "integer"
-        },
-        "initial_quote_supply": {
-          "anyOf": [
-            {
-              "minimum": 1,
-              "type": "integer"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Initial Quote Supply"
         }
       },
       "title": "MarketConfig",
@@ -834,6 +1137,70 @@
       "title": "MemoryEntryState",
       "type": "object"
     },
+    "PortfolioSynthesisConfig": {
+      "additionalProperties": false,
+      "properties": {
+        "token_distribution": {
+          "default": "long_tail",
+          "enum": [
+            "long_tail",
+            "equal",
+            "manual"
+          ],
+          "title": "Token Distribution",
+          "type": "string"
+        },
+        "synthesis_distribution_version": {
+          "const": "portfolio-synthesis.v0.1",
+          "default": "portfolio-synthesis.v0.1",
+          "title": "Synthesis Distribution Version",
+          "type": "string"
+        },
+        "composition_distribution_version": {
+          "const": "portfolio-composition.v0.1",
+          "default": "portfolio-composition.v0.1",
+          "title": "Composition Distribution Version",
+          "type": "string"
+        },
+        "quote_coverage_ratio_ppm": {
+          "default": 1000000,
+          "maximum": 10000000,
+          "minimum": 1,
+          "title": "Quote Coverage Ratio Ppm",
+          "type": "integer"
+        },
+        "token_usdx_correlation_milli": {
+          "default": 350,
+          "maximum": 1000,
+          "minimum": 0,
+          "title": "Token Usdx Correlation Milli",
+          "type": "integer"
+        },
+        "explicit_token_budget": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Explicit Token Budget"
+        },
+        "other_explicit_accounts": {
+          "items": {
+            "$ref": "#/$defs/ExplicitAssetAccount"
+          },
+          "maxItems": 128,
+          "title": "Other Explicit Accounts",
+          "type": "array"
+        }
+      },
+      "title": "PortfolioSynthesisConfig",
+      "type": "object"
+    },
     "ReplanTrigger": {
       "additionalProperties": false,
       "properties": {
@@ -875,6 +1242,47 @@
       ],
       "title": "ReplanTrigger",
       "type": "object"
+    },
+    "TokenSourceBucket": {
+      "additionalProperties": false,
+      "properties": {
+        "bucket_id": {
+          "maxLength": 128,
+          "minLength": 1,
+          "title": "Bucket Id",
+          "type": "string"
+        },
+        "category": {
+          "enum": [
+            "eligible_active",
+            "locked",
+            "burned",
+            "protocol",
+            "bridge",
+            "custody_uncertain",
+            "other"
+          ],
+          "title": "Category",
+          "type": "string"
+        },
+        "amount": {
+          "minimum": 0,
+          "title": "Amount",
+          "type": "integer"
+        },
+        "eligible_for_active_market": {
+          "title": "Eligible For Active Market",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "bucket_id",
+        "category",
+        "amount",
+        "eligible_for_active_market"
+      ],
+      "title": "TokenSourceBucket",
+      "type": "object"
     }
   },
   "additionalProperties": false,
@@ -910,12 +1318,13 @@
       "type": "object"
     },
     "chain_snapshot": {
-      "additionalProperties": true,
-      "title": "Chain Snapshot",
-      "type": "object"
+      "$ref": "#/$defs/HolderSnapshot"
     },
     "market": {
       "$ref": "#/$defs/MarketConfig"
+    },
+    "portfolio": {
+      "$ref": "#/$defs/PortfolioSynthesisConfig"
     },
     "agents": {
       "items": {
@@ -936,6 +1345,13 @@
         "$ref": "#/$defs/AgentRuntimeState"
       },
       "title": "Initial Agent States",
+      "type": "array"
+    },
+    "other_explicit_accounts": {
+      "items": {
+        "$ref": "#/$defs/ExplicitAssetAccount"
+      },
+      "title": "Other Explicit Accounts",
       "type": "array"
     },
     "background_market_sector": {
@@ -960,9 +1376,15 @@
       "title": "Warnings",
       "type": "array"
     },
+    "resolution_hash": {
+      "maxLength": 256,
+      "minLength": 8,
+      "title": "Resolution Hash",
+      "type": "string"
+    },
     "schema_version": {
-      "const": "resolved-initial-state.v0.2",
-      "default": "resolved-initial-state.v0.2",
+      "const": "resolved-initial-state.v0.3",
+      "default": "resolved-initial-state.v0.3",
       "title": "Schema Version",
       "type": "string"
     }
@@ -976,8 +1398,10 @@
     "provider_report",
     "chain_snapshot",
     "market",
+    "portfolio",
     "agents",
-    "total_supply"
+    "total_supply",
+    "resolution_hash"
   ],
   "title": "ResolvedInitialState",
   "type": "object"

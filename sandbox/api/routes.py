@@ -11,10 +11,10 @@ from sandbox.api.models import (
     DraftInterventionPlanRequest,
     ExportRequest,
     ForkRequest,
+    InterpretAgentConfigurationRequest,
     InterpretInterventionPlanRequest,
     InterventionPlanCommandRequest,
 )
-from sandbox.contracts.action import ActionContract
 from sandbox.contracts.scenario import ScenarioDraft
 from sandbox.core.ids import new_id
 
@@ -46,6 +46,19 @@ async def provider_preflight(provider_name: str, request: Request) -> dict[str, 
     return await manager(request).provider_preflight(provider_name)
 
 
+@router.get("/agent-archetypes")
+def agent_archetypes(request: Request) -> dict[str, object]:
+    return {"archetypes": manager(request).agent_archetypes()}
+
+
+@router.post("/agent-configurations/interpret")
+async def interpret_agent_configuration(body: InterpretAgentConfigurationRequest, request: Request) -> dict[str, object]:
+    return await manager(request).interpret_agent_configuration(
+        user_intent=body.user_intent,
+        provider_name=body.provider,
+    )
+
+
 @router.post("/scenarios", status_code=201)
 def create_scenario(draft: ScenarioDraft, request: Request) -> dict[str, object]:
     return manager(request).create_scenario(draft)
@@ -59,20 +72,12 @@ async def resolve_scenario(scenario_id: str, request: Request) -> dict[str, obje
 
 @router.post("/runs", status_code=201)
 def create_run(body: CreateRunRequest, request: Request) -> dict[str, object]:
-    return manager(request).create_run(body.scenario_id)
+    return manager(request).create_run(body.scenario_id, body.resolution_hash)
 
 
 @router.get("/runs/{run_id}")
 def get_run(run_id: str, request: Request) -> dict[str, object]:
     return manager(request).get_run(run_id)
-
-
-@router.post("/branches/{branch_id}/actions")
-def submit_action(branch_id: str, action: ActionContract, request: Request) -> dict[str, object]:
-    if action.branch_id != branch_id:
-        from sandbox.core.errors import ValidationError
-        raise ValidationError("action branch_id does not match the URL", field_path="branch_id")
-    return manager(request).submit_action(action)
 
 
 @router.post("/branches/{branch_id}/commands")

@@ -12,6 +12,7 @@ from sandbox.contracts.action import ActionContract
 from sandbox.contracts.scenario import ScenarioDraft
 from sandbox.control.initialization import Initializer
 from sandbox.control.run_manager import RunManager
+from sandbox.core.errors import ValidationError
 from sandbox.core.ids import new_id
 from sandbox.store.archive import ArchiveService
 from sandbox.store.sqlite import SQLiteStore
@@ -27,13 +28,14 @@ class FrameworkAlphaTests(unittest.TestCase):
         self.manager = RunManager(self.store, initializer, archive, "0.2.0")
 
     def tearDown(self) -> None:
+        self.manager.close()
         self.store.close()
         self.temp.cleanup()
 
     def create_running_fixture(self) -> tuple[str, str]:
         scenario = self.manager.create_scenario(ScenarioDraft())
-        asyncio.run(self.manager.resolve_scenario(str(scenario["scenario_id"])))
-        run = self.manager.create_run(str(scenario["scenario_id"]))
+        resolved = asyncio.run(self.manager.resolve_scenario(str(scenario["scenario_id"])))
+        run = self.manager.create_run(str(scenario["scenario_id"]), resolved.resolution_hash)
         run_id = str(run["run_id"])
         branch_id = str(run["branches"][0]["branch_id"])
         self.manager.command(branch_id, "start-1", "start")
@@ -150,6 +152,15 @@ class FrameworkAlphaTests(unittest.TestCase):
         self.assertEqual(errors, [])
         self.assertEqual(self.manager.branch_projection(child_a)["fixture_step"], 1)
         self.assertEqual(self.manager.branch_projection(child_b)["fixture_step"], 1)
+
+    def test_archive_rejects_unhashed_extra_checkpoint(self) -> None:
+        run_id, _ = self.create_running_fixture()
+        archive_path = self.root / "tampered.sandbox"
+        self.manager.export_archive(run_id, archive_path)
+        with zipfile.ZipFile(archive_path, "a", compression=zipfile.ZIP_DEFLATED) as archive:
+            archive.writestr("checkpoints/unhashed.json", "{}")
+        with self.assertRaises(ValidationError):
+            self.manager.archive_service.validate_archive(archive_path)
 
 
 if __name__ == "__main__":

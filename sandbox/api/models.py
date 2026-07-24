@@ -10,6 +10,13 @@ from sandbox.contracts.intervention import DirectorAccessScope, InterventionPlan
 class CreateRunRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     scenario_id: str
+    resolution_hash: str = Field(min_length=8, max_length=256)
+
+
+class InterpretAgentConfigurationRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    user_intent: str = Field(min_length=1, max_length=4_000)
+    provider: Literal["openai"] = "openai"
 
 
 class CommandRequest(BaseModel):

@@ -11,7 +11,7 @@ class Settings:
     database_path: Path
     frontend_dist: Path
     archive_dir: Path
-    runtime_version: str = "0.2.0"
+    runtime_version: str = "0.3.0"
     host: str = "127.0.0.1"
     openai_api_key: str | None = field(default=None, repr=False)
     openai_model: str = "gpt-5.6-terra"

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
-from pydantic import BaseModel, ConfigDict, Field
+from typing import Any
+
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 class CognitiveProfile(BaseModel):
@@ -19,8 +21,15 @@ class AgentState(BaseModel):
     display_name: str
     strategy: str
     role_tags: list[str]
-    funding_profile: str
     capabilities: list[str]
     base_cognitive_profile: CognitiveProfile = Field(default_factory=CognitiveProfile)
     cognitive_budget_state: dict[str, int] = Field(default_factory=lambda: {"plans_remaining": 2, "searches_remaining": 5})
 
+    @model_validator(mode="before")
+    @classmethod
+    def migrate_funding_profile(cls, value: Any) -> Any:
+        if isinstance(value, dict) and "funding_profile" in value:
+            migrated = dict(value)
+            migrated.pop("funding_profile", None)
+            return migrated
+        return value

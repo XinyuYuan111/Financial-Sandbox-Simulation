@@ -7,11 +7,14 @@ export function MarketWorkspace({ projection }: { projection: Projection }) {
   const volume = projection.market.trades.reduce((sum, trade) => sum + trade.quantity, 0)
   const bestBid = projection.market.bids[0]?.price
   const bestAsk = projection.market.asks[0]?.price
+  const spread = bestBid != null && bestAsk != null ? bestAsk - bestBid : null
+  const midpoint = bestBid != null && bestAsk != null ? (bestBid + bestAsk) / 2 : null
+  const spreadBps = spread !== null && midpoint ? spread * 10_000 / midpoint : null
   return <div className="market-workspace">
     <section className="metric-strip">
       <div><span>最新成交</span><strong>{last?.price ?? '-'}</strong><small>USDx ticks</small></div>
       <div><span>累计成交量</span><strong>{formatInteger(volume)}</strong><small>Token units</small></div>
-      <div><span>最优买 / 卖</span><strong>{bestBid ?? '-'} <i>/</i> {bestAsk ?? '-'}</strong><small>spread {bestBid && bestAsk ? bestAsk - bestBid : '-'}</small></div>
+      <div><span>最优买 / 卖</span><strong>{bestBid ?? '-'} <i>/</i> {bestAsk ?? '-'}</strong><small>{spread !== null && spreadBps !== null ? `价差 ${spread} ticks · ${spreadBps.toFixed(2)} bps` : '价差 -'}</small></div>
       <div><span>模拟时间</span><strong>{formatTime(projection.sim_time_us)}</strong><small>cursor {projection.cursor}</small></div>
     </section>
     <div className="market-grid">
@@ -21,7 +24,7 @@ export function MarketWorkspace({ projection }: { projection: Projection }) {
       </section>
       <section className="workspace-panel tape-panel">
         <div className="panel-heading"><div><h2>成交带</h2><p>最近 {projection.market.trades.length} 笔</p></div><ReceiptText size={18} /></div>
-        {projection.market.trades.length ? <div className="table-scroll"><table><thead><tr><th>价格</th><th>数量</th><th>买方</th><th>卖方</th></tr></thead><tbody>{[...projection.market.trades].reverse().slice(0, 14).map(trade => <tr key={trade.trade_id}><td><strong>{trade.price}</strong></td><td>{formatInteger(trade.quantity)}</td><td>{shortId(trade.buyer_id)}</td><td>{shortId(trade.seller_id)}</td></tr>)}</tbody></table></div> : <EmptyState title="暂无成交" detail="执行 Fixture 步进或运行规划请求后，成交会出现在这里。" />}
+        {projection.market.trades.length ? <div className="table-scroll"><table><thead><tr><th>价格</th><th>数量</th><th>买方</th><th>卖方</th></tr></thead><tbody>{[...projection.market.trades].reverse().slice(0, 14).map(trade => <tr key={trade.trade_id}><td><strong>{trade.price}</strong></td><td>{formatInteger(trade.quantity)}</td><td>{shortId(trade.buyer_id)}</td><td>{shortId(trade.seller_id)}</td></tr>)}</tbody></table></div> : <EmptyState title="暂无成交" detail="等待订单撮合。" />}
       </section>
     </div>
   </div>

@@ -3,29 +3,39 @@ from __future__ import annotations
 import hashlib
 from dataclasses import dataclass
 
-from sandbox.contracts.agent import (
-    AgentDefinition,
-    AttentionProfile,
-    BasePersona,
-    CognitiveProfile,
-    LatencyProfile,
+from sandbox.agents.configuration import CompiledAgentDraft, compile_agent_configuration
+from sandbox.contracts.agent import AgentDefinition
+from sandbox.contracts.agent_configuration import AgentConfigurationDraft
+from sandbox.contracts.scenario import (
+    AgentConfig,
+    BackgroundMarketSector,
+    HolderDistribution,
+    PortfolioSynthesisConfig,
 )
-from sandbox.contracts.scenario import AgentConfig, BackgroundMarketSector
-from sandbox.core.rng import NamedRandomStreams
+from sandbox.core.errors import ValidationError
 
 
 PRESET_COUNTS: dict[str, dict[str, int]] = {
-    "smoke": {"ordinary": 1, "capital": 1, "liquidity": 1, "information": 1},
-    "compact": {"ordinary": 14, "capital": 2, "liquidity": 2, "issuer": 1, "information": 1},
-    "standard": {"ordinary": 180, "capital": 8, "liquidity": 6, "issuer": 1, "information": 5},
-}
-
-PROFILE_SHARES = {
-    "ordinary": 75_000,
-    "capital": 500_000,
-    "liquidity": 300_000,
-    "issuer": 100_000,
-    "information": 25_000,
+    "smoke": {
+        "ordinary_participant": 1,
+        "capital_holder": 1,
+        "liquidity_provider": 1,
+        "information_participant": 1,
+    },
+    "compact": {
+        "ordinary_participant": 14,
+        "capital_holder": 2,
+        "liquidity_provider": 2,
+        "asset_issuer": 1,
+        "information_participant": 1,
+    },
+    "standard": {
+        "ordinary_participant": 180,
+        "capital_holder": 8,
+        "liquidity_provider": 6,
+        "asset_issuer": 1,
+        "information_participant": 5,
+    },
 }
 
 
@@ -37,15 +47,14 @@ class PopulationResult:
     preview: dict[str, object]
 
 
-def _draw_milli(streams: NamedRandomStreams, name: str, minimum: int, maximum: int) -> int:
-    value, _ = streams.random(name)
-    return minimum + int(value * (maximum - minimum + 1))
-
-
 def _largest_remainder(total: int, weights: list[int]) -> list[int]:
     if not weights:
+        if total:
+            raise ValidationError("cannot allocate a positive amount to an empty population")
         return []
     denominator = sum(weights)
+    if denominator <= 0:
+        raise ValidationError("allocation weights must contain a positive value")
     base = [(total * weight) // denominator for weight in weights]
     remainder = total - sum(base)
     order = sorted(
@@ -57,29 +66,88 @@ def _largest_remainder(total: int, weights: list[int]) -> list[int]:
     return base
 
 
-def _ranked_weights(seed: int, profile: str, count: int) -> list[int]:
-    ranked = list(range(count))
-    ranked.sort(
-        key=lambda index: hashlib.sha256(f"{seed}:initialization.assets:{profile}:{index}".encode()).digest()
+def _stable_fraction(seed: int, namespace: str, agent_id: str) -> int:
+    digest = hashlib.sha256(f"{seed}:{namespace}:{agent_id}".encode()).digest()
+    return int.from_bytes(digest[:8], "big") % 1_000_000
+
+
+def _holder_weight(seed: int, agent_id: str, distribution: HolderDistribution) -> int:
+    draw = _stable_fraction(seed, "portfolio-synthesis.v0.1", agent_id)
+    if draw < 500_000:
+        base = distribution.p25_balance
+    elif draw < 750_000:
+        base = distribution.p50_balance
+    elif draw < 900_000:
+        base = distribution.p75_balance
+    elif draw < 980_000:
+        base = distribution.p90_balance
+    else:
+        base = distribution.p99_balance
+    concentration_boost = 1_000 + (
+        distribution.top_10_concentration_milli
+        * _stable_fraction(seed, "portfolio-concentration.v0.1", agent_id)
+        // 1_000_000
     )
-    weights_by_rank = [max(1, 1_000_000 // ((rank + 3) ** 2)) for rank in range(count)]
-    weights = [0] * count
-    for rank, index in enumerate(ranked):
-        weights[index] = weights_by_rank[rank]
-    return weights
+    return max(1, base * concentration_boost // 1_000)
 
 
-def _allocate_by_profile(total: int, profiles: list[str], seed: int, asset: str) -> list[int]:
-    present = list(dict.fromkeys(profiles))
-    profile_totals = _largest_remainder(total, [PROFILE_SHARES[profile] for profile in present])
-    totals_by_profile = dict(zip(present, profile_totals, strict=True))
-    output = [0] * len(profiles)
-    for profile in present:
-        indexes = [index for index, item in enumerate(profiles) if item == profile]
-        weights = _ranked_weights(seed, f"{asset}:{profile}", len(indexes))
-        values = _largest_remainder(totals_by_profile[profile], weights)
-        for index, value in zip(indexes, values, strict=True):
-            output[index] = value
+def _independent_composition_weight(seed: int, agent_id: str) -> int:
+    draw = _stable_fraction(seed, "portfolio-composition.v0.1", agent_id)
+    return max(1, 100_000 + draw)
+
+
+def _preset_archetypes(preset: str, count: int | None) -> list[str]:
+    configured = PRESET_COUNTS.get(preset)
+    if configured is None:
+        raise ValidationError(f"unknown population preset '{preset}'")
+    default_count = sum(configured.values())
+    target = count or default_count
+    if target == default_count:
+        return [archetype for archetype, quantity in configured.items() for _ in range(quantity)]
+    archetypes = list(configured)
+    normalized = _largest_remainder(target, [configured[item] for item in archetypes])
+    return [archetype for archetype, quantity in zip(archetypes, normalized, strict=True) for _ in range(quantity)]
+
+
+def preset_configuration_drafts(
+    *,
+    preset: str,
+    agent_count: int | None,
+    planner_kind: str,
+) -> list[AgentConfigurationDraft]:
+    archetypes = _preset_archetypes(preset, agent_count)
+    return [
+        AgentConfigurationDraft(
+            draft_id=f"preset-{index:04d}",
+            input_mode="random",
+            agent_id=f"agent_{index:04d}",
+            display_name=f"Market Participant {index:03d}",
+            archetype_ids=[archetype],
+        )
+        for index, archetype in enumerate(archetypes, start=1)
+    ]
+
+
+def _allocate_with_manual_overrides(
+    *,
+    total: int,
+    weights: list[int],
+    manual: list[int | None],
+    field_name: str,
+) -> list[int]:
+    manual_total = sum(value or 0 for value in manual)
+    if manual_total > total:
+        raise ValidationError(f"manual {field_name} amounts exceed the explicit allocation budget")
+    output = [value or 0 for value in manual]
+    remaining_indexes = [index for index, value in enumerate(manual) if value is None]
+    remaining = total - manual_total
+    if not remaining_indexes:
+        if remaining:
+            raise ValidationError(f"fully manual {field_name} amounts must equal the explicit allocation budget")
+        return output
+    distributed = _largest_remainder(remaining, [weights[index] for index in remaining_indexes])
+    for index, value in zip(remaining_indexes, distributed, strict=True):
+        output[index] = value
     return output
 
 
@@ -87,96 +155,207 @@ def generate_population(
     *,
     seed: int,
     preset: str,
-    total_token: int,
-    total_usdx: int,
+    agent_count: int | None,
+    eligible_active_supply: int,
+    covered_eligible_supply: int,
+    total_token_supply: int,
+    active_usdx_supply: int,
+    holder_distribution: HolderDistribution,
+    portfolio: PortfolioSynthesisConfig,
     planner_kind: str,
+    drafts: list[AgentConfigurationDraft] | None = None,
 ) -> PopulationResult:
-    counts = PRESET_COUNTS.get(preset)
-    if counts is None:
-        raise ValueError(f"unknown population preset '{preset}'")
-    streams = NamedRandomStreams(seed)
-    profiles = [profile for profile, count in counts.items() for _ in range(count)]
-    explicit_token = total_token * 700_000 // 1_000_000
-    explicit_usdx = total_usdx * 700_000 // 1_000_000
-    token_values = _allocate_by_profile(explicit_token, profiles, seed, "token")
-    usdx_values = _allocate_by_profile(explicit_usdx, profiles, seed, "usdx")
+    source_drafts = drafts or preset_configuration_drafts(
+        preset=preset,
+        agent_count=agent_count,
+        planner_kind=planner_kind,
+    )
+    if not source_drafts:
+        raise ValidationError("at least one explicit Agent is required")
+    compiled: list[CompiledAgentDraft] = [
+        compile_agent_configuration(
+            draft,
+            seed=seed,
+            ordinal=index,
+            planner_kind=planner_kind,
+        )
+        for index, draft in enumerate(source_drafts, start=1)
+    ]
+    definitions = [item.definition for item in compiled]
+    agent_ids = [item.agent_id for item in definitions]
+    if len(agent_ids) != len(set(agent_ids)):
+        raise ValidationError("compiled agent_id values must be unique")
 
-    definitions: list[AgentDefinition] = []
-    allocations: list[AgentConfig] = []
-    for index, profile in enumerate(profiles, start=1):
-        agent_id = f"agent_{index:04d}"
-        role_tags = [profile]
-        capabilities = ["market.trade", "information.read"]
-        if profile == "liquidity":
-            capabilities.append("market.quote")
-        if profile in {"information", "issuer"}:
-            capabilities.append("information.publish")
-        persona = BasePersona(
-            template_id="seeded_market_participant",
-            private_goals=["preserve_capital", "pursue_risk_adjusted_return"],
-            risk_tolerance_milli=_draw_milli(streams, f"agent.{agent_id}.persona", 250, 850),
-            time_horizon=("short", "medium", "long")[index % 3],
-            loss_aversion_milli=_draw_milli(streams, f"agent.{agent_id}.persona", 250, 900),
-            trend_bias_milli=_draw_milli(streams, f"agent.{agent_id}.persona", 100, 900),
-            skepticism_milli=_draw_milli(streams, f"agent.{agent_id}.persona", 100, 900),
-            communication_propensity_milli=_draw_milli(streams, f"agent.{agent_id}.persona", 50, 850),
-            bounded_notes="Seeded independent participant.",
+    other_token = sum(account.token_amount for account in portfolio.other_explicit_accounts)
+    other_usdx = sum(account.usdx_amount for account in portfolio.other_explicit_accounts)
+    available_token = eligible_active_supply - other_token
+    available_usdx = active_usdx_supply - other_usdx
+    if available_token < 0:
+        raise ValidationError("other explicit Token accounts exceed Eligible Active Supply")
+    if available_usdx < 0:
+        raise ValidationError("other explicit USDx accounts exceed active USDx supply")
+
+    holder_weights = [_holder_weight(seed, agent_id, holder_distribution) for agent_id in agent_ids]
+    raw_sample_total = sum(holder_weights)
+    sampled_budget = min(raw_sample_total, covered_eligible_supply, available_token)
+    manual_token = [item.token_amount for item in compiled]
+    manual_token_total = sum(value or 0 for value in manual_token)
+    if manual_token_total > available_token:
+        raise ValidationError("manual Agent Token amounts exceed Eligible Active Supply")
+
+    if all(value is not None for value in manual_token):
+        explicit_token_budget = manual_token_total
+        token_values = [int(value) for value in manual_token if value is not None]
+    elif portfolio.token_distribution == "manual":
+        if any(value is None for value in manual_token):
+            raise ValidationError("manual Token allocation requires an amount for every Agent")
+        explicit_token_budget = manual_token_total
+        token_values = [int(value) for value in manual_token if value is not None]
+    else:
+        explicit_token_budget = portfolio.explicit_token_budget if portfolio.explicit_token_budget is not None else sampled_budget
+        explicit_token_budget = max(explicit_token_budget, manual_token_total)
+        if explicit_token_budget > available_token:
+            raise ValidationError("explicit Agent Token budget exceeds Eligible Active Supply")
+        weights = [1] * len(compiled) if portfolio.token_distribution == "equal" else holder_weights
+        token_values = _allocate_with_manual_overrides(
+            total=explicit_token_budget,
+            weights=weights,
+            manual=manual_token,
+            field_name="Token",
         )
-        definition = AgentDefinition(
-            agent_id=agent_id,
-            display_name=f"Market Participant {index:03d}",
-            public_identity=f"Independent {profile} participant",
-            role_tags=role_tags,
-            funding_profile=profile,  # type: ignore[arg-type]
-            capability_set=capabilities,
-            base_persona=persona,
-            planner_profile_id=f"{planner_kind}.default.v0.1",
-            cognitive_profile=CognitiveProfile(
-                context_capacity=6_000 + _draw_milli(streams, f"agent.{agent_id}.cognition", 0, 4_000),
-                memory_search_limit=3 + _draw_milli(streams, f"agent.{agent_id}.cognition", 0, 3),
-            ),
-            attention_profile=AttentionProfile(
-                information_capacity=12 + _draw_milli(streams, f"agent.{agent_id}.attention", 0, 16),
-                minimum_salience=_draw_milli(streams, f"agent.{agent_id}.attention", 0, 30),
-            ),
-            latency_profile=LatencyProfile(
-                planning_latency_us=500_000 + _draw_milli(streams, f"agent.{agent_id}.latency", 0, 2_000_000),
-                action_latency_us=100_000 + _draw_milli(streams, f"agent.{agent_id}.latency", 0, 900_000),
-            ),
+
+    token_weight_ppm = _largest_remainder(1_000_000, [max(1, value) for value in token_values])
+    independent_weight_ppm = _largest_remainder(
+        1_000_000,
+        [_independent_composition_weight(seed, agent_id) for agent_id in agent_ids],
+    )
+    correlation = portfolio.token_usdx_correlation_milli
+    composition_weights = [
+        max(1, correlation * token_weight + (1_000 - correlation) * independent_weight)
+        for token_weight, independent_weight in zip(token_weight_ppm, independent_weight_ppm, strict=True)
+    ]
+    default_explicit_usdx = (
+        active_usdx_supply * explicit_token_budget // eligible_active_supply
+        if eligible_active_supply
+        else 0
+    )
+    manual_usdx = [item.usdx_amount for item in compiled]
+    manual_usdx_total = sum(value or 0 for value in manual_usdx)
+    if manual_usdx_total > available_usdx:
+        raise ValidationError("manual Agent USDx amounts exceed active USDx supply")
+    explicit_usdx_budget = (
+        manual_usdx_total
+        if all(value is not None for value in manual_usdx)
+        else max(default_explicit_usdx, manual_usdx_total)
+    )
+    if explicit_usdx_budget > available_usdx:
+        explicit_usdx_budget = available_usdx
+    usdx_values = _allocate_with_manual_overrides(
+        total=explicit_usdx_budget,
+        weights=composition_weights,
+        manual=manual_usdx,
+        field_name="USDx",
+    )
+
+    allocations = [
+        AgentConfig(
+            agent_id=item.definition.agent_id,
+            display_name=item.definition.display_name,
+            strategy=item.strategy,  # type: ignore[arg-type]
+            role_tags=item.definition.role_tags,
+            capabilities=item.definition.capability_set,
+            token_balance=token,
+            usdx_balance=usdx,
+            configuration_provenance={
+                **item.portfolio_provenance,
+                "portfolio.token_balance": item.portfolio_provenance.get(
+                    "portfolio.token_amount",
+                    item.definition.configuration_provenance["agent_id"].model_copy(update={
+                        "source": "random" if item.input_mode == "random" else "default",
+                        "source_ref": portfolio.synthesis_distribution_version,
+                        "distribution_version": portfolio.synthesis_distribution_version,
+                        "seed": seed,
+                    }),
+                ),
+                "portfolio.usdx_balance": item.portfolio_provenance.get(
+                    "portfolio.usdx_amount",
+                    item.definition.configuration_provenance["agent_id"].model_copy(update={
+                        "source": "random" if item.input_mode == "random" else "default",
+                        "source_ref": portfolio.composition_distribution_version,
+                        "distribution_version": portfolio.composition_distribution_version,
+                        "seed": seed,
+                    }),
+                ),
+            },
         )
-        definitions.append(definition)
-        allocations.append(
-            AgentConfig(
-                agent_id=agent_id,
-                display_name=definition.display_name,
-                strategy=planner_kind,  # type: ignore[arg-type]
-                role_tags=role_tags,
-                funding_profile=profile,
-                capabilities=capabilities,
-                token_balance=token_values[index - 1],
-                usdx_balance=usdx_values[index - 1],
-            )
-        )
+        for item, token, usdx in zip(compiled, token_values, usdx_values, strict=True)
+    ]
 
     background = BackgroundMarketSector(
-        token_balance=total_token - explicit_token,
-        usdx_balance=total_usdx - explicit_usdx,
+        token_balance=available_token - sum(token_values),
+        usdx_balance=available_usdx - sum(usdx_values),
+        enabled=True,
+        two_sided_ready=(available_token - sum(token_values) > 0 and available_usdx - sum(usdx_values) > 0),
         participation_policy_id="background.seeded.v0.1",
     )
+    if not background.two_sided_ready:
+        raise ValidationError("background market requires positive residual Token and USDx balances")
+
+    sorted_token = sorted(token_values, reverse=True)
+    sorted_usdx = sorted(usdx_values, reverse=True)
     preview = {
-        "preset": preset,
+        "preset": preset if drafts is None else "custom-drafts",
         "seed": seed,
         "agent_count": len(definitions),
-        "funding_profile_counts": counts,
-        "active_capital_ppm": {"explicit_agents": 700_000, "background": 300_000},
-        "assets": {
-            "explicit_token": explicit_token,
-            "explicit_usdx": explicit_usdx,
-            "background_token": background.token_balance,
-            "background_usdx": background.usdx_balance,
-            "token_conserved": sum(token_values) + background.token_balance == total_token,
-            "usdx_conserved": sum(usdx_values) + background.usdx_balance == total_usdx,
+        "archetype_counts": {
+            archetype: sum(archetype in item.archetype_ids for item in compiled)
+            for archetype in sorted({archetype for item in compiled for archetype in item.archetype_ids})
         },
-        "named_rng_streams": sorted(streams.snapshot()),
+        "assets": {
+            "token_total_before": total_token_supply,
+            "eligible_active_token_supply": eligible_active_supply,
+            "covered_eligible_token_supply": covered_eligible_supply,
+            "inactive_token_supply": total_token_supply - eligible_active_supply,
+            "explicit_agent_token": sum(token_values),
+            "other_explicit_token": other_token,
+            "background_token": background.token_balance,
+            "active_usdx_supply": active_usdx_supply,
+            "explicit_agent_usdx": sum(usdx_values),
+            "other_explicit_usdx": other_usdx,
+            "background_usdx": background.usdx_balance,
+            "token_total_after": sum(token_values) + other_token + background.token_balance + total_token_supply - eligible_active_supply,
+            "usdx_total_before": active_usdx_supply,
+            "usdx_total_after": sum(usdx_values) + other_usdx + background.usdx_balance,
+            "token_conserved": sum(token_values) + other_token + background.token_balance + total_token_supply - eligible_active_supply == total_token_supply,
+            "usdx_conserved": sum(usdx_values) + other_usdx + background.usdx_balance == active_usdx_supply,
+            "background_derivation": "eligible_or_active_supply_minus_explicit_accounts",
+        },
+        "portfolio_distribution": {
+            "synthesis_version": portfolio.synthesis_distribution_version,
+            "composition_version": portfolio.composition_distribution_version,
+            "holder_distribution_version": holder_distribution.distribution_version,
+            "token_distribution": portfolio.token_distribution,
+            "token_usdx_correlation_milli": portfolio.token_usdx_correlation_milli,
+            "raw_sample_total": raw_sample_total,
+            "sample_scaled": raw_sample_total > sampled_budget,
+            "manual_token_overrides": sum(value is not None for value in manual_token),
+            "manual_usdx_overrides": sum(value is not None for value in manual_usdx),
+            "token_min": min(token_values),
+            "token_max": max(token_values),
+            "usdx_min": min(usdx_values),
+            "usdx_max": max(usdx_values),
+            "token_top_5": sorted_token[:5],
+            "usdx_top_5": sorted_usdx[:5],
+            "seed": seed,
+        },
+        "background": {
+            "enabled": background.enabled,
+            "two_sided_ready": background.two_sided_ready,
+        },
+        "configuration": {
+            "compiler_version": "agent-configuration-compiler.v0.1",
+            "input_modes": sorted({item.input_mode for item in compiled}),
+            "ambiguities": [ambiguity for item in compiled for ambiguity in item.ambiguities],
+        },
     }
     return PopulationResult(definitions, allocations, background, preview)

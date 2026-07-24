@@ -51,3 +51,19 @@ _Avoid_: World 事件、历史回滚、Agent 仍在后台运行
 **Observation Barrier**:
 同一虚拟时刻的一组权威效果完成提交、相应 Agent 决策机会尚未形成的世界版本边界；恢复分支时，暂停期间形成的观察先在该边界处理，再继续后续事件。
 _Avoid_: 现实时间窗口、可被 Provider 返回穿透的边界、未提交状态快照
+
+**Quote Coverage Ratio**:
+用于把 Eligible Active Supply 按初始价格折算为场景级活跃 USDx 总量的可配置市场资金参数。它只决定合成报价资产总量，不由 Agent 类型、Persona 或 LLM 决定，也不规定各 Agent 的个体 USDx 余额。
+_Avoid_: 链上稳定币余额、角色资金比例、Agent 购买力标签
+
+**Background Market Sector**:
+拥有 Ledger 真实账户、代表未显式建模参与者活动的环境市场部门。初始化时其可用库存必须同时包含 Token 与 USDx，才能分别支持卖单与买单；所有挂单、锁定、成交、费用和耗尽都走与 Agent 相同的市场和结算规则。
+_Avoid_: Background Agent、无限流动性、未记账订单生成器、价格稳定器
+
+**Initialization Asset Conservation**:
+初始化只在 Agent、Background Market Sector、费用账户、非活跃储备和其他合法来源桶之间分配既定 Token 与 USDx；每种资产在分配前后的总量必须分别相等。除显式记录的发行或销毁事实外，初始化不得增发、丢失或静默缩放资产。
+_Avoid_: 净值守恒替代逐资产守恒、隐式 mint、余额残差修复
+
+**Background Remainder Allocation**:
+显式 Agent 按已确认配置分配 Token 与 USDx 后，各资产池中剩余的可交易余额归入 Background Market Sector；它不是按固定比例或订单需求额外划拨的资金。背景只有同时拥有已记账的 Token 与 USDx 时，才具备双边订单能力。
+_Avoid_: 订单需求增发、固定背景比例、背景无限补资、把剩余锁仓余额当作库存

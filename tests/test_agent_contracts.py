@@ -42,12 +42,14 @@ class AgentContractTests(unittest.TestCase):
         definition = AgentDefinition(
             agent_id="agent_1",
             display_name="Agent One",
-            funding_profile="ordinary",
             capability_set=["market.trade"],
             base_persona=persona(),
             planner_profile_id="rule.default.v0.1",
         )
         self.assertNotIn("balance", definition.model_dump())
+        self.assertNotIn("funding_profile", definition.model_dump())
+        with self.assertRaises(PydanticValidationError):
+            AgentDefinition.model_validate({**definition.model_dump(), "funding_profile": "ordinary"})
         with self.assertRaises(PydanticValidationError):
             AgentDefinition.model_validate({**definition.model_dump(), "token_balance": 1})
 

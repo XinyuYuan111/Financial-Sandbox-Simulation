@@ -6,6 +6,11 @@ from pathlib import Path
 from sandbox.contracts.action import ActionContract
 from sandbox.contracts.intervention import DirectorPlanCandidate, DirectorProviderRequest, InterventionPlan
 from sandbox.contracts.agent import ActionReceipt, AgentDecision, AgentDefinition, AgentRuntimeState, DecisionOutcome
+from sandbox.contracts.agent_configuration import (
+    AgentConfigurationDraft,
+    AgentConfigurationInterpretationCandidate,
+    AgentConfigurationProviderRequest,
+)
 from sandbox.contracts.event import EventEnvelope
 from sandbox.contracts.observation import ObservationPacket
 from sandbox.contracts.scenario import ResolvedInitialState, ScenarioDraft
@@ -17,11 +22,14 @@ MODELS = {
     "action.v0.2.json": ActionContract,
     "event.v0.2.json": EventEnvelope,
     "observation.v0.3.json": ObservationPacket,
-    "scenario.v0.2.json": ScenarioDraft,
-    "resolved-initial-state.v0.2.json": ResolvedInitialState,
+    "scenario.v0.3.json": ScenarioDraft,
+    "resolved-initial-state.v0.3.json": ResolvedInitialState,
     "checkpoint.v0.2.json": Checkpoint,
     "archive.v0.2.json": ArchiveManifest,
-    "agent-definition.v0.1.json": AgentDefinition,
+    "agent-definition.v0.2.json": AgentDefinition,
+    "agent-configuration-draft.v0.1.json": AgentConfigurationDraft,
+    "agent-configuration-provider-request.v0.1.json": AgentConfigurationProviderRequest,
+    "agent-configuration-interpretation.v0.1.json": AgentConfigurationInterpretationCandidate,
     "agent-runtime-state.v0.1.json": AgentRuntimeState,
     "agent-decision.v0.1.json": AgentDecision,
     "decision-outcome.v0.1.json": DecisionOutcome,

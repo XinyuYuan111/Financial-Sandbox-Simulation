@@ -6,6 +6,7 @@ from typing import Callable, Protocol
 
 from sandbox.contracts.planning import LLMRecord, PlanningProviderRequest, PlanningResultCandidate
 from sandbox.contracts.intervention import DirectorPlanCandidate, DirectorProviderRequest
+from sandbox.contracts.agent_configuration import AgentConfigurationInterpretationCandidate, AgentConfigurationProviderRequest
 from sandbox.core.errors import ValidationError
 
 
@@ -30,6 +31,13 @@ class ProviderAdapter(Protocol):
         *,
         record_raw: RecordCallback | None = None,
     ) -> DirectorPlanCandidate: ...
+
+    async def interpret_agent_configuration(
+        self,
+        request: AgentConfigurationProviderRequest,
+        *,
+        record_raw: RecordCallback | None = None,
+    ) -> AgentConfigurationInterpretationCandidate: ...
 
 
 @dataclass(slots=True)
@@ -85,5 +93,21 @@ class LLMGateway:
         method = getattr(adapter, "create_intervention_plan", None)
         if method is None:
             raise ValidationError(f"LLM provider '{provider_name}' does not support Scenario Director output")
+        async with self._pool():
+            return await method(request, record_raw=record_raw)
+
+    async def interpret_agent_configuration(
+        self,
+        provider_name: str,
+        request: AgentConfigurationProviderRequest,
+        *,
+        record_raw: RecordCallback | None = None,
+    ) -> AgentConfigurationInterpretationCandidate:
+        adapter = self.adapters.get(provider_name)
+        if adapter is None:
+            raise ValidationError(f"LLM provider '{provider_name}' is not configured")
+        method = getattr(adapter, "interpret_agent_configuration", None)
+        if method is None:
+            raise ValidationError(f"LLM provider '{provider_name}' does not support Agent configuration interpretation")
         async with self._pool():
             return await method(request, record_raw=record_raw)

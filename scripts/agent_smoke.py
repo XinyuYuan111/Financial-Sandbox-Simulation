@@ -44,7 +44,7 @@ async def run(args: argparse.Namespace) -> dict[str, object]:
         )
         gateway = LLMGateway({"openai": adapter}, max_in_flight=4)
         initializer = Initializer({}, gateway)
-        manager = RunManager(store, initializer, ArchiveService(store, "0.2.0"), "0.2.0")
+        manager = RunManager(store, initializer, ArchiveService(store, "0.3.0"), "0.3.0")
         preflight = await gateway.preflight("openai")
         scenario = manager.create_scenario(ScenarioDraft(
             name="4-Agent OpenAI smoke",
@@ -56,7 +56,7 @@ async def run(args: argparse.Namespace) -> dict[str, object]:
             population=PopulationConfig(preset="smoke"),
         ))
         resolved = await manager.resolve_scenario(str(scenario["scenario_id"]))
-        run_record = manager.create_run(str(scenario["scenario_id"]))
+        run_record = manager.create_run(str(scenario["scenario_id"]), resolved.resolution_hash)
         run_id = str(run_record["run_id"])
         branch_id = str(run_record["branches"][0]["branch_id"])
         manager.command(branch_id, "smoke-start", "start")

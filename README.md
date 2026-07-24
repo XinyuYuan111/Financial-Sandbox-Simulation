@@ -4,6 +4,24 @@
 
 下面的步骤从一台尚未安装开发依赖的新 Windows 电脑开始。
 
+## 快速运行（Windows）
+
+已经安装 Git、Python 3.12+ 和 Node.js 22+ 的用户，可以在 PowerShell 中依次执行：
+
+```powershell
+git clone https://github.com/XinyuYuan111/FinancialSandboxSimulation.git
+cd FinancialSandboxSimulation
+python -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -e ".[openai]"
+Push-Location frontend
+npm ci
+npm run build
+Pop-Location
+.\.venv\Scripts\python.exe -m uvicorn sandbox.app.main:app --host 127.0.0.1 --port 8000
+```
+
+保持该 PowerShell 窗口开启，然后访问 <http://127.0.0.1:8000>。停止服务时回到该窗口按 `Ctrl+C`。首次安装、可选运行模式和故障处理见下文。
+
 ## 一、开始前需要安装
 
 请先安装以下软件。只下载官方版本：
@@ -94,21 +112,42 @@ Uvicorn running on http://127.0.0.1:8000
 
 <http://127.0.0.1:8000>
 
-不要关闭正在运行 Uvicorn 的 PowerShell 窗口。需要停止项目时，在该窗口按 `Ctrl+C`。
+不要关闭正在运行 Uvicorn 的 PowerShell 窗口。
 
-## 六、完成第一次仿真
+## 六、停止项目
+
+如果启动 Uvicorn 的 PowerShell 窗口仍然存在，回到该窗口按 `Ctrl+C`。看到关闭日志并重新出现 PowerShell 提示符后，服务已经停止。关闭浏览器标签页不会停止后端。
+
+如果原来的终端已经关闭，但怀疑服务仍在后台运行，可以在新的 PowerShell 窗口中直接提取监听 `8000` 端口的 PID：
+
+```powershell
+$sandboxProcessId = (Get-NetTCPConnection -State Listen -LocalPort 8000 | Select-Object -First 1).OwningProcess
+$sandboxProcessId
+```
+
+第二条命令输出的纯数字就是 PID。先确认它确实是需要关闭的进程，再停止它：
+
+```powershell
+Get-Process -Id $sandboxProcessId
+Stop-Process -Id $sandboxProcessId
+```
+
+`LocalAddress` 显示的 `127.0.0.1` 是监听地址，不是 PID。如果第一条命令没有找到连接或 `$sandboxProcessId` 没有输出数字，说明 `8000` 端口当前没有服务在运行。不要停止未经确认的进程。
+
+## 七、完成第一次仿真
 
 第一次使用不需要 OpenAI API Key，也不需要链上数据文件：
 
 1. 在 Quick Start 页面保留 `Fixture` 模式。
-2. 填写实验名称、目标资产和随机种子，或直接使用默认值。
-3. 点击“解析初始状态”。
-4. 检查 Agent、资产和参数预览。
-5. 点击“创建运行”。
-6. 点击顶部的运行按钮，沙盒会自动推进。
-7. 点击暂停按钮后，可以进入“情景干预”创建并确认特殊事件。
-8. 恢复运行，观察市场、信息流和各 Agent 的独立反应。
-9. 点击停止按钮结束当前分支。
+2. 选择“随机生成”“自然语言”或“详细配置”；只有随机生成会随机化 Agent 字段。
+3. 填写实验名称、目标资产和随机种子，或直接使用默认值。
+4. 点击“解析初始状态”。
+5. 检查 Agent、Token 来源桶、Eligible Active Supply、背景余量和逐资产守恒结果。
+6. 点击“确认并创建运行”。
+7. 点击顶部的运行按钮，沙盒会自动推进。
+8. 点击暂停按钮后，可以进入“情景干预”创建并确认特殊事件。
+9. 恢复运行，观察市场、信息流和各 Agent 的独立反应。
+10. 点击停止按钮结束当前分支。
 
 运行数据默认保存在：
 
@@ -116,7 +155,7 @@ Uvicorn running on http://127.0.0.1:8000
 data\sandbox.db
 ```
 
-## 七、可选：使用 OpenAI Agent 规划
+## 八、可选：使用 OpenAI Agent 规划
 
 Fixture 模式完全在本地运行。只有 `LLM 烟测` 和 `Live` 模式需要 OpenAI API Key，并会产生实际 API 费用。
 
@@ -140,7 +179,7 @@ $env:SANDBOX_OPENAI_MAX_OUTPUT_TOKENS = "1800"
 
 API Key 只由本地后端读取，不会写入 SQLite 或导出的沙盒归档。不要把 API Key 写入仓库文件或提交到 Git。
 
-## 八、可选：使用 Live 模式
+## 九、可选：使用 Live 模式
 
 `Live` 模式除 OpenAI API Key 外，还需要一个本地 finalized holder snapshot JSON 文件。启动前设置：
 
@@ -153,20 +192,37 @@ $env:SANDBOX_HOLDER_CHAIN_ID = "ethereum"
 
 ```json
 {
-  "schema_version": "holder-snapshot.v0.2",
+  "schema_version": "holder-snapshot.v0.3",
+  "provider": "your-holder-provider",
   "chain_id": "ethereum",
   "target_token": "TOKEN",
   "block_height": 123456,
   "block_hash": "0x...",
   "finalized": true,
   "coverage_ratio_milli": 950,
-  "total_supply": 1000000
+  "total_supply": 1000000,
+  "eligible_active_supply": 900000,
+  "covered_eligible_supply": 855000,
+  "source_buckets": [
+    {"bucket_id": "eligible", "category": "eligible_active", "amount": 900000, "eligible_for_active_market": true},
+    {"bucket_id": "locked", "category": "locked", "amount": 100000, "eligible_for_active_market": false}
+  ],
+  "holder_distribution": {
+    "distribution_version": "holder-distribution.v0.1",
+    "active_holder_count": 10000,
+    "p25_balance": 100,
+    "p50_balance": 500,
+    "p75_balance": 2000,
+    "p90_balance": 10000,
+    "p99_balance": 50000,
+    "top_10_concentration_milli": 600
+  }
 }
 ```
 
-Quick Start 中选择的链和 Token 必须与文件中的 `chain_id`、`target_token` 一致。仓库中的 `fixtures/holder_snapshots/framework-alpha.fixture.v0.2.json` 是测试数据，不能视为真实链上数据。
+Quick Start 中选择的链和 Token 必须与文件中的 `chain_id`、`target_token` 一致。`source_buckets` 必须合计为 `total_supply`，其中 eligible 桶必须合计为 `eligible_active_supply`。仓库中的 `fixtures/holder_snapshots/framework-alpha.fixture.v0.3.json` 是测试数据，不能视为真实链上数据。
 
-## 九、重新启动
+## 十、重新启动
 
 依赖已经安装并且前端没有修改时，只需进入仓库并运行：
 
@@ -206,13 +262,7 @@ Pop-Location
 
 ### 端口 8000 已被占用
 
-查找占用端口的进程：
-
-```powershell
-Get-NetTCPConnection -State Listen -LocalPort 8000
-```
-
-停止占用该端口的程序，或者改用其他端口：
+按照“六、停止项目”中的方法确认并停止占用端口的进程，或者改用其他端口：
 
 ```powershell
 .\.venv\Scripts\python.exe -m uvicorn sandbox.app.main:app --host 127.0.0.1 --port 8001
@@ -223,6 +273,12 @@ Get-NetTCPConnection -State Listen -LocalPort 8000
 ### 页面提示前端尚未构建
 
 重新执行第四节的 `npm ci` 和 `npm run build`，然后重启 Uvicorn。
+
+### 重启后提示 `invalid local session`
+
+后端每次启动都会生成新的本地会话令牌。浏览器如果仍携带上一次运行留下的 `sandbox_session` Cookie，API 会拒绝该旧会话。
+
+在浏览器中清除 `127.0.0.1` 的站点数据或删除名为 `sandbox_session` 的 Cookie，然后重新打开 <http://127.0.0.1:8000>。仅刷新旧页面不一定能清除该 Cookie。
 
 ### Live 或 LLM 模式无法解析
 

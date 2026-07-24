@@ -1,0 +1,274 @@
+{
+  "$defs": {
+    "BasePersonaDraft": {
+      "additionalProperties": false,
+      "properties": {
+        "private_goals": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "maxItems": 8,
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Private Goals"
+        },
+        "risk_tolerance_milli": {
+          "anyOf": [
+            {
+              "maximum": 1000,
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Risk Tolerance Milli"
+        },
+        "time_horizon": {
+          "anyOf": [
+            {
+              "enum": [
+                "short",
+                "medium",
+                "long"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Time Horizon"
+        },
+        "loss_aversion_milli": {
+          "anyOf": [
+            {
+              "maximum": 1000,
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Loss Aversion Milli"
+        },
+        "trend_bias_milli": {
+          "anyOf": [
+            {
+              "maximum": 1000,
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Trend Bias Milli"
+        },
+        "skepticism_milli": {
+          "anyOf": [
+            {
+              "maximum": 1000,
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Skepticism Milli"
+        },
+        "communication_propensity_milli": {
+          "anyOf": [
+            {
+              "maximum": 1000,
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Communication Propensity Milli"
+        },
+        "bounded_notes": {
+          "anyOf": [
+            {
+              "maxLength": 500,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Bounded Notes"
+        }
+      },
+      "title": "BasePersonaDraft",
+      "type": "object"
+    },
+    "ConfigurationSuggestion": {
+      "additionalProperties": false,
+      "properties": {
+        "suggestion_id": {
+          "maxLength": 256,
+          "minLength": 1,
+          "title": "Suggestion Id",
+          "type": "string"
+        },
+        "kind": {
+          "enum": [
+            "archetype",
+            "role_tag",
+            "capability"
+          ],
+          "title": "Kind",
+          "type": "string"
+        },
+        "value": {
+          "maxLength": 256,
+          "minLength": 1,
+          "title": "Value",
+          "type": "string"
+        },
+        "reason": {
+          "maxLength": 500,
+          "minLength": 1,
+          "title": "Reason",
+          "type": "string"
+        },
+        "confidence_milli": {
+          "maximum": 1000,
+          "minimum": 0,
+          "title": "Confidence Milli",
+          "type": "integer"
+        },
+        "ambiguity": {
+          "default": "",
+          "maxLength": 500,
+          "title": "Ambiguity",
+          "type": "string"
+        }
+      },
+      "required": [
+        "suggestion_id",
+        "kind",
+        "value",
+        "reason",
+        "confidence_milli"
+      ],
+      "title": "ConfigurationSuggestion",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "display_name": {
+      "anyOf": [
+        {
+          "maxLength": 128,
+          "minLength": 1,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Display Name"
+    },
+    "public_identity": {
+      "anyOf": [
+        {
+          "maxLength": 500,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Public Identity"
+    },
+    "base_persona": {
+      "$ref": "#/$defs/BasePersonaDraft"
+    },
+    "explicit_token_amount": {
+      "anyOf": [
+        {
+          "minimum": 0,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Explicit Token Amount"
+    },
+    "explicit_usdx_amount": {
+      "anyOf": [
+        {
+          "minimum": 0,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Explicit Usdx Amount"
+    },
+    "field_sources": {
+      "additionalProperties": {
+        "enum": [
+          "user",
+          "llm_interpreted"
+        ],
+        "type": "string"
+      },
+      "title": "Field Sources",
+      "type": "object"
+    },
+    "suggestions": {
+      "items": {
+        "$ref": "#/$defs/ConfigurationSuggestion"
+      },
+      "maxItems": 32,
+      "title": "Suggestions",
+      "type": "array"
+    },
+    "ambiguities": {
+      "items": {
+        "type": "string"
+      },
+      "maxItems": 32,
+      "title": "Ambiguities",
+      "type": "array"
+    },
+    "schema_version": {
+      "const": "agent-configuration-interpretation.v0.1",
+      "default": "agent-configuration-interpretation.v0.1",
+      "title": "Schema Version",
+      "type": "string"
+    }
+  },
+  "title": "AgentConfigurationInterpretationCandidate",
+  "type": "object"
+}

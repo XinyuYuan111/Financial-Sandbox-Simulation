@@ -1,0 +1,49 @@
+{
+  "schema_version": "holder-snapshot.v0.3",
+  "provider": "bundled-holder-snapshot",
+  "chain_id": "fixture-chain",
+  "target_token": "TOKEN",
+  "block_height": 20260723,
+  "block_hash": "fixture:framework-alpha-v0.3",
+  "finalized": true,
+  "coverage_ratio_milli": 667,
+  "total_supply": 1000000,
+  "eligible_active_supply": 900000,
+  "covered_eligible_supply": 600000,
+  "source_buckets": [
+    {
+      "bucket_id": "eligible-active",
+      "category": "eligible_active",
+      "amount": 900000,
+      "eligible_for_active_market": true
+    },
+    {
+      "bucket_id": "locked-reserve",
+      "category": "locked",
+      "amount": 50000,
+      "eligible_for_active_market": false
+    },
+    {
+      "bucket_id": "protocol-and-bridge",
+      "category": "protocol",
+      "amount": 30000,
+      "eligible_for_active_market": false
+    },
+    {
+      "bucket_id": "burned",
+      "category": "burned",
+      "amount": 20000,
+      "eligible_for_active_market": false
+    }
+  ],
+  "holder_distribution": {
+    "distribution_version": "holder-distribution.v0.1",
+    "active_holder_count": 10000,
+    "p25_balance": 1000,
+    "p50_balance": 2500,
+    "p75_balance": 7500,
+    "p90_balance": 25000,
+    "p99_balance": 100000,
+    "top_10_concentration_milli": 600
+  }
+}

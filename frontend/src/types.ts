@@ -47,7 +47,6 @@ export type AgentProjection = {
   display_name?: string
   strategy?: string
   role_tags?: string[]
-  funding_profile?: string
   planner_profile_id?: string
   agent_revision?: number
   active_strategy_revision?: number
@@ -139,19 +138,82 @@ export type ProviderProfile = {
   max_in_flight?: number
 }
 
+export type ConfigurationProvenance = {
+  source: 'default' | 'archetype' | 'random' | 'user' | 'llm_interpreted'
+  source_ref: string | null
+  distribution_version: string | null
+  seed: number | null
+  interpreter_request_id: string | null
+  user_confirmed: boolean
+}
+
+export type ConfigurationSuggestion = {
+  suggestion_id: string
+  kind: 'archetype' | 'role_tag' | 'capability'
+  value: string
+  reason: string
+  confidence_milli: number
+  ambiguity: string
+}
+
+export type AgentConfigurationDraft = {
+  draft_id: string
+  input_mode: 'preset' | 'random' | 'natural_language' | 'detailed'
+  agent_id: string | null
+  display_name: string | null
+  public_identity: string | null
+  strategy: 'rule' | 'replay' | 'openai' | null
+  archetype_ids: string[]
+  role_tags: string[] | null
+  capability_set: string[] | null
+  base_persona: Record<string, unknown>
+  cognitive_profile: Record<string, unknown>
+  attention_profile: Record<string, unknown>
+  latency_profile: Record<string, unknown>
+  planner_profile_id: string | null
+  portfolio: { token_amount: number | null; usdx_amount: number | null }
+  random_fields: string[]
+  provenance: Record<string, ConfigurationProvenance>
+  suggestions: ConfigurationSuggestion[]
+  accepted_suggestion_ids: string[]
+  declined_suggestion_ids: string[]
+  ambiguities: string[]
+  schema_version: string
+}
+
+export type ParticipantArchetype = {
+  archetype_id: string
+  label: string
+  suggested_role_tags: string[]
+  suggested_capabilities: string[]
+  suggested_persona: Record<string, number | string>
+  schema_version: string
+}
+
 export type ResolvedPreview = {
   scenario_id: string
   name: string
   preset_version: string
   mode: 'test_fixture' | 'live_llm_smoke' | 'live'
   provider_report: Record<string, unknown>
-  chain_snapshot: Record<string, unknown>
+  chain_snapshot: {
+    schema_version: string
+    provider: string
+    chain_id: string
+    target_token: string
+    total_supply: number
+    eligible_active_supply: number
+    covered_eligible_supply: number
+    source_buckets: Array<{ bucket_id: string; category: string; amount: number; eligible_for_active_market: boolean }>
+    holder_distribution: Record<string, number | string>
+  }
+  market: { base_asset: string; quote_asset: string; initial_mid_price: number; price_tick: number }
+  portfolio: { quote_coverage_ratio_ppm: number; token_usdx_correlation_milli: number; token_distribution: string }
   total_supply: Record<string, number>
-  agents: Array<{ agent_id: string; display_name: string; strategy: string; token_balance: number; usdx_balance: number }>
+  agents: Array<{ agent_id: string; display_name: string; strategy: string; token_balance: number; usdx_balance: number; role_tags: string[]; configuration_provenance: Record<string, ConfigurationProvenance> }>
   agent_definitions: Array<{
     agent_id: string
     display_name: string
-    funding_profile: string
     role_tags: string[]
     planner_profile_id: string
     capability_set: string[]
@@ -159,15 +221,29 @@ export type ResolvedPreview = {
     cognitive_profile: { max_plans_per_window: number; memory_search_limit: number }
     attention_profile: { information_capacity: number; minimum_salience: number }
     latency_profile: { planning_latency_us: number; action_latency_us: number }
+    configuration_provenance: Record<string, ConfigurationProvenance>
   }>
-  background_market_sector: { sector_id: string; token_balance: number; usdx_balance: number }
+  background_market_sector: { sector_id: string; token_balance: number; usdx_balance: number; enabled: boolean; two_sided_ready: boolean }
   preview: {
     preset?: string
     agent_count?: number
-    funding_profile_counts?: Record<string, number>
-    assets?: Record<string, number | boolean>
+    archetype_counts?: Record<string, number>
+    assets?: Record<string, number | boolean | string>
+    source_buckets?: Array<{ bucket_id: string; category: string; amount: number; eligible: boolean }>
+    portfolio_distribution?: Record<string, unknown>
+    configuration?: { compiler_version: string; input_modes: string[]; ambiguities: string[] }
+    market?: {
+      initial_mid_price: number
+      price_tick: number
+      target_spread_bps: number
+      impact_target_bps: number
+      quote_levels: number
+      background_participation_policy_id: string
+    }
   }
   warnings: string[]
+  resolution_hash: string
+  schema_version: string
 }
 
 export type AgentAudit = {
