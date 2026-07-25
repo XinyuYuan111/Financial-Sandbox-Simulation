@@ -4,6 +4,12 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import patch
 
+try:
+    import openai  # noqa: F401
+    _OPENAI_AVAILABLE = True
+except ImportError:  # pragma: no cover - optional dependency
+    _OPENAI_AVAILABLE = False
+
 from sandbox.agents.providers.openai import OpenAIProviderAdapter
 from sandbox.app.settings import Settings
 from sandbox.contracts.agent import DecisionRationale
@@ -99,6 +105,7 @@ class OpenAIAdapterTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(report["message"], "OPENAI_API_KEY is not configured")
         self.assertEqual(adapter.profile.key_present, False)
 
+    @unittest.skipUnless(_OPENAI_AVAILABLE, "openai package is not installed")
     async def test_custom_base_url_is_forwarded_to_the_sdk_client(self) -> None:
         with patch("openai.AsyncOpenAI") as client_constructor:
             adapter = OpenAIProviderAdapter(

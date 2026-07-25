@@ -138,7 +138,7 @@ class ApiWorkflowTests(unittest.TestCase):
                 "client_command_id": "forged-command",
             },
         )
-        self.assertEqual(response.status_code, 405)
+        self.assertEqual(response.status_code, 404)
 
     def test_chain_catalog_is_fixed_while_holder_sources_report_runtime_configuration(self) -> None:
         response = self.client.get("/api/v1/chains")
