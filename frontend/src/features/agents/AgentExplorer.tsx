@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useState } from 'react'
 import { BrainCircuit, ChevronRight, CircleDot, ClipboardList, Eye, MemoryStick, ReceiptText, Target, Users } from 'lucide-react'
 import { api } from '../../api'
-import type { AgentAudit, AgentDetail, AgentProjection } from '../../types'
+import type { AgentAudit, AgentDetail, AgentProjection, Projection } from '../../types'
 import { EmptyState, ErrorBanner, formatInteger, formatTime, JsonBlock, shortId, StatusBadge } from '../../components/ui'
+import { useTradeEffects } from '../../hooks/useTradeEffects'
 
 type Tab = 'overview' | 'observations' | 'memory' | 'plans' | 'decisions' | 'actions'
 const tabs: Array<{ id: Tab; label: string; icon: typeof Eye }> = [
@@ -19,13 +20,15 @@ type DecisionResponse = { decisions: AgentAudit['decisions'] }
 type PlanResponse = { plans: AgentAudit['plans'] }
 type ReceiptResponse = { receipts: AgentAudit['receipts'] }
 
-export function AgentExplorer({ branchId, cursor }: { branchId: string; cursor?: number }) {
+export function AgentExplorer({ branchId, cursor, projection }: { branchId: string; cursor?: number; projection?: Projection }) {
   const [agents, setAgents] = useState<AgentProjection[]>([])
   const [selectedId, setSelectedId] = useState('')
   const [detail, setDetail] = useState<AgentDetail | null>(null)
   const [audit, setAudit] = useState<AgentAudit>({ observations: [], decisions: [], plans: [], receipts: [] })
   const [tab, setTab] = useState<Tab>('overview')
   const [error, setError] = useState<string | null>(null)
+  const trades = projection?.market.trades ?? []
+  const { tradingAgentIds } = useTradeEffects(trades, null, null)
 
   useEffect(() => {
     let active = true
@@ -59,7 +62,7 @@ export function AgentExplorer({ branchId, cursor }: { branchId: string; cursor?:
     {error ? <ErrorBanner message={error} onClose={() => setError(null)} /> : null}
     <aside className="agent-list">
       <div className="panel-heading"><div><h2>Agent</h2><p>{agents.length} 个显式主体</p></div><Users size={18} /></div>
-      <div className="agent-list-scroll">{agents.map(agent => <button key={agent.agent_id} className={selectedId === agent.agent_id ? 'selected' : ''} onClick={() => setSelectedId(agent.agent_id)}><span className="agent-avatar">{(agent.display_name ?? agent.agent_id).slice(0, 1).toUpperCase()}</span><span><strong>{agent.display_name ?? agent.agent_id}</strong><small>{agent.role_tags?.[0] ?? 'market_participant'} · rev {agent.agent_revision ?? 0}</small></span><ChevronRight size={16} /></button>)}</div>
+      <div className="agent-list-scroll">{agents.map(agent => <button key={agent.agent_id} className={[selectedId === agent.agent_id ? 'selected' : '', tradingAgentIds.has(agent.agent_id) ? 'agent-trading agent-trading-border' : ''].filter(Boolean).join(' ')} onClick={() => setSelectedId(agent.agent_id)}><span className="agent-avatar">{(agent.display_name ?? agent.agent_id).slice(0, 1).toUpperCase()}</span><span><strong>{agent.display_name ?? agent.agent_id}</strong><small>{agent.role_tags?.[0] ?? 'market_participant'} · rev {agent.agent_revision ?? 0}</small></span><ChevronRight size={16} /></button>)}</div>
     </aside>
     <section className="agent-detail">
       {detail ? <>

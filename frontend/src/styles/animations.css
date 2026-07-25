@@ -1,0 +1,146 @@
+/* === 通用过渡动画 === */
+@keyframes fadeInUp {
+  from { opacity: 0; transform: translateY(12px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes scaleIn {
+  from { opacity: 0; transform: scale(0.95); }
+  to { opacity: 1; transform: scale(1); }
+}
+
+/* === 交易闪烁 === */
+@keyframes tradeFlash {
+  0% { background-color: rgba(25, 114, 73, 0.25); box-shadow: 0 0 12px rgba(25, 114, 73, 0.3); }
+  100% { background-color: transparent; box-shadow: none; }
+}
+
+@keyframes tradeFlashSell {
+  0% { background-color: rgba(180, 35, 24, 0.2); box-shadow: 0 0 12px rgba(180, 35, 24, 0.25); }
+  100% { background-color: transparent; box-shadow: none; }
+}
+
+/* === 粒子发射 === */
+@keyframes particleBurst {
+  0% { opacity: 1; transform: translate(0, 0) scale(1); }
+  100% { opacity: 0; transform: translate(var(--particle-x, 20px), var(--particle-y, -30px)) scale(0.3); }
+}
+
+/* === Agent活跃发光 === */
+@keyframes glowPulse {
+  0%, 100% { box-shadow: 0 0 0 rgba(8, 127, 120, 0); }
+  50% { box-shadow: 0 0 16px rgba(8, 127, 120, 0.4); }
+}
+
+/* === 价格滑入 === */
+@keyframes priceSlideUp {
+  from { opacity: 0.5; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes priceSlideDown {
+  from { opacity: 0.5; transform: translateY(-6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* === 涟漪扩散 === */
+@keyframes ripple {
+  0% { transform: scale(0.8); opacity: 0.6; }
+  100% { transform: scale(2.4); opacity: 0; }
+}
+
+/* === 光泽流动 / 背景渐变 / 呼吸 === */
+@keyframes shimmer {
+  0%, 100% { transform: translateX(-150%); }
+  50% { transform: translateX(150%); }
+}
+
+@keyframes gradientShift {
+  0% { background-position: 0% 50%; }
+  50% { background-position: 100% 50%; }
+  100% { background-position: 0% 50%; }
+}
+
+@keyframes breathe {
+  0%, 100% { box-shadow: var(--shadow-md), inset 0 1px 0 rgba(255, 255, 255, 0.6); }
+  50% { box-shadow: var(--shadow-lg), inset 0 1px 0 rgba(255, 255, 255, 0.6); }
+}
+
+/* === 工具类 === */
+.anim-fade-in-up { animation: fadeInUp var(--duration-normal) var(--ease-out) both; }
+.anim-fade-in { animation: fadeIn var(--duration-normal) var(--ease-smooth) both; }
+.anim-scale-in { animation: scaleIn var(--duration-normal) var(--ease-spring) both; }
+
+.trade-new { animation: fadeInUp 0.3s var(--ease-spring) both; }
+.trade-flash { animation: tradeFlash 0.7s var(--ease-out) both; }
+.trade-flash-sell { animation: tradeFlashSell 0.7s var(--ease-out) both; }
+
+.agent-trading { animation: glowPulse 1.8s ease-in-out infinite; }
+.agent-trading-border {
+  border-left: 3px solid var(--apple-accent);
+  background: rgba(8, 127, 120, 0.06);
+}
+
+.price-up {
+  color: var(--green, #197249);
+  animation: priceSlideUp 0.25s var(--ease-out) both;
+}
+.price-down {
+  color: var(--red, #b42318);
+  animation: priceSlideDown 0.25s var(--ease-out) both;
+}
+
+/* 粒子容器 */
+.particle-layer {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  overflow: hidden;
+  z-index: 10;
+}
+
+.particle {
+  position: absolute;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  animation: particleBurst 0.8s var(--ease-out) forwards;
+}
+.particle-buy { background: var(--green, #197249); }
+.particle-sell { background: var(--red, #b42318); }
+
+/* 涟漪效果 */
+.ripple-effect {
+  position: absolute;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  border: 2px solid var(--apple-accent);
+  animation: ripple 0.8s var(--ease-out) forwards;
+  pointer-events: none;
+}
+
+/* === 无障碍：减少动画 === */
+@media (prefers-reduced-motion: reduce) {
+  .anim-fade-in-up,
+  .anim-fade-in,
+  .anim-scale-in,
+  .trade-new,
+  .trade-flash,
+  .trade-flash-sell,
+  .agent-trading,
+  .price-up,
+  .price-down,
+  .particle,
+  .ripple-effect,
+  .glass-animate,
+  .glass-shimmer::before {
+    animation: none !important;
+    transition: none !important;
+  }
+}

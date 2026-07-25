@@ -1,0 +1,96 @@
+/* 基础玻璃效果 */
+.glass {
+  background: var(--glass-bg);
+  backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
+  border: 1px solid var(--glass-border);
+  transition: background var(--duration-normal) var(--ease-smooth),
+              backdrop-filter var(--duration-normal) var(--ease-smooth);
+}
+
+/* 深色玻璃 - 用于侧栏 */
+.glass-dark {
+  background: rgba(20, 25, 30, 0.82);
+  backdrop-filter: blur(28px) saturate(1.3);
+  -webkit-backdrop-filter: blur(28px) saturate(1.3);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05);
+}
+
+/* 卡片玻璃 - 用于面板/卡片 */
+.glass-card {
+  position: relative;
+  background: rgba(255, 255, 255, 0.65);
+  backdrop-filter: blur(24px) saturate(1.8);
+  -webkit-backdrop-filter: blur(24px) saturate(1.8);
+  border: 1px solid rgba(255, 255, 255, 0.4);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-md), inset 0 1px 0 rgba(255, 255, 255, 0.6);
+  transition: box-shadow var(--duration-normal) var(--ease-smooth),
+              transform var(--duration-fast) var(--ease-out);
+}
+.glass-card:hover {
+  transform: translateY(-2px);
+  box-shadow: var(--shadow-lg), inset 0 1px 0 rgba(255, 255, 255, 0.6);
+}
+
+/* 光泽流动 - 用于主要面板 */
+.glass-shimmer {
+  position: relative;
+  overflow: hidden;
+}
+.glass-shimmer::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: linear-gradient(
+    105deg,
+    transparent 40%,
+    rgba(255, 255, 255, 0.25) 45%,
+    rgba(255, 255, 255, 0.08) 50%,
+    transparent 55%
+  );
+  animation: shimmer 8s ease-in-out infinite;
+  pointer-events: none;
+  z-index: 1;
+}
+
+/* 顶栏玻璃 */
+.glass-topbar {
+  background: rgba(255, 255, 255, 0.78);
+  backdrop-filter: blur(12px) saturate(1.4);
+  -webkit-backdrop-filter: blur(12px) saturate(1.4);
+  border-bottom: 1px solid var(--apple-border);
+  box-shadow: 0 1px 0 rgba(0, 0, 0, 0.04);
+}
+
+/* 玻璃淡入动画 */
+@keyframes glassFadeIn {
+  from {
+    backdrop-filter: blur(0px) saturate(1);
+    opacity: 0.9;
+  }
+  to {
+    backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
+    opacity: 1;
+  }
+}
+
+.glass-animate {
+  animation: glassFadeIn var(--duration-slow) var(--ease-smooth) forwards;
+}
+
+/* Fallback - 不支持backdrop-filter时 */
+@supports not (backdrop-filter: blur(1px)) {
+  .glass { background: rgba(255, 255, 255, 0.95); }
+  .glass-dark { background: rgba(29, 29, 31, 0.95); }
+  .glass-card { background: #ffffff; }
+  .glass-topbar { background: rgba(255, 255, 255, 0.95); }
+}
+
+/* 响应式 - 移动端减少模糊强度 */
+@media (max-width: 720px) {
+  .glass, .glass-card { backdrop-filter: blur(10px) saturate(1.4); }
+  .glass-dark { backdrop-filter: blur(10px) saturate(1.1); }
+}

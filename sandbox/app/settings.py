@@ -32,6 +32,7 @@ class Settings:
     injective_rpc_url: str = "https://k8s.testnet.json-rpc.injective.network/"
     injective_token_address: str | None = None
     injective_holder_start_block: int = 0
+    cors_allowed_origins: frozenset[str] = field(default_factory=frozenset)
 
     @classmethod
     def from_environment(cls) -> "Settings":
@@ -63,6 +64,11 @@ class Settings:
             injective_rpc_url=os.getenv("SANDBOX_INJECTIVE_RPC_URL", "https://k8s.testnet.json-rpc.injective.network/").strip().rstrip("/"),
             injective_token_address=(os.getenv("SANDBOX_INJECTIVE_TOKEN_ADDRESS") or "").strip() or None,
             injective_holder_start_block=int(os.getenv("SANDBOX_INJECTIVE_HOLDER_START_BLOCK", "0")),
+            cors_allowed_origins=frozenset(
+                o.strip().rstrip("/")
+                for o in os.getenv("SANDBOX_ALLOWED_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173").split(",")
+                if o.strip()
+            ),
         )
 
     def ensure_directories(self) -> None:
