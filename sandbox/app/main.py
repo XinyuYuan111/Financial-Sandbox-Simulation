@@ -70,6 +70,31 @@ async def lifespan(app: FastAPI):
     app.state.llm_gateway = gateway
     app.state.manager = RunManager(store, initializer, archive_service, settings.runtime_version)
     app.state.manager.recover_interrupted_branches()
+    if settings.attestation_enabled and settings.attestation_contract_address and settings.attestation_private_key:
+        import logging
+        from sandbox.attester import InjectiveAttestationWriter
+        attestation_logger = logging.getLogger(__name__)
+        try:
+            writer = InjectiveAttestationWriter(
+                rpc_url=settings.injective_rpc_url,
+                contract_address=settings.attestation_contract_address,
+                private_key=settings.attestation_private_key,
+            )
+            preflight = writer.preflight()
+            if preflight.get("ok"):
+                app.state.manager.attestation_writer = writer
+                app.state.manager._start_attestation_worker()
+                attestation_logger.info(
+                    "Attestation writer initialized: chain_id=%s contract=%s wallet=%s",
+                    preflight.get("chain_id"), preflight.get("contract_address"),
+                    preflight.get("wallet_address"),
+                )
+            else:
+                attestation_logger.warning(
+                    "Attestation writer preflight failed: %s", preflight.get("message")
+                )
+        except Exception as exc:
+            attestation_logger.warning("Attestation writer init failed: %s", exc)
     app.state.session_token = secrets.token_urlsafe(32)
     yield
     app.state.manager.close()

@@ -35,6 +35,7 @@ from sandbox.control.scenario_director import ScenarioDirector
 from sandbox.core.errors import ConflictError, NotFoundError, SandboxError, ValidationError
 from sandbox.core.ids import deterministic_id, new_id
 from sandbox.core.time import SIMULATION_PLAN_HORIZON_US, SIMULATION_WALL_SECONDS_PER_MINUTE
+from sandbox.attester import AttestationRequest, AttestationResult, InjectiveAttestationWriter
 from sandbox.store.archive import ArchiveService
 from sandbox.store.event_store import EventStore, canonical_json, utc_now
 from sandbox.store.sqlite import SQLiteStore
@@ -58,6 +59,11 @@ class RunManager:
         self._runner_cancel: dict[str, threading.Event] = {}
         self._planning_threads: dict[str, threading.Thread] = {}
         self._planning_cancel: dict[str, threading.Event] = {}
+        self.attestation_writer: InjectiveAttestationWriter | None = None
+        self._attestation_queue: dict[str, tuple[str, AttestationRequest, dict[str, str]]] = {}
+        self._attestation_lock = threading.Lock()
+        self._attestation_thread: threading.Thread | None = None
+        self._attestation_cancel = threading.Event()
 
     def create_scenario(self, draft: ScenarioDraft) -> dict[str, object]:
         scenario_id = new_id("scenario")
@@ -1408,6 +1414,10 @@ class RunManager:
         return True
 
     def close(self) -> None:
+        if self._attestation_cancel:
+            self._attestation_cancel.set()
+        if self._attestation_thread and self._attestation_thread.is_alive():
+            self._attestation_thread.join(timeout=5)
         for cancel in self._runner_cancel.values():
             cancel.set()
         for cancel in self._planning_cancel.values():
@@ -1622,6 +1632,8 @@ class RunManager:
                         command_record=record,
                         expected_branch_version=int(branch["state_version"]),
                     )
+                    if self.attestation_writer is not None:
+                        self._enqueue_attestation(run_id, branch_id, working)
                     result = record["persisted_result"]
             elif command_type == "step_fixture":
                 if status != "Running":
@@ -2382,10 +2394,154 @@ class RunManager:
             if branch["status"] != "Checkpointed":
                 self._checkpoint(str(branch["branch_id"]), self._world(str(branch["branch_id"])), branch)
         manifest = self.archive_service.export_run(run_id, output_path)
-        return {"path": str(output_path), "manifest": manifest.model_dump(mode="json")}
+        import hashlib
+        archive_hash = hashlib.sha256(output_path.read_bytes()).hexdigest()
+        if self.attestation_writer is not None:
+            latest_ckpt = self.store.connection.execute(
+                "SELECT s.checkpoint_id, s.snapshot_json FROM snapshots s "
+                "WHERE s.run_id=? ORDER BY s.branch_seq DESC LIMIT 1",
+                (run_id,),
+            ).fetchone()
+            try:
+                if latest_ckpt is not None:
+                    snapshot = json.loads(latest_ckpt["snapshot_json"])
+                    ckpt_hash = hashlib.sha256(
+                        self._canonical(snapshot).encode()
+                    ).hexdigest()
+                    with self.store.transaction() as conn:
+                        conn.execute(
+                            "INSERT OR REPLACE INTO checkpoint_attestations "
+                            "(checkpoint_id, run_id, branch_id, checkpoint_hash, archive_path, archive_hash, "
+                            "tx_hash, block_number, status, error_message) "
+                            "VALUES (?, ?, ?, ?, ?, ?, NULL, NULL, ?, NULL) "
+                            "ON CONFLICT(checkpoint_id) DO UPDATE SET "
+                            "archive_hash=excluded.archive_hash, archive_path=excluded.archive_path",
+                            (
+                                latest_ckpt["checkpoint_id"],
+                                run_id,
+                                str(branches[0]["branch_id"]),
+                                ckpt_hash,
+                                str(output_path),
+                                archive_hash,
+                                "pending",
+                            ),
+                        )
+            except Exception:
+                import logging
+                logging.getLogger(__name__).warning("Failed to stage archive attestation for %s", run_id, exc_info=True)
+            request = AttestationRequest(
+                run_id=run_id,
+                branch_id=str(branches[0]["branch_id"]),
+                sim_time_us=manifest.model_dump(mode="json").get("total_sim_time_us", 0) if hasattr(manifest, "model_dump") else 0,
+                agent_count=len(branches),
+                world_state_hash=archive_hash,
+                final_event_hash=f"sha256:{archive_hash}",
+                completion_reason="archive_export",
+            )
+            meta = {"archive_path": str(output_path), "archive_hash": archive_hash}
+            with self._attestation_lock:
+                self._attestation_queue[f"archive:{run_id}"] = ("archive", request, meta)
+        result: dict[str, object] = {"path": str(output_path), "manifest": manifest.model_dump(mode="json"), "archive_hash": f"sha256:{archive_hash}"}
+        if self.attestation_writer is not None:
+            result["attestation_queued"] = True
+        return result
 
     def import_archive(self, path: Path) -> dict[str, object]:
         return self.archive_service.import_run(path)
+
+    def list_attested_checkpoints(self, run_id: str | None = None) -> list[dict[str, object]]:
+        """List checkpoints with their attestation status."""
+        sql = (
+            "SELECT s.checkpoint_id, s.run_id, s.branch_id, s.branch_seq, s.event_hash, s.snapshot_json, "
+            "       a.tx_hash, a.block_number, a.status, a.error_message, a.created_at AS attested_at "
+            "FROM snapshots s LEFT JOIN checkpoint_attestations a ON s.checkpoint_id = a.checkpoint_id"
+        )
+        params: tuple[object, ...] = ()
+        if run_id:
+            sql += " WHERE s.run_id = ?"
+            params = (run_id,)
+        sql += " ORDER BY a.created_at DESC, s.checkpoint_id DESC"
+        rows = self.store.connection.execute(sql, params).fetchall()
+        result: list[dict[str, object]] = []
+        for row in rows:
+            snapshot = json.loads(row["snapshot_json"])
+            result.append({
+                "checkpoint_id": row["checkpoint_id"],
+                "run_id": row["run_id"],
+                "branch_id": row["branch_id"],
+                "branch_seq": row["branch_seq"],
+                "event_hash": row["event_hash"],
+                "sim_time_us": snapshot.get("sim_time_us", 0),
+                "runtime_version": snapshot.get("runtime_version", ""),
+                "agent_count": len(snapshot.get("state", {}).get("agents", [])) if isinstance(snapshot.get("state"), dict) else 0,
+                "attestation": {
+                    "status": row["status"] or "not_submitted",
+                    "tx_hash": row["tx_hash"],
+                    "block_number": row["block_number"],
+                    "error_message": row["error_message"],
+                    "attested_at": row["attested_at"],
+                },
+            })
+        return result
+
+    def resume_from_checkpoint(
+        self,
+        checkpoint_id: str,
+        client_command_id: str,
+        *,
+        verify_chain: bool = True,
+    ) -> dict[str, object]:
+        """Resume from a checkpoint after verifying on-chain attestation hash.
+
+        If ``verify_chain`` is True, the checkpoint must have a ``confirmed``
+        on-chain attestation and the local snapshot hash must match the one
+        that was anchored.
+        """
+        with self.store.locked():
+            snapshot_row = self.store.connection.execute(
+                "SELECT checkpoint_id, run_id, branch_id, snapshot_json FROM snapshots WHERE checkpoint_id=?",
+                (checkpoint_id,),
+            ).fetchone()
+            if snapshot_row is None:
+                raise NotFoundError("checkpoint", checkpoint_id)
+
+            checkpoint = Checkpoint.model_validate(json.loads(snapshot_row["snapshot_json"]))
+            checkpoint_hash = ""
+            if verify_chain:
+                from sandbox.store.event_store import canonical_json
+                local_hash = hashlib.sha256(
+                    canonical_json(checkpoint.model_dump(mode="json")).encode()
+                ).hexdigest()
+                att_row = self.store.connection.execute(
+                    "SELECT checkpoint_hash, status, tx_hash, block_number FROM checkpoint_attestations "
+                    "WHERE checkpoint_id=?",
+                    (checkpoint_id,),
+                ).fetchone()
+                if att_row is None:
+                    raise ValidationError(
+                        "该 checkpoint 尚未提交链上锚定，无法续跑（可设置 verify_chain=false 跳过校验）",
+                        error_code="CHECKPOINT_NOT_ATTESTED",
+                    )
+                if att_row["status"] != "confirmed":
+                    raise ValidationError(
+                        f"该 checkpoint 的链上锚定状态为 '{att_row['status']}'，"
+                        f"需为 confirmed 才能续跑（tx_hash={att_row['tx_hash']}）",
+                        error_code="CHECKPOINT_ATTESTATION_NOT_CONFIRMED",
+                    )
+                anchored_hash = att_row["checkpoint_hash"] or ""
+                if anchored_hash and anchored_hash != local_hash:
+                    raise ValidationError(
+                        "本地 checkpoint 哈希与链上锚定不匹配，数据可能被篡改："
+                        f"local={local_hash[:16]}... vs chain={anchored_hash[:16]}...",
+                        error_code="CHECKPOINT_HASH_MISMATCH",
+                    )
+                checkpoint_hash = anchored_hash
+
+            result = self._fork_locked(
+                str(snapshot_row["branch_id"]), checkpoint_id, client_command_id,
+            )
+            result["checkpoint_hash"] = checkpoint_hash
+            return result
 
     def _apply_fixture_agent_action(
         self,
@@ -2686,6 +2842,8 @@ class RunManager:
             command_record=record,
         )
         cursor = persisted[-1].branch_seq if persisted else int(branch["state_version"])
+        if self.attestation_writer is not None:
+            self._enqueue_checkpoint_attestation(checkpoint)
         return record["persisted_result"] if record else {"branch_id": branch_id, "checkpoint_id": checkpoint_id, "status": retained_status, "cursor": cursor}
 
     def _pending_planning_results(self, branch_id: str) -> list[dict[str, object]]:
@@ -2732,3 +2890,224 @@ class RunManager:
     @staticmethod
     def _observation_event(observation: Any, source_id: str) -> EventDraft:
         return EventDraft(sim_time_us=observation.sim_time_us, priority=50, tie_break_key=f"observation:{observation.agent_id}", event_type="ObservationCreated", source_id=source_id, target_ids=[observation.agent_id], payload={"agent_id": observation.agent_id, "observation_id": observation.observation_id}, observation_id=observation.observation_id, visibility="agent_private")
+
+    def _enqueue_attestation(self, run_id: str, branch_id: str, world) -> None:
+        """Queue a run-level attestation request for async processing."""
+        try:
+            from sandbox.store.event_store import canonical_json
+            state_json = canonical_json(world.to_json())
+            state_hash = hashlib.sha256(state_json.encode()).hexdigest()
+            agent_count = len(world.agents) if hasattr(world, 'agents') else 0
+            request = AttestationRequest(
+                run_id=run_id,
+                branch_id=branch_id,
+                sim_time_us=world.sim_time_us,
+                agent_count=agent_count,
+                world_state_hash=state_hash,
+                final_event_hash="",
+                completion_reason=getattr(world, 'terminal_reason', None) or "user_stopped",
+            )
+            with self._attestation_lock:
+                self._attestation_queue[f"run:{run_id}"] = ("run", request, {})
+        except Exception:
+            import logging
+            logging.getLogger(__name__).warning("Failed to enqueue attestation for run %s", run_id, exc_info=True)
+
+    def _enqueue_checkpoint_attestation(self, checkpoint: Checkpoint) -> None:
+        """Queue a checkpoint-level attestation request for async processing."""
+        try:
+            from sandbox.store.event_store import canonical_json
+            snapshot_bytes = canonical_json(checkpoint.model_dump(mode="json")).encode()
+            checkpoint_hash = hashlib.sha256(snapshot_bytes).hexdigest()
+            agent_count = len(checkpoint.state.get("agents", [])) if isinstance(checkpoint.state, dict) else 0
+            request = AttestationRequest(
+                run_id=checkpoint.run_id,
+                branch_id=checkpoint.branch_id,
+                sim_time_us=checkpoint.sim_time_us,
+                agent_count=agent_count,
+                world_state_hash=checkpoint_hash,
+                final_event_hash=checkpoint.event_hash,
+                completion_reason="checkpoint",
+            )
+            meta = {"checkpoint_id": checkpoint.checkpoint_id, "checkpoint_hash": checkpoint_hash}
+            with self._attestation_lock:
+                self._attestation_queue[f"ckpt:{checkpoint.checkpoint_id}"] = ("checkpoint", request, meta)
+        except Exception:
+            import logging
+            logging.getLogger(__name__).warning(
+                "Failed to enqueue checkpoint attestation for %s",
+                getattr(checkpoint, "checkpoint_id", "?"), exc_info=True,
+            )
+
+    @staticmethod
+    def _canonical(value: object) -> str:
+        import json
+        if isinstance(value, (dict, list, tuple)):
+            value = json.loads(json.dumps(value, ensure_ascii=False, sort_keys=True))
+        return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+
+    def attest_run(self, run_id: str) -> dict[str, object]:
+        """Manually enqueue a run-level attestation using the latest branch's world state."""
+        with self.store.locked():
+            run = self._get_run_locked(run_id)
+            if not run["branches"]:
+                raise NotFoundError("run", run_id)
+            latest_branch = max(run["branches"], key=lambda b: int(b["state_version"]))
+            branch_id = str(latest_branch["branch_id"])
+            world = self._world(branch_id)
+        if self.attestation_writer is None:
+            raise ConflictError("ATTESTATION_DISABLED", "attestation writer is not configured")
+        self._enqueue_attestation(run_id, branch_id, world)
+        return {"run_id": run_id, "branch_id": branch_id, "queued": True}
+
+    def list_attested_runs(self) -> list[dict[str, object]]:
+        sql = (
+            "SELECT r.run_id, r.name, r.status, r.scenario_id, r.created_at, "
+            "       a.world_state_hash, a.tx_hash, a.block_number, a.status AS attest_status, "
+            "       a.error_message, a.created_at AS attested_at, "
+            "       (SELECT COUNT(*) FROM branches b WHERE b.run_id=r.run_id) AS branch_count, "
+            "       (SELECT MAX(s.branch_seq) FROM snapshots s WHERE s.run_id=r.run_id) AS max_cursor, "
+            "       (SELECT MAX(sim_time_us) FROM snapshots s WHERE s.run_id=r.run_id) AS total_sim_time_us "
+            "FROM runs r LEFT JOIN attestations a ON r.run_id = a.run_id "
+            "ORDER BY r.created_at DESC"
+        )
+        with self.store.locked():
+            rows = self.store.connection.execute(sql).fetchall()
+        result: list[dict[str, object]] = []
+        for row in rows:
+            status = row["attest_status"] or "not_submitted"
+            result.append({
+                "run_id": row["run_id"],
+                "name": row["name"],
+                "status": row["status"],
+                "scenario_id": row["scenario_id"],
+                "created_at": row["created_at"],
+                "branch_count": int(row["branch_count"] or 0),
+                "max_cursor": int(row["max_cursor"] or 0),
+                "total_sim_time_us": int(row["total_sim_time_us"] or 0),
+                "attestation": {
+                    "status": status,
+                    "world_state_hash": row["world_state_hash"],
+                    "tx_hash": row["tx_hash"],
+                    "block_number": row["block_number"],
+                    "error_message": row["error_message"],
+                    "attested_at": row["attested_at"],
+                },
+            })
+        return result
+
+    def _start_attestation_worker(self) -> None:
+        """Start the background attestation worker thread."""
+        if self._attestation_thread is not None:
+            return
+        self._attestation_cancel.clear()
+        thread = threading.Thread(
+            target=self._attestation_worker_loop,
+            name="sandbox-attestor",
+            daemon=True,
+        )
+        self._attestation_thread = thread
+        thread.start()
+
+    def _attestation_worker_loop(self) -> None:
+        """Background loop: process attestation queue (run + checkpoint types)."""
+        import logging
+        log = logging.getLogger(__name__)
+        while not self._attestation_cancel.is_set():
+            queue_key: str | None = None
+            kind: str | None = None
+            request: AttestationRequest | None = None
+            meta: dict[str, str] = {}
+            with self._attestation_lock:
+                if self._attestation_queue:
+                    queue_key, (kind, request, meta) = next(iter(self._attestation_queue.items()))
+            if request is None:
+                self._attestation_cancel.wait(2.0)
+                continue
+            try:
+                result = self.attestation_writer.write_attestation(request)
+                with self.store.transaction() as conn:
+                    if kind == "checkpoint":
+                        conn.execute(
+                            "INSERT OR REPLACE INTO checkpoint_attestations "
+                            "(checkpoint_id, run_id, branch_id, checkpoint_hash, archive_path, archive_hash, "
+                            "tx_hash, block_number, status, error_message) "
+                            "VALUES (?, ?, ?, ?, COALESCE(?, (SELECT archive_path FROM checkpoint_attestations WHERE checkpoint_id=?)), "
+                            "        COALESCE(?, (SELECT archive_hash FROM checkpoint_attestations WHERE checkpoint_id=?)), "
+                            "        ?, ?, ?, ?)",
+                            (
+                                meta.get("checkpoint_id", ""),
+                                request.run_id,
+                                request.branch_id,
+                                meta.get("checkpoint_hash", request.world_state_hash),
+                                None, meta.get("checkpoint_id", ""),
+                                None, meta.get("checkpoint_id", ""),
+                                result.tx_hash,
+                                result.block_number,
+                                result.status,
+                                result.error_message,
+                            ),
+                        )
+                    elif kind == "archive":
+                        ckpt = conn.execute(
+                            "SELECT checkpoint_id FROM checkpoint_attestations WHERE run_id=? AND archive_hash IS NOT NULL "
+                            "ORDER BY created_at DESC LIMIT 1",
+                            (request.run_id,),
+                        ).fetchone()
+                        if ckpt is not None:
+                            conn.execute(
+                                "UPDATE checkpoint_attestations SET tx_hash=?, block_number=?, status=?, error_message=? "
+                                "WHERE checkpoint_id=?",
+                                (result.tx_hash, result.block_number, result.status, result.error_message, ckpt["checkpoint_id"]),
+                            )
+                        else:
+                            conn.execute(
+                                "INSERT OR REPLACE INTO attestations "
+                                "(run_id, branch_id, world_state_hash, tx_hash, block_number, status, error_message) "
+                                "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                                (
+                                    request.run_id,
+                                    request.branch_id,
+                                    request.world_state_hash,
+                                    result.tx_hash,
+                                    result.block_number,
+                                    result.status,
+                                    result.error_message,
+                                ),
+                            )
+                    else:
+                        conn.execute(
+                            "INSERT OR REPLACE INTO attestations "
+                            "(run_id, branch_id, world_state_hash, tx_hash, block_number, status, error_message) "
+                            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                            (
+                                request.run_id,
+                                request.branch_id,
+                                request.world_state_hash,
+                                result.tx_hash,
+                                result.block_number,
+                                result.status,
+                                result.error_message,
+                            ),
+                        )
+                if result.status == "confirmed":
+                    log.info(
+                        "Attestation confirmed for %s %s: tx=%s",
+                        kind or "run",
+                        meta.get("checkpoint_id") if kind == "checkpoint" else request.run_id,
+                        result.tx_hash,
+                    )
+                else:
+                    log.warning(
+                        "Attestation failed for %s %s: %s",
+                        kind or "run",
+                        meta.get("checkpoint_id") if kind == "checkpoint" else request.run_id,
+                        result.error_message,
+                    )
+            except Exception:
+                target_id = meta.get("checkpoint_id") if kind == "checkpoint" else (request.run_id if request else "?")
+                log.warning("Attestation worker error for %s %s", kind or "run", target_id, exc_info=True)
+            finally:
+                if queue_key:
+                    with self._attestation_lock:
+                        self._attestation_queue.pop(queue_key, None)

@@ -1,17 +1,18 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { Activity, Boxes, GitFork, Info, LayoutDashboard, Plus, Settings2, SlidersHorizontal, Users } from 'lucide-react'
+import { Activity, Boxes, FileKey, GitFork, Info, LayoutDashboard, Plus, Settings2, SlidersHorizontal, Users } from 'lucide-react'
 import { api } from '../api'
 import type { EventEnvelope, Projection, Run } from '../types'
 import { ErrorBanner, shortId } from '../components/ui'
 import { QuickStartPage } from '../features/quickstart/QuickStartPage'
 import { AgentExplorer } from '../features/agents/AgentExplorer'
 import { BranchExplorer } from '../features/branches/BranchExplorer'
+import { CheckpointAnchorPage } from '../features/checkpoints/CheckpointAnchorPage'
 import { EventExplorer } from '../features/run/EventExplorer'
 import { InformationWorkspace, MarketWorkspace } from '../features/run/MarketWorkspace'
 import { RunTopbar } from '../features/run/RunTopbar'
 import { InterventionWorkspace } from '../features/interventions/InterventionWorkspace'
 
-type View = 'market' | 'agents' | 'events' | 'information' | 'interventions' | 'branches' | 'scenario'
+type View = 'market' | 'agents' | 'events' | 'information' | 'interventions' | 'checkpoints' | 'branches' | 'scenario'
 
 const navigation: Array<{ id: View; label: string; icon: typeof Activity; group: 'run' | 'manage' }> = [
   { id: 'market', label: '市场工作台', icon: LayoutDashboard, group: 'run' },
@@ -19,6 +20,7 @@ const navigation: Array<{ id: View; label: string; icon: typeof Activity; group:
   { id: 'events', label: '事件浏览器', icon: Activity, group: 'run' },
   { id: 'information', label: '信息流', icon: Info, group: 'run' },
   { id: 'interventions', label: '情景干预', icon: SlidersHorizontal, group: 'run' },
+  { id: 'checkpoints', label: '存档锚定', icon: FileKey, group: 'manage' },
   { id: 'branches', label: '分支与归档', icon: GitFork, group: 'manage' },
   { id: 'scenario', label: '新建场景', icon: Settings2, group: 'manage' },
 ]
@@ -143,6 +145,26 @@ export function AppShell() {
     finally { setBusy(false) }
   }
 
+  const resume = async (newBranchId: string) => {
+    if (!run) return
+    setBusy(true); setError(null)
+    try {
+      const fresh = await api.getRun<Run>(run.run_id)
+      setRuns(current => current.map(item => item.run_id === fresh.run_id ? fresh : item))
+      setCheckpointId(null)
+      setView('market')
+      await loadBranch(fresh, newBranchId)
+    } catch (reason) { setError(reason instanceof Error ? reason.message : '续跑跳转失败'); setBusy(false) }
+  }
+
+  const switchCheckpointScopeRun = async (runId: string) => {
+    const selected = runs.find(item => item.run_id === runId)
+    if (!selected) return
+    if (run?.run_id === runId) return
+    const branch = selected.branches[0]
+    if (branch) { setCheckpointId(null); setView('market'); await loadBranch(selected, branch.branch_id) }
+  }
+
   if (!run || !projection || !activeBranch) {
     return <main className="entry-screen">{error ? <ErrorBanner message={error} onClose={() => setError(null)} /> : null}{busy ? <div className="app-loading">正在连接本地运行时...</div> : <QuickStartPage onRun={acceptRun} />}</main>
   }
@@ -156,6 +178,7 @@ export function AppShell() {
       {view === 'events' ? <EventExplorer events={events} /> : null}
       {view === 'information' ? <InformationWorkspace projection={projection} /> : null}
       {view === 'interventions' ? <InterventionWorkspace branchId={branchId} branchStatus={historicalCursor === null ? activeBranch.status : 'Historical'} simTimeUs={projection.sim_time_us} provider={activeLlmProvider} onChanged={refresh} /> : null}
+      {view === 'checkpoints' ? <CheckpointAnchorPage run={run} runs={runs} onSwitchRun={switchCheckpointScopeRun} onResume={resume} /> : null}
       {view === 'branches' ? <BranchExplorer run={run} activeBranchId={branchId} projection={projection} checkpointId={checkpointId} onSelect={next => { void loadBranch(run, next) }} onFork={fork} onReplay={cursor => { void loadBranch(run, branchId, cursor) }} onExport={exportArchive} onImport={importArchive} /> : null}
       {view === 'scenario' ? <QuickStartPage embedded onRun={acceptRun} /> : null}
     </main>

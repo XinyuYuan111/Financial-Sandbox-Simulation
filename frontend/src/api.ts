@@ -51,4 +51,8 @@ export const api = {
     form.append('archive', file)
     return request<T>('/api/v1/archives/import', { method: 'POST', body: form })
   },
+  listCheckpoints: <T>(runId?: string) => request<T>(runId ? `/api/v1/checkpoints?run_id=${encodeURIComponent(runId)}` : '/api/v1/checkpoints'),
+  resumeFromCheckpoint: <T>(checkpointId: string, verifyChain = true) => request<T>(`/api/v1/checkpoints/${encodeURIComponent(checkpointId)}/resume`, { method: 'POST', headers: jsonHeaders, body: JSON.stringify({ client_command_id: crypto.randomUUID(), verify_chain: verifyChain }) }),
+  listAttestedRuns: <T>() => request<T>('/api/v1/runs-attested'),
+  attestRun: <T>(runId: string) => request<T>(`/api/v1/runs/${encodeURIComponent(runId)}/attest`, { method: 'POST', headers: jsonHeaders, body: JSON.stringify({ client_command_id: crypto.randomUUID() }) }),
 }
