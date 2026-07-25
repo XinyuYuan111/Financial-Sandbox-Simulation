@@ -130,8 +130,11 @@ if settings.frontend_dist.exists():
     async def frontend(path: str):
         candidate = settings.frontend_dist / path
         if path and candidate.is_file() and settings.frontend_dist in candidate.resolve().parents:
-            return FileResponse(candidate)
-        return FileResponse(settings.frontend_dist / "index.html")
+            return FileResponse(candidate, headers={"Cache-Control": "no-store"})
+        return FileResponse(
+            settings.frontend_dist / "index.html",
+            headers={"Cache-Control": "no-store"},
+        )
 else:
     @app.get("/")
     async def no_frontend():
