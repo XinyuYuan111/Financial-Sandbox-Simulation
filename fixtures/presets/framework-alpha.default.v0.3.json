@@ -24,7 +24,7 @@
       "display_name": "Alpha Desk",
       "strategy": "rule",
       "role_tags": ["capital_holder"],
-      "capabilities": ["market.trade", "information.read"],
+      "capabilities": ["market.trade", "information.read", "information.publish"],
       "token_balance": 100000,
       "usdx_balance": 2000000000
     },
@@ -33,7 +33,7 @@
       "display_name": "Beta Flow",
       "strategy": "rule",
       "role_tags": ["market_participant"],
-      "capabilities": ["market.trade", "information.read"],
+      "capabilities": ["market.trade", "information.read", "information.publish"],
       "token_balance": 100000,
       "usdx_balance": 2000000000
     },

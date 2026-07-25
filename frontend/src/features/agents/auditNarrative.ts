@@ -80,12 +80,18 @@ export function observationNarrative(observation: Record<string, unknown>): Narr
     lines.push({ title: '账户', text: `${balanceParts.join('；')}。当前有 ${orders} 笔未完成订单。` })
   }
 
-  const information = [...asRecords(observation.information_items), ...asRecords(observation.private_messages)]
+  const informationById = new Map<string, Record<string, unknown>>()
+  ;[...asRecords(observation.information_items), ...asRecords(observation.private_messages)].forEach(item => {
+    informationById.set(text(item.information_id, String(informationById.size)), item)
+  })
+  const information = [...informationById.values()]
   if (information.length) {
     const latest = information[information.length - 1]
-    const signal = signalText(latest)
+    const signal = claimText(latest)
     const content = text(latest.rendered_content, '收到一条没有正文的信息')
-    lines.push({ title: '最新信息', text: `${content}${signal ? `（${signal}）` : ''}` })
+    const source = text(latest.source_id, '未知来源')
+    const delivery = text(latest.visibility) === 'agent_private' ? '私下告诉该 Agent' : '发布到公开信息流'
+    lines.push({ title: '最新信息', text: `${source} ${delivery}：“${content}”${signal ? `；${signal}` : ''}。` })
   }
 
   const receipts = asRecords(observation.action_receipts)
@@ -124,9 +130,23 @@ export function directiveNarrative(directive: unknown): NarrativeLine {
     return { title: '撤销订单', text: `撤销${selector}；${emission}。` }
   }
   if (type === 'communication') {
+    if (text(item.communication_mode) === 'withhold') {
+      return {
+        title: '保留私有判断',
+        text: `Agent 选择不通过${channelText(item.channel)}释放当前${directionText(item.private_assessment_direction)}判断；${emission}。`,
+      }
+    }
     const targets = asArray(item.target_ids).length ? `，发送给 ${asArray(item.target_ids).length} 个指定 Agent` : ''
-    const signal = signalText(item)
-    return { title: '发布信息', text: `通过${channelText(item.channel)}发布“${text(item.message_payload)}”${targets}${signal ? `；信号为${signal}` : ''}；${emission}。` }
+    const signal = claimText(item)
+    const selective = text(item.channel) === 'PrivateChannel'
+    const deceptive = text(item.claim_intent) === 'strategic_deception'
+    const intent = deceptive
+      ? `；分析记录显示，这一说法与其私有${directionText(item.private_assessment_direction)}判断相反`
+      : ''
+    return {
+      title: selective ? '定向披露' : '公开表达',
+      text: `通过${channelText(item.channel)}发送“${text(item.message_payload)}”${targets}${signal ? `；${signal}` : ''}${intent}；${emission}。`,
+    }
   }
   return { title: type || '未知指令', text: `执行计划指令 ${text(item.directive_key, '未命名')}；${emission}。` }
 }
@@ -168,10 +188,16 @@ export function decisionNarrative(decision: Record<string, unknown>, outcome: Re
   if (actions.length) {
     const actionIds = new Set(actionProposals.map(proposal => text(proposal.proposal_id)).filter(Boolean))
     const accepted = asRecords(outcome.proposal_results).filter(result => actionIds.has(text(result.proposal_id)) && result.accepted === true).length
+    const communicationCount = actionProposals.filter(proposal => text(proposal.action_type) === 'PublishInformation').length
+    const marketCount = actions.length - communicationCount
+    const actionKinds = [
+      communicationCount ? `${communicationCount} 条交流` : '',
+      marketCount ? `${marketCount} 个交易动作` : '',
+    ].filter(Boolean).join('，')
     return {
       kind: 'action',
-      label: `${actions.length} 个市场动作`,
-      summary: accepted ? `本轮提出 ${actions.length} 个市场动作，其中 ${accepted} 个已通过决策校验。` : `本轮提出 ${actions.length} 个市场动作，等待或未通过后续校验。`,
+      label: actionKinds,
+      summary: accepted ? `本轮提出${actionKinds}，其中 ${accepted} 个已通过决策校验。` : `本轮提出${actionKinds}，正在等待或未通过后续校验。`,
       actions,
     }
   }
@@ -260,7 +286,56 @@ export function rationaleLines(decision: Record<string, unknown>): NarrativeLine
   if (uncertainty !== null) lines.push({ title: '不确定度', text: `${uncertainty} / 1000` })
   const flags = asArray(rationale.risk_flags).map(item => riskText(String(item)))
   if (flags.length) lines.push({ title: '风险标记', text: flags.join('、') })
+  const evidenceCount = asArray(rationale.evidence_ids).length
+  const beliefCount = asArray(rationale.belief_ids).length
+  if (evidenceCount || beliefCount) {
+    lines.push({ title: '认知依据', text: `引用 ${evidenceCount} 条观察或信息证据，以及 ${beliefCount} 条既有信念。` })
+  }
   return lines
+}
+
+export function memoryNarrative(entry: Record<string, unknown>): NarrativeLine[] {
+  const sourceIds = asArray(entry.source_ids).map(String)
+  const fromMarket = sourceIds.some(source => source.startsWith('obs')) || text(entry.summary).startsWith('Market snapshot:')
+  return [
+    { title: '记忆内容', text: marketMemoryText(text(entry.summary, '未记录摘要')) },
+    { title: '形成来源', text: fromMarket ? '来自该 Agent 当时保存的盘口与成交观察。' : '来自该 Agent 实际查看过的信息或私信。' },
+    { title: '主观权重', text: `确信程度 ${formatNumber(entry.confidence_milli)} / 1000，显著性 ${formatNumber(entry.salience)} / 100。` },
+  ]
+}
+
+export function beliefNarrative(belief: Record<string, unknown>): NarrativeLine[] {
+  const predicate = text(belief.predicate)
+  const labels: Record<string, string> = {
+    observed_market_state: '对当前市场状态的判断',
+    market_signal: '对他人市场主张的判断',
+    reported_information: '对所获信息的判断',
+    own_statement: '对自己已发送说法的记录',
+  }
+  const rawValue = text(belief.value, '未记录结论')
+  const value = rawValue === 'bullish' || rawValue === 'bearish' || rawValue === 'neutral'
+    ? directionText(rawValue)
+    : marketMemoryText(rawValue)
+  const evidenceCount = asArray(belief.evidence_memory_ids).length
+  return [
+    { title: labels[predicate] ?? '当前信念', text: `${text(belief.subject, '未知对象')}：${value}。` },
+    { title: '确信程度', text: `${formatNumber(belief.confidence_milli)} / 1000；依据 ${evidenceCount} 条仍可引用的记忆。` },
+    ...(belief.updated_sim_time_us === undefined ? [] : [{ title: '最近修订', text: `在${simulationTimeText(belief.updated_sim_time_us)}更新。` }]),
+  ]
+}
+
+export function informationNarrative(item: Record<string, unknown>): { scope: string; claim: string; provenance: string } {
+  const targets = asArray(item.target_ids).length
+  const scope = text(item.visibility) === 'agent_private'
+    ? `定向发送给 ${targets} 个 Agent`
+    : `发布到${channelText(item.channel)}`
+  const claim = claimText(item) || '没有附带结构化方向主张'
+  const derived = text(item.derived_from_info_id)
+  return {
+    scope,
+    claim,
+    provenance: derived ? '这条信息是在另一条已观察信息基础上形成的。' : '这是一条原始发布的信息。',
+  }
 }
 
 export function actionProposalText(proposal: Record<string, unknown>): string {
@@ -282,7 +357,9 @@ export function actionProposalText(proposal: Record<string, unknown>): string {
   }
   if (actionType === 'PublishInformation') {
     const targets = asArray(payload.target_ids).length ? `，定向发送给 ${asArray(payload.target_ids).length} 个 Agent` : ''
-    return `通过${channelText(payload.channel)}发布“${text(payload.content, '无正文')}”${targets}。`
+    const deceptive = text(payload.claim_intent) === 'strategic_deception'
+    const audit = deceptive ? ` 分析记录：公开说法与其私有${directionText(payload.private_assessment_direction)}判断相反。` : ''
+    return `通过${channelText(payload.channel)}发送“${text(payload.content, '无正文')}”${targets}。${audit}`
   }
   return `提交动作 ${actionType || '未知类型'}。`
 }
@@ -347,7 +424,7 @@ function tradeStyleText(value: unknown): string {
   return labels[text(value)] ?? '交易'
 }
 
-function channelText(value: unknown): string {
+export function channelText(value: unknown): string {
   const labels: Record<string, string> = {
     PublicFeed: '公开信息流', OfficialAnnouncement: '官方公告', TradingTerminal: '交易终端', PrivateChannel: '私有频道',
   }
@@ -367,17 +444,32 @@ function emissionText(value: unknown): string {
 function durationText(value: unknown): string {
   const microseconds = number(value)
   if (microseconds === null) return '未知时长'
-  if (microseconds >= 60_000_000) return `${integer.format(microseconds / 60_000_000)} 分钟`
-  if (microseconds >= 1_000_000) return `${integer.format(microseconds / 1_000_000)} 秒`
+  if (microseconds >= 1_000_000) return `${integer.format(microseconds / 1_000_000)} 个模拟分钟`
   return `${integer.format(microseconds)} 微秒`
 }
 
-function signalText(item: Record<string, unknown>): string {
+function claimText(item: Record<string, unknown>): string {
   const direction = text(item.signal_direction)
-  const labels: Record<string, string> = { bullish: '偏多', bearish: '偏空', neutral: '中性' }
   if (!direction) return ''
   const confidence = number(item.signal_confidence_milli)
-  return `${labels[direction] ?? direction}${confidence === null ? '' : `，置信度 ${confidence} / 1000`}`
+  return `发布者声称市场${directionText(direction)}${confidence === null ? '' : `，自报信心 ${confidence} / 1000`}`
+}
+
+function directionText(value: unknown): string {
+  const labels: Record<string, string> = { bullish: '偏多', bearish: '偏空', neutral: '中性' }
+  return labels[text(value)] ?? text(value, '方向未知')
+}
+
+function marketMemoryText(value: string): string {
+  const match = value.match(/^Market snapshot: best bid ([^,]+), best ask ([^,]+), last trade ([^,]+), recent volume ([^.]+)\.$/)
+  if (!match) return value
+  const [, bid, ask, trade, volume] = match
+  return `当时最优买价为 ${bid === 'none' ? '暂无' : bid}，最优卖价为 ${ask === 'none' ? '暂无' : ask}，最近成交为 ${trade === 'none' ? '暂无' : trade}，近期累计成交量为 ${volume}`
+}
+
+function simulationTimeText(value: unknown): string {
+  const microseconds = number(value)
+  return microseconds === null ? '未知时间' : `模拟第 ${(microseconds / 1_000_000).toFixed(2)} 分钟`
 }
 
 function short(value: string): string {
@@ -411,6 +503,10 @@ function riskText(value: string): string {
     cognitive_budget_exhausted: '本周期规划额度已用完',
     no_directive_eligible: '本轮没有满足条件的指令',
     plan_expired: '计划已经过期',
+    communication_withheld: '选择保留私有判断',
+    selective_disclosure: '选择定向披露',
+    strategic_deception: '公开说法与私有判断相反',
+    communication_policy_enriched: '交易计划已补充独立交流策略',
   }
   return labels[value] ?? value.replaceAll('_', ' ')
 }
@@ -430,6 +526,12 @@ function translatePipelineText(value: string): string {
     'Preserve capital because no capability-safe demo directive is available.': '当前没有符合能力和风险约束的演示指令，因此保护本金。',
   }
   if (labels[value]) return labels[value]
+  const hostCommunication = "The host added the Agent's independent, bounded communication policy."
+  if (value.includes(hostCommunication)) {
+    const base = value.replace(hostCommunication, '').trim()
+    const translatedBase = base ? translatePipelineText(base) : ''
+    return `${translatedBase}${translatedBase ? ' ' : ''}系统还补入了独立且有次数上限的交流策略。`
+  }
   if (value.startsWith('The local rule planner used the saved observation')) {
     return '本地规则规划器综合了当前观察、可访问记忆与信念、Persona、能力和可用余额。'
   }

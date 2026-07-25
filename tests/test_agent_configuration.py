@@ -44,6 +44,18 @@ def population(drafts: list[AgentConfigurationDraft]):
 
 
 class AgentConfigurationTests(unittest.TestCase):
+    def test_random_agent_without_archetype_can_publish_by_default(self) -> None:
+        compiled = compile_agent_configuration(
+            AgentConfigurationDraft(draft_id="random-default", input_mode="random"),
+            seed=20260724,
+            ordinal=1,
+            planner_kind="deepseek",
+        )
+        self.assertEqual(
+            compiled.definition.capability_set,
+            ["market.trade", "information.read", "information.publish"],
+        )
+
     def test_funding_profile_is_not_a_current_agent_input(self) -> None:
         with self.assertRaises(PydanticValidationError):
             AgentConfig.model_validate({

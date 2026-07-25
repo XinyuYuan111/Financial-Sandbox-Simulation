@@ -149,9 +149,9 @@ Stop-Process -Id $sandboxProcessId
 9. 恢复运行，观察市场、信息流和各 Agent 的独立反应。
 10. 点击停止按钮结束当前分支。
 
-Fixture 中的本地 rule Agent 会依据角色、能力、Persona、可用余额和场景 seed 生成确定性的演示计划：市场参与者交易，流动性提供者挂双边报价，信息参与者发布公开信息。演示指令每 5 个仿真分钟最多发射一次，每份计划最多发射两次，再经过活动冷却请求新计划。所有动作仍经过正常的能力校验、风控、资产预留、延迟队列、撮合和回执链。修改代码后应新建运行；已有运行中保存的空计划不会被追溯改写。
+Fixture 中的本地 rule Agent 会依据角色、能力、Persona、可用余额和场景 seed 生成确定性的演示计划：市场参与者可以在交易的同时交流，流动性提供者挂双边报价，信息参与者持续发布或保留自己的判断。无原型随机 Agent 默认同时具备 `information.read` 和 `information.publish`；非 replay 规划器返回有效但只有市场动作的计划时，宿主会补入独立、受限的通信指令，避免 LLM 遗漏通信。交易指令每 5 个仿真分钟最多发射一次、每份计划最多两次；通信指令每 2 个仿真分钟最多发射一次、每份计划最多六次。周期指令通过虚拟时间唤醒，不依赖碰巧发生另一笔市场事件。所有动作仍经过正常的能力校验、风控、资产预留、延迟队列、撮合和回执链。修改默认能力后应重新解析场景（或新建场景）再创建运行；已有解析结果和运行中保存的 Agent 能力、旧计划不会被追溯改写。
 
-Agent 之间的公开信息通过 `InformationDelivered`、`InformationViewed` 和 observation 链路传播，不会直接写入其他 Agent 的私有状态。演示信息可带有结构化的 bullish/bearish 信号和置信度；交易型 Agent 会按自身 skepticism 折扣信号，写入 belief，并在收到新信息后重新规划。只有有结构化信号的消息会直接影响 rule planner 的买卖方向，普通文本仍作为待判断证据交给 Agent/LLM。
+Agent 之间的信息通过 `InformationDelivered`、`PrivateMessageDelivered`、`InformationViewed` 和 observation 链路传播，不会直接写入其他 Agent 的私有状态。Agent 可以公开表达、向观察到的交易对手定向披露、保留判断，或发布与其私有评估相反的策略性说法。接收方只看到声明和发布者自报信心，不会看到隐藏意图；`CommunicationIntentRecorded` 和 `InformationWithheld` 只供分析端审计。交易型 Agent 会按自身 skepticism 折扣声明，写入 belief，并在收到新信息后重新规划。盘口和成交变化也会形成有来源的市场记忆与信念，不再只有用户干预或消息能改变认知。
 
 背景市场不再只有静态做市：原背景资产会拆分为 maker 与 `background_order_flow` 两个运行账户。maker 维护多档双边深度，order flow 按可复现的概率主动吃 maker 的最优单或在盘口内挂方向单；概率、抽样值和动作类型记录为 `BackgroundOrderFlowSampled`。两者不能自成交，资产总量仍按原背景预算守恒。
 

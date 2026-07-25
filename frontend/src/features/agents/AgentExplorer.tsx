@@ -10,6 +10,8 @@ import {
   decisionNarrative,
   directiveNarrative,
   goalText,
+  beliefNarrative,
+  memoryNarrative,
   observationNarrative,
   outcomeText,
   rationaleLines,
@@ -97,8 +99,8 @@ function Overview({ detail, audit }: { detail: AgentDetail; audit: AgentAudit })
   const definition = asRecord(detail.definition)
   const persona = asRecord(definition.base_persona)
   return <div className="agent-overview">
-    <section className="fact-grid agent-facts"><div><span>角色标签</span><strong>{detail.role_tags?.[0] ?? '-'}</strong></div><div><span>规划器</span><strong>{detail.planner_profile_id ?? '-'}</strong></div><div><span>开放订单</span><strong>{detail.portfolio.open_orders.length}</strong></div><div><span>审计决策</span><strong>{audit.decisions.length}</strong></div></section>
-    <div className="overview-grid"><section><h3>账户</h3><table><thead><tr><th>资产</th><th>可用</th><th>锁定</th></tr></thead><tbody>{Object.entries(balances).map(([asset, balance]) => <tr key={asset}><td><strong>{asset}</strong></td><td>{formatInteger(balance.free)}</td><td>{formatInteger(balance.locked)}</td></tr>)}</tbody></table></section><section><h3>身份与能力</h3><dl className="detail-list"><div><dt>公开身份</dt><dd>{String(definition.public_identity ?? '-')}</dd></div><div><dt>风险承受度</dt><dd>{String(persona.risk_tolerance_milli ?? '-')} / 1000</dd></div><div><dt>时间范围</dt><dd>{String(persona.time_horizon ?? '-')}</dd></div><div><dt>能力</dt><dd>{detail.capabilities?.join(', ') || '-'}</dd></div><div><dt>角色</dt><dd>{detail.role_tags?.join(', ') || '-'}</dd></div></dl></section></div>
+    <section className="fact-grid agent-facts"><div><span>主要角色</span><strong>{roleText(detail.role_tags?.[0])}</strong></div><div><span>当前计划</span><strong>{detail.active_strategy_revision ? `第 ${detail.active_strategy_revision} 版` : '尚未形成'}</strong></div><div><span>未完成订单</span><strong>{detail.portfolio.open_orders.length}</strong></div><div><span>已记录决策</span><strong>{audit.decisions.length}</strong></div></section>
+    <div className="overview-grid"><section><h3>账户</h3><table><thead><tr><th>资产</th><th>可用</th><th>锁定</th></tr></thead><tbody>{Object.entries(balances).map(([asset, balance]) => <tr key={asset}><td><strong>{asset}</strong></td><td>{formatInteger(balance.free)}</td><td>{formatInteger(balance.locked)}</td></tr>)}</tbody></table></section><section><h3>身份与行为边界</h3><dl className="detail-list"><div><dt>公开身份</dt><dd>{String(definition.public_identity ?? '-')}</dd></div><div><dt>风险承受度</dt><dd>{String(persona.risk_tolerance_milli ?? '-')} / 1000</dd></div><div><dt>时间偏好</dt><dd>{timeHorizonText(String(persona.time_horizon ?? ''))}</dd></div><div><dt>可以执行</dt><dd>{detail.capabilities?.map(capabilityText).join('、') || '-'}</dd></div><div><dt>角色</dt><dd>{detail.role_tags?.map(roleText).join('、') || '-'}</dd></div></dl></section></div>
   </div>
 }
 
@@ -107,7 +109,7 @@ function Observations({ observations }: { observations: Array<Record<string, unk
   return <div className="audit-list">{observations.map(observation => {
     const triggers = asArray(observation.decision_triggers)
     return <article key={String(observation.observation_id)}>
-      <header><div><strong>市场与账户观察</strong><span>{formatTime(Number(observation.sim_time_us))}</span></div><span>world v{String(observation.world_version)}</span></header>
+      <header><div><strong>{observationTitle(triggers)}</strong><span>{formatTime(Number(observation.sim_time_us))}</span></div><span>观察版本 {String(observation.world_version)}</span></header>
       <NarrativeRows lines={observationNarrative(observation)} />
       <div className="trigger-row">{triggers.map((trigger, index) => <span className="audit-chip" key={index}>{triggerText(trigger)}</span>)}{!triggers.length ? <span className="muted">本次观察没有附带决策触发器</span> : null}</div>
       <details><summary>技术审计数据</summary><JsonBlock value={observation} /></details>
@@ -118,7 +120,54 @@ function Observations({ observations }: { observations: Array<Record<string, unk
 function MemoryBeliefs({ detail }: { detail: AgentDetail }) {
   const runtime = detail.runtime_state
   if (!runtime) return <EmptyState title="暂无运行时状态" />
-  return <div className="memory-grid"><section><h3>记忆 <span>{runtime.memory_entries.length}</span></h3>{runtime.memory_entries.length ? <div className="audit-list compact">{runtime.memory_entries.map((entry, index) => <article key={String(entry.memory_id ?? index)}><header><strong>{String(entry.summary ?? '-')}</strong><StatusBadge status={entry.accessible === false ? 'forgotten' : 'active'} /></header><p>置信度 {String(entry.confidence_milli ?? 0)} · 显著性 {String(entry.salience ?? 0)}</p></article>)}</div> : <EmptyState title="暂无记忆" />}</section><section><h3>信念 <span>{runtime.beliefs.length}</span></h3>{runtime.beliefs.length ? <div className="audit-list compact">{runtime.beliefs.map((belief, index) => <article key={String(belief.belief_id ?? index)}><header><strong>{String(belief.subject ?? '-')} · {String(belief.predicate ?? '-')}</strong><span>{String(belief.confidence_milli ?? 0)} / 1000</span></header><p>{String(belief.value ?? '-')}</p></article>)}</div> : <EmptyState title="暂无信念" />}</section></div>
+  const memories = [...runtime.memory_entries].reverse()
+  const communicationMemories = memories.filter(entry => !isMarketMemory(entry))
+  const marketMemories = memories.filter(isMarketMemory)
+  const beliefs = [...runtime.beliefs].reverse()
+  const communicationBeliefs = beliefs.filter(isCommunicationBelief)
+  const marketBeliefs = beliefs.filter(belief => !isCommunicationBelief(belief))
+  const canPublish = detail.capabilities.includes('information.publish')
+  return <div className="memory-grid">
+    <section>
+      <h3>Agent 交流记忆 <span>{communicationMemories.length}</span></h3>
+      {communicationMemories.length
+        ? <MemoryList entries={communicationMemories} />
+        : <EmptyState
+          title={canPublish ? '尚未收到其他 Agent 的交流' : '当前 Agent 没有发布能力'}
+          detail={canPublish
+            ? '公开观点或定向消息被该 Agent 实际查看后，会优先显示在这里。'
+            : '该运行创建时未授予 information.publish；同一运行中的 Agent 若都采用该旧配置，就不会产生彼此交流。'}
+        />}
+      <h3 className="memory-subheading">市场观察 <span>{marketMemories.length}</span></h3>
+      {marketMemories.length ? <MemoryList entries={marketMemories} /> : <EmptyState title="尚无市场观察记忆" />}
+    </section>
+    <section>
+      <h3>由交流形成的信念 <span>{communicationBeliefs.length}</span></h3>
+      {communicationBeliefs.length
+        ? <BeliefList beliefs={communicationBeliefs} />
+        : <EmptyState title="尚无交流信念" detail="收到其他 Agent 的主张后，这里会记录来源、方向与主观置信度。" />}
+      <h3 className="memory-subheading">自身市场判断 <span>{marketBeliefs.length}</span></h3>
+      {marketBeliefs.length ? <BeliefList beliefs={marketBeliefs} /> : <EmptyState title="尚无市场状态信念" />}
+    </section>
+  </div>
+}
+
+function MemoryList({ entries }: { entries: Array<Record<string, unknown>> }) {
+  return <div className="audit-list compact">{entries.map((entry, index) => <article key={String(entry.memory_id ?? index)}><header><strong>{memorySourceTitle(entry)}</strong><StatusBadge status={entry.accessible === false ? 'forgotten' : 'active'} /></header><NarrativeRows lines={memoryNarrative(entry)} compact /></article>)}</div>
+}
+
+function BeliefList({ beliefs }: { beliefs: Array<Record<string, unknown>> }) {
+  return <div className="audit-list compact">{beliefs.map((belief, index) => <article key={String(belief.belief_id ?? index)}><header><strong>{beliefTitle(belief)}</strong><span>{String(belief.confidence_milli ?? 0)} / 1000</span></header><NarrativeRows lines={beliefNarrative(belief)} compact /></article>)}</div>
+}
+
+function isMarketMemory(entry: Record<string, unknown>): boolean {
+  const summary = String(entry.summary ?? '')
+  const sourceIds = asArray(entry.source_ids).map(String)
+  return summary.startsWith('Market snapshot:') || sourceIds.some(source => source.startsWith('obs'))
+}
+
+function isCommunicationBelief(belief: Record<string, unknown>): boolean {
+  return ['market_signal', 'reported_information', 'own_statement'].includes(String(belief.predicate ?? ''))
 }
 
 function Plans({ plans }: { plans: AgentAudit['plans'] }) {
@@ -176,4 +225,46 @@ function Receipts({ receipts, decisions }: { receipts: AgentAudit['receipts']; d
 function NarrativeRows({ lines, compact = false }: { lines: NarrativeLine[]; compact?: boolean }) {
   if (!lines.length) return null
   return <dl className={`narrative-rows${compact ? ' compact' : ''}`}>{lines.map((line, index) => <div key={`${line.title}-${index}`}><dt>{line.title}</dt><dd>{line.text}</dd></div>)}</dl>
+}
+
+function roleText(value: string | undefined): string {
+  const labels: Record<string, string> = {
+    market_participant: '普通市场参与者', capital_holder: '资本型持有者',
+    liquidity_provider: '流动性提供者', asset_issuer: '资产发行方', information_participant: '信息参与者',
+  }
+  return labels[value ?? ''] ?? value ?? '未标注角色'
+}
+
+function capabilityText(value: string): string {
+  const labels: Record<string, string> = {
+    'market.trade': '交易', 'market.quote': '提供报价', 'information.read': '读取已送达信息', 'information.publish': '公开或定向交流',
+  }
+  return labels[value] ?? value
+}
+
+function timeHorizonText(value: string): string {
+  return ({ short: '偏短期', medium: '中期', long: '偏长期' } as Record<string, string>)[value] ?? (value || '-')
+}
+
+function observationTitle(triggers: unknown[]): string {
+  const types = new Set(triggers.map(item => String(asRecord(item).type ?? '')))
+  if (types.has('private_message')) return '收到一条定向消息后的观察'
+  if (types.has('information')) return '收到新信息后的观察'
+  if (types.has('market_change')) return '市场变化后的观察'
+  if (types.has('own_action_outcome')) return '自身动作返回后的观察'
+  if (types.has('initial_observation')) return '进入市场时的首次观察'
+  return 'Agent 当时实际看到的内容'
+}
+
+function memorySourceTitle(entry: Record<string, unknown>): string {
+  const summary = String(entry.summary ?? '')
+  return summary.startsWith('Market snapshot:') ? '一段市场观察' : '一条已查看信息'
+}
+
+function beliefTitle(belief: Record<string, unknown>): string {
+  const labels: Record<string, string> = {
+    observed_market_state: '市场状态判断', market_signal: '他人市场主张',
+    reported_information: '信息判断', own_statement: '自身发言记录',
+  }
+  return labels[String(belief.predicate ?? '')] ?? '主观判断'
 }

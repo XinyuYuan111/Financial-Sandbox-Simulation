@@ -27,6 +27,8 @@ from sandbox.agents.reactive import align_price, evaluate_condition, market_refe
 DEMO_ACTIVITY_POLICY_ID = "demo-agent-activity.v0.1"
 DEMO_ACTIVITY_EMISSION_INTERVAL_US = 5_000_000
 DEMO_ACTIVITY_MAX_EMISSIONS = 2
+DEMO_COMMUNICATION_INTERVAL_US = 2_000_000
+DEMO_COMMUNICATION_MAX_EMISSIONS = 6
 # An empty LLM plan is a useful signal that the provider declined to act, not a
 # reason for the market to become inert. Keep the sample explicit and bounded.
 DEMO_NOOP_FALLBACK_PROBABILITY_MILLI = 750
@@ -101,6 +103,177 @@ def _observed_market_signal(
     return ("buy" if net_signal > 0 else "sell"), evidence_ids, belief_ids
 
 
+def _visible_peer_ids(definition: AgentDefinition, observation: ObservationPacket) -> list[str]:
+    market = observation.market_view
+    candidates = {
+        *(order.agent_id for order in [*market.bids, *market.asks]),
+        *(trade.buyer_id for trade in market.trades),
+        *(trade.seller_id for trade in market.trades),
+        *(item.source_id for item in observation.information_items),
+    }
+    return sorted(
+        agent_id
+        for agent_id in candidates
+        if agent_id != definition.agent_id and not agent_id.startswith("background")
+    )
+
+
+def _communication_directive(
+    *,
+    definition: AgentDefinition,
+    observation: ObservationPacket,
+    state: AgentRuntimeState,
+    seed: int,
+    strategy_revision: int,
+    force: bool = False,
+    allow_withhold: bool = True,
+) -> tuple[CommunicationDirective | None, list[str]]:
+    capabilities = set(definition.capability_set)
+    if "information.publish" not in capabilities:
+        return None, []
+
+    role_tags = set(definition.role_tags)
+    persona = definition.base_persona
+    family_draw = _draw_milli(seed, DEMO_ACTIVITY_POLICY_ID, definition.agent_id, strategy_revision, "family")
+    should_communicate = (
+        force
+        or "information_participant" in role_tags
+        or ("asset_issuer" in role_tags and strategy_revision % 2 == 0)
+        or "market.trade" not in capabilities
+        or family_draw < min(950, persona.communication_propensity_milli + 250)
+    )
+    if not should_communicate:
+        return None, []
+
+    observed_side, _, _ = _observed_market_signal(definition, observation, state)
+    side_draw = _draw_milli(seed, DEMO_ACTIVITY_POLICY_ID, definition.agent_id, strategy_revision, "side")
+    message_draw = _draw_milli(seed, DEMO_ACTIVITY_POLICY_ID, definition.agent_id, strategy_revision, "message")
+    disclosure_draw = _draw_milli(seed, DEMO_ACTIVITY_POLICY_ID, definition.agent_id, strategy_revision, "disclosure")
+    intent_draw = _draw_milli(seed, DEMO_ACTIVITY_POLICY_ID, definition.agent_id, strategy_revision, "intent")
+    private_assessment = (
+        "bullish" if observed_side == "buy" else
+        "bearish" if observed_side == "sell" else
+        "bullish" if side_draw < persona.trend_bias_milli else "bearish"
+    )
+    signal_confidence = 550 + family_draw * 300 // 1_000
+    peers = _visible_peer_ids(definition, observation)
+    withhold_threshold = max(
+        50,
+        min(300, (1_000 - persona.communication_propensity_milli) // 4 + persona.skepticism_milli // 8),
+    )
+    if allow_withhold and disclosure_draw < withhold_threshold:
+        return CommunicationDirective(
+            directive_key="withhold_market_view",
+            channel="PublicFeed",
+            communication_mode="withhold",
+            private_assessment_direction=private_assessment,
+            emission=EmissionPolicy(
+                mode="periodic",
+                interval_us=DEMO_COMMUNICATION_INTERVAL_US,
+                max_emissions=DEMO_COMMUNICATION_MAX_EMISSIONS,
+            ),
+        ), ["communication_withheld"]
+
+    selective = bool(peers) and disclosure_draw < withhold_threshold + 250
+    deceptive = intent_draw < max(75, persona.risk_tolerance_milli // 4)
+    signal_direction = (
+        "bearish" if private_assessment == "bullish" else "bullish"
+    ) if deceptive else private_assessment
+    channel: Literal["PublicFeed", "PrivateChannel"] = "PrivateChannel" if selective else "PublicFeed"
+    targets = [peers[message_draw * len(peers) // 1_000]] if selective else []
+    reference = market_reference(observation)
+    messages = {
+        "bullish": (
+            f"{definition.display_name} 观察到 {reference} 附近的买盘可能增强，短期更偏向上行。",
+            f"{definition.display_name} 认为 {reference} 附近的需求正在转强。",
+            f"{definition.display_name} 判断当前订单流在 {reference} 附近呈现向上压力。",
+        ),
+        "bearish": (
+            f"{definition.display_name} 观察到 {reference} 附近的卖盘可能增强，短期更偏向下行。",
+            f"{definition.display_name} 认为 {reference} 附近的供给正在转强。",
+            f"{definition.display_name} 判断当前订单流在 {reference} 附近呈现向下压力。",
+        ),
+    }[signal_direction]
+    directive_key = "host_share_market_view" if force else "share_market_view"
+    flags = ["selective_disclosure"] if selective else []
+    if deceptive:
+        flags.append("strategic_deception")
+    return CommunicationDirective(
+        directive_key=directive_key,
+        channel=channel,
+        message_payload=messages[message_draw * len(messages) // 1_000],
+        target_ids=targets,
+        signal_direction=signal_direction,
+        signal_confidence_milli=signal_confidence,
+        claim_intent="strategic_deception" if deceptive else "sincere",
+        private_assessment_direction=private_assessment,
+        emission=EmissionPolicy(
+            mode="periodic",
+            interval_us=DEMO_COMMUNICATION_INTERVAL_US,
+            max_emissions=DEMO_COMMUNICATION_MAX_EMISSIONS,
+        ),
+    ), flags
+
+
+def ensure_communication_directive(
+    candidate: PlanningResultCandidate,
+    *,
+    definition: AgentDefinition,
+    observation: ObservationPacket,
+    state: AgentRuntimeState,
+    seed: int,
+) -> PlanningResultCandidate:
+    """Add the independent communication lane when an active plan omitted it."""
+    if (
+        not candidate.directives
+        or len(candidate.directives) >= 32
+        or any(isinstance(directive, CommunicationDirective) for directive in candidate.directives)
+    ):
+        return candidate
+    directive, communication_flags = _communication_directive(
+        definition=definition,
+        observation=observation,
+        state=state,
+        seed=seed,
+        strategy_revision=candidate.based_on_strategy_revision,
+        force=True,
+        allow_withhold=False,
+    )
+    if directive is None:
+        return candidate
+
+    used_keys = {item.directive_key for item in candidate.directives}
+    if directive.directive_key in used_keys:
+        directive = directive.model_copy(update={"directive_key": "host_periodic_market_view"})
+    goals = list(candidate.goals)
+    if len(goals) < 16 and not any(goal.goal_key == "share_market_information" for goal in goals):
+        goals.append(Goal(goal_key="share_market_information", priority=60))
+    constraints = [
+        constraint.model_copy(update={"amount": constraint.amount + directive.emission.max_emissions})
+        if constraint.kind == "allowed_action_count"
+        else constraint
+        for constraint in candidate.constraints
+    ]
+    risk_flags = list(dict.fromkeys([
+        *candidate.rationale.risk_flags,
+        "communication_policy_enriched",
+        *communication_flags,
+    ]))
+    stated_reason = candidate.rationale.stated_reason.rstrip()
+    rationale = candidate.rationale.model_copy(update={
+        "risk_flags": risk_flags,
+        "stated_reason": (
+            f"{stated_reason} The host added the Agent's independent, bounded communication policy."
+        ).strip(),
+    })
+    return candidate.model_copy(update={
+        "goals": goals,
+        "constraints": constraints,
+        "directives": [*candidate.directives, directive],
+        "rationale": rationale,
+    })
+
+
 def activity_candidate(
     *,
     definition: AgentDefinition,
@@ -119,52 +292,23 @@ def activity_candidate(
         observation,
         risk_tolerance_milli=persona.risk_tolerance_milli,
     )
-    family_draw = _draw_milli(seed, DEMO_ACTIVITY_POLICY_ID, definition.agent_id, request.based_on_strategy_revision, "family")
     side_draw = _draw_milli(seed, DEMO_ACTIVITY_POLICY_ID, definition.agent_id, request.based_on_strategy_revision, "side")
-    message_draw = _draw_milli(seed, DEMO_ACTIVITY_POLICY_ID, definition.agent_id, request.based_on_strategy_revision, "message")
     directives = []
-    goal_key = "preserve_capital"
+    goal_keys: list[str] = []
+    communication_flags: list[str] = []
 
-    is_information_role = "information_participant" in role_tags
-    is_issuer = "asset_issuer" in role_tags
-    should_communicate = (
-        "information.publish" in capabilities
-        and (
-            is_information_role
-            or (is_issuer and request.based_on_strategy_revision % 2 == 0)
-            or ("market.trade" not in capabilities)
-            or family_draw < persona.communication_propensity_milli
-        )
+    communication, sampled_flags = _communication_directive(
+        definition=definition,
+        observation=observation,
+        state=state,
+        seed=seed,
+        strategy_revision=request.based_on_strategy_revision,
     )
-    if should_communicate:
-        signal_direction = "bullish" if side_draw < 500 else "bearish"
-        signal_confidence = 550 + family_draw * 300 // 1_000
-        messages = {
-            "bullish": (
-                f"{definition.display_name} market view: buying pressure may strengthen near {reference}.",
-                f"{definition.display_name} order-flow note: demand appears firmer around {reference}.",
-                f"{definition.display_name} participant opinion: upside pressure is building near {reference}.",
-            ),
-            "bearish": (
-                f"{definition.display_name} market view: selling pressure may strengthen near {reference}.",
-                f"{definition.display_name} order-flow note: supply appears heavier around {reference}.",
-                f"{definition.display_name} participant opinion: downside pressure is building near {reference}.",
-            ),
-        }[signal_direction]
-        directives.append(CommunicationDirective(
-            directive_key="publish_market_view",
-            channel="PublicFeed",
-            message_payload=messages[message_draw * len(messages) // 1_000],
-            signal_direction=signal_direction,
-            signal_confidence_milli=signal_confidence,
-            emission=EmissionPolicy(
-                mode="periodic",
-                interval_us=DEMO_ACTIVITY_EMISSION_INTERVAL_US,
-                max_emissions=DEMO_ACTIVITY_MAX_EMISSIONS,
-            ),
-        ))
-        goal_key = "share_market_information"
-    elif "market.quote" in capabilities and "market.trade" in capabilities and buy_quantity and sell_quantity:
+    if communication is not None:
+        directives.append(communication)
+        communication_flags.extend(sampled_flags)
+        goal_keys.append("share_market_information")
+    if "market.quote" in capabilities and "market.trade" in capabilities and buy_quantity and sell_quantity:
         directives.append(QuoteDirective(
             directive_key="maintain_two_sided_liquidity",
             side="both",
@@ -177,7 +321,7 @@ def activity_candidate(
                 max_emissions=DEMO_ACTIVITY_MAX_EMISSIONS,
             ),
         ))
-        goal_key = "provide_liquidity"
+        goal_keys.append("provide_liquidity")
     elif "market.trade" in capabilities and (buy_quantity or sell_quantity):
         side = observed_side or ("buy" if side_draw < persona.trend_bias_milli else "sell")
         if side == "buy" and not buy_quantity:
@@ -204,22 +348,10 @@ def activity_candidate(
                 max_emissions=DEMO_ACTIVITY_MAX_EMISSIONS,
             ),
         ))
-        goal_key = "seek_risk_adjusted_return"
-    elif "information.publish" in capabilities:
-        directives.append(CommunicationDirective(
-            directive_key="publish_market_view",
-            channel="PublicFeed",
-            message_payload=f"{definition.display_name} market view: monitoring visible liquidity around {reference}.",
-            emission=EmissionPolicy(
-                mode="periodic",
-                interval_us=DEMO_ACTIVITY_EMISSION_INTERVAL_US,
-                max_emissions=DEMO_ACTIVITY_MAX_EMISSIONS,
-            ),
-        ))
-        goal_key = "share_market_information"
+        goal_keys.append("seek_risk_adjusted_return")
 
     source = "no-op fallback" if fallback else "local rule planner"
-    risk_flags = [DEMO_ACTIVITY_POLICY_ID]
+    risk_flags = [DEMO_ACTIVITY_POLICY_ID, *communication_flags]
     if fallback:
         risk_flags.extend(["no_op_fallback", "activity_sampled"])
         if observed_side is None and "market.trade" in capabilities:
@@ -235,12 +367,17 @@ def activity_candidate(
             reason += " No structured directional signal was available; the side is an explicitly bounded exploratory sample."
         else:
             reason += f" A {observed_side} direction was supported by structured observation or belief evidence."
+    planned_action_count = sum(
+        0 if isinstance(directive, CommunicationDirective) and directive.communication_mode == "withhold"
+        else directive.emission.max_emissions * (2 if isinstance(directive, QuoteDirective) and directive.side == "both" else 1)
+        for directive in directives
+    )
     return PlanningResultCandidate(
         based_on_strategy_revision=request.based_on_strategy_revision,
         valid_for_us=SIMULATION_PLAN_HORIZON_US,
-        goals=[Goal(goal_key=goal_key, priority=80)] if directives else [],
+        goals=[Goal(goal_key=goal_key, priority=max(50, 80 - index * 10)) for index, goal_key in enumerate(goal_keys)],
         activation_preconditions=[],
-        constraints=[Constraint(kind="allowed_action_count", amount=2)] if directives else [],
+        constraints=[Constraint(kind="allowed_action_count", amount=planned_action_count)] if directives else [],
         directives=directives,
         replan_conditions=(
             [CompareCondition(path="observation.has_information_tag", op="eq", value=True)]

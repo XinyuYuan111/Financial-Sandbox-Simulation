@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from sandbox.contracts.agent import ActionProposal, AgentDefinition, AgentRuntimeState, DirectiveExecutionCursor
 from sandbox.contracts.observation import ObservationPacket
@@ -24,6 +24,7 @@ from sandbox.core.ids import deterministic_id
 class ReactiveResult:
     action_proposals: list[ActionProposal]
     cursors: dict[str, DirectiveExecutionCursor]
+    communication_records: list[dict[str, object]] = field(default_factory=list)
 
 
 def market_reference(observation: ObservationPacket) -> int:
@@ -134,6 +135,7 @@ class DeclarativeMarketController:
         if plan is None or not (plan.valid_from_sim_time_us <= observation.sim_time_us < plan.valid_until_sim_time_us):
             return ReactiveResult([], dict(state.directive_cursors))
         proposals: list[ActionProposal] = []
+        communication_records: list[dict[str, object]] = []
         cursors = dict(state.directive_cursors)
         for directive in plan.directives:
             cursor_key = f"{plan.strategy_revision}:{directive.directive_key}"
@@ -149,6 +151,15 @@ class DeclarativeMarketController:
                 proposals.extend(generated)
                 emitted_action_ids.extend(item.proposal_id for item in generated)
                 emitted_count = len(generated)
+                if isinstance(directive, CommunicationDirective) and directive.communication_mode == "withhold":
+                    emitted_count = 1
+                    communication_records.append({
+                        "directive_key": directive.directive_key,
+                        "channel": directive.channel,
+                        "communication_mode": directive.communication_mode,
+                        "private_assessment_direction": directive.private_assessment_direction,
+                        "strategy_revision": plan.strategy_revision,
+                    })
             cursors[cursor_key] = cursor.model_copy(update={
                 "last_observation_id": observation.observation_id,
                 "previous_guard": guard,
@@ -157,7 +168,7 @@ class DeclarativeMarketController:
                 "next_eligible_sim_time_us": _next_time(directive, observation.sim_time_us) if emitted_count else cursor.next_eligible_sim_time_us,
                 "action_ids": emitted_action_ids,
             })
-        return ReactiveResult(proposals, cursors)
+        return ReactiveResult(proposals, cursors, communication_records)
 
     def _proposals_for_directive(
         self,
@@ -224,14 +235,20 @@ class DeclarativeMarketController:
                 **common,
             ) for index, order in enumerate(selected)]
         if isinstance(directive, CommunicationDirective):
+            if directive.communication_mode == "withhold":
+                return []
             payload = {
                 "channel": directive.channel,
                 "content": directive.message_payload,
                 "target_ids": directive.target_ids,
+                "claim_intent": directive.claim_intent,
+                "private_assessment_direction": directive.private_assessment_direction,
             }
             if directive.signal_direction is not None:
                 payload["signal_direction"] = directive.signal_direction
                 payload["signal_confidence_milli"] = directive.signal_confidence_milli
+            if directive.derived_from_info_id is not None:
+                payload["derived_from_info_id"] = directive.derived_from_info_id
             return [ActionProposal(
                 proposal_id=deterministic_id("proposal", plan.plan_id, directive.directive_key, observation.observation_id, 0),
                 action_type="PublishInformation",

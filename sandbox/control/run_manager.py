@@ -15,6 +15,7 @@ from sandbox.agents.planning import (
     DEMO_NOOP_FALLBACK_PROBABILITY_MILLI,
     PlanningCoordinator,
     RulePlanner,
+    ensure_communication_directive,
     fixture_candidate,
     sample_noop_fallback,
 )
@@ -1344,8 +1345,96 @@ class RunManager:
             for stage in InterventionPlan.model_validate(json.loads(row["plan_json"])).stages
             if stage.status == "pending"
         ]
-        candidates = [*pending_times, *delivery_times, *background_times, *intervention_times]
+        directive_times = self._directive_wakeup_times(world)
+        candidates = [*pending_times, *delivery_times, *directive_times, *background_times, *intervention_times]
         return min(candidates) if candidates else None
+
+    @staticmethod
+    def _directive_wakeup_times(world: SimulationWorld) -> list[int]:
+        wakeup_times: list[int] = []
+        for state in world.agent_runtime_states.values():
+            plan = world.strategy_plans.get(state.active_plan_id or "")
+            if plan is None:
+                continue
+            for directive in plan.directives:
+                cursor = state.directive_cursors.get(f"{plan.strategy_revision}:{directive.directive_key}")
+                if (
+                    cursor is not None
+                    and cursor.next_eligible_sim_time_us is not None
+                    and cursor.emission_count < directive.emission.max_emissions
+                    and cursor.next_eligible_sim_time_us < plan.valid_until_sim_time_us
+                ):
+                    wakeup_times.append(max(world.sim_time_us, cursor.next_eligible_sim_time_us))
+        return wakeup_times
+
+    def _apply_due_directive_wakeups(
+        self,
+        branch_id: str,
+        world: SimulationWorld,
+        next_time: int,
+        state_version: int,
+    ) -> bool:
+        due_agents: dict[str, list[str]] = {}
+        for agent_id, state in world.agent_runtime_states.items():
+            plan = world.strategy_plans.get(state.active_plan_id or "")
+            if plan is None or not (plan.valid_from_sim_time_us <= next_time < plan.valid_until_sim_time_us):
+                continue
+            due_keys = []
+            for directive in plan.directives:
+                cursor = state.directive_cursors.get(f"{plan.strategy_revision}:{directive.directive_key}")
+                if (
+                    cursor is not None
+                    and cursor.next_eligible_sim_time_us is not None
+                    and cursor.next_eligible_sim_time_us <= next_time
+                    and cursor.emission_count < directive.emission.max_emissions
+                ):
+                    due_keys.append(directive.directive_key)
+            if due_keys:
+                due_agents[agent_id] = due_keys
+        if not due_agents:
+            return False
+        working = world.clone()
+        working.sim_time_us = max(working.sim_time_us, next_time)
+        observations = working.create_observations(
+            branch_id,
+            state_version + 1,
+            recipient_ids=sorted(due_agents),
+            triggers_by_agent={
+                agent_id: [DecisionTrigger(
+                    type="directive_wakeup",
+                    semantic_key=f"directive_wakeup:{directive_key}",
+                    source_event_ids=[],
+                    severity=40,
+                    first_sim_time_us=working.sim_time_us,
+                    last_sim_time_us=working.sim_time_us,
+                ) for directive_key in directive_keys]
+                for agent_id, directive_keys in due_agents.items()
+            },
+        )
+        evaluation = self._evaluate_observations(working, observations)
+        drafts = [
+            self._system_event(
+                "DirectiveWakeupTriggered",
+                agent_id,
+                {"directive_keys": directive_keys},
+                sim_time_us=working.sim_time_us,
+                tie=f"directive-wakeup:{agent_id}",
+            )
+            for agent_id, directive_keys in sorted(due_agents.items())
+        ]
+        drafts.extend(self._observation_event(observation, "directive_scheduler") for observation in observations)
+        drafts.extend(evaluation["events"])
+        self.events.append_batch(
+            str(self._branch(branch_id)["run_id"]),
+            branch_id,
+            drafts,
+            world_state=working.to_json(),
+            observations=[observation.model_dump(mode="json") for observation in observations],
+            agent_decisions=evaluation["decisions"],
+            planning_requests=evaluation["planning_requests"],
+            expected_branch_version=state_version,
+        )
+        return True
 
     def _advance_background_once(self, branch_id: str) -> bool:
         with self._runner_locks[branch_id], self.store.locked():
@@ -1399,7 +1488,24 @@ class RunManager:
                     admitted_reservation_id=reservation_id,
                 )
                 return True
-            if (policy_limit is not None and sequence >= policy_limit) or world.market.get("status", "active") != "active":
+            background_available = (
+                (policy_limit is None or sequence < policy_limit)
+                and world.market.get("status", "active") == "active"
+            )
+            background_due_time = (
+                world.sim_time_us + int(world.background_market_sector.get("quote_refresh_interval_us", 1_000_000))
+                if background_available
+                else None
+            )
+            if background_due_time is None or next_time < background_due_time:
+                if self._apply_due_directive_wakeups(
+                    branch_id,
+                    world,
+                    next_time,
+                    int(branch["state_version"]),
+                ):
+                    return True
+            if not background_available:
                 return False
             working = world.clone()
             working.background_market_sector["policy_sequence"] = sequence + 1
@@ -2005,6 +2111,14 @@ class RunManager:
                         provider_name,
                         provider_request,
                         record_raw=persist_raw,
+                    )
+                if provider_name != "replay" and candidate.directives:
+                    candidate = ensure_communication_directive(
+                        candidate,
+                        definition=definition,
+                        observation=observation,
+                        state=state,
+                        seed=seed,
                     )
                 return candidate.model_copy(update={"valid_for_us": SIMULATION_PLAN_HORIZON_US}), None
             except Exception as error:

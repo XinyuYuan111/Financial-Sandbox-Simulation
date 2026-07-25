@@ -70,6 +70,29 @@ class DeterministicSalienceCognition:
                 confidence_milli=500,
                 salience=60 if item.visibility == "agent_private" else 40,
             ))
+        trigger_types = {trigger.type for trigger in observation.decision_triggers}
+        if observation.observation_id not in known_sources and trigger_types & {"initial_observation", "market_change"}:
+            market = observation.market_view
+            best_bid = market.bids[0].price if market.bids else None
+            best_ask = market.asks[0].price if market.asks else None
+            last_price = market.last_trade.price if market.last_trade is not None else None
+            last_quantity = market.last_trade.quantity if market.last_trade is not None else None
+            recent_volume = sum(trade.quantity for trade in market.trades)
+            summary = (
+                f"Market snapshot: best bid {best_bid if best_bid is not None else 'none'}, "
+                f"best ask {best_ask if best_ask is not None else 'none'}, "
+                f"last trade {last_price if last_price is not None else 'none'}"
+                f"{f' x {last_quantity}' if last_quantity is not None else ''}, recent volume {recent_volume}."
+            )
+            if not any(entry.summary == summary for entry in state.memory_entries):
+                proposals.append(MemoryProposal(
+                    proposal_id=deterministic_id("proposal", observation.observation_id, "memory", "market"),
+                    kind="write",
+                    summary=summary,
+                    source_ids=[observation.observation_id],
+                    confidence_milli=900,
+                    salience=55 if "market_change" in trigger_types else 45,
+                ))
         return proposals[:8]
 
 
@@ -104,9 +127,21 @@ class AgentRuntime:
                 continue
             source_id = memory_proposal.source_ids[0]
             item = information_by_id.get(source_id)
+            memory_id = deterministic_id("memory", decision_id, memory_proposal.proposal_id)
+            if source_id == observation.observation_id:
+                belief_proposals.append(BeliefProposal(
+                    proposal_id=deterministic_id("proposal", observation.observation_id, "belief", "market"),
+                    depends_on=[memory_proposal.proposal_id],
+                    subject=observation.market_view.market_id,
+                    predicate="observed_market_state",
+                    value=memory_proposal.summary,
+                    confidence_milli=900,
+                    evidence_memory_ids=[memory_id],
+                    stated_reason="The belief records the Agent's own bounded market observation.",
+                ))
+                continue
             if item is None:
                 continue
-            memory_id = deterministic_id("memory", decision_id, memory_proposal.proposal_id)
             confidence = max(
                 50,
                 min(
@@ -119,7 +154,11 @@ class AgentRuntime:
                 proposal_id=deterministic_id("proposal", observation.observation_id, "belief", source_id),
                 depends_on=[memory_proposal.proposal_id],
                 subject=item.source_id,
-                predicate="market_signal" if item.signal_direction is not None else "reported_information",
+                predicate=(
+                    "own_statement"
+                    if item.source_id == definition.agent_id
+                    else "market_signal" if item.signal_direction is not None else "reported_information"
+                ),
                 value=item.signal_direction or item.rendered_content,
                 confidence_milli=confidence,
                 evidence_memory_ids=[memory_id],
@@ -285,7 +324,23 @@ class AgentRuntime:
             rationale=rationale,
             planning_request_id=activate_plan.planning_request_id if activate_plan else state.planning_request_id,
         )
-        return self._commit(definition, state, observation, decision, reactive.cursors, activate_plan)
+        result = self._commit(definition, state, observation, decision, reactive.cursors, activate_plan)
+        if reactive.communication_records:
+            result.events.extend(
+                EventDraft(
+                    sim_time_us=observation.sim_time_us,
+                    priority=63,
+                    tie_break_key=f"agent:{definition.agent_id}:{decision_id}:withheld:{index}",
+                    event_type="InformationWithheld",
+                    source_id=definition.agent_id,
+                    target_ids=[definition.agent_id],
+                    payload=record,
+                    observation_id=observation.observation_id,
+                    visibility="analyst_only",
+                )
+                for index, record in enumerate(reactive.communication_records)
+            )
+        return result
 
     def _commit(
         self,
@@ -300,7 +355,11 @@ class AgentRuntime:
         revisions = dict(state.component_revisions)
         memory_entries = list(state.memory_entries)
         beliefs = list(state.beliefs)
-        observed_sources = set(observation.provenance) | {receipt.action_id for receipt in observation.action_receipts}
+        observed_sources = (
+            set(observation.provenance)
+            | {observation.observation_id}
+            | {receipt.action_id for receipt in observation.action_receipts}
+        )
         accepted_ids: set[str] = set()
         for proposal in decision.memory_proposals:
             if proposal.kind == "write" and proposal.source_ids and set(proposal.source_ids).issubset(observed_sources):
@@ -314,7 +373,12 @@ class AgentRuntime:
                     created_sim_time_us=observation.sim_time_us,
                 ))
                 accepted_ids.add(proposal.proposal_id)
-                results.append(ProposalResult(proposal_id=proposal.proposal_id, accepted=True, reason_code="accepted"))
+                results.append(ProposalResult(
+                    proposal_id=proposal.proposal_id,
+                    accepted=True,
+                    reason_code="accepted",
+                    resulting_ref=memory_id,
+                ))
             elif proposal.kind == "forget" and proposal.memory_id is not None:
                 next_entries = [entry for entry in memory_entries if entry.memory_id != proposal.memory_id]
                 if len(next_entries) != len(memory_entries):
@@ -513,6 +577,47 @@ class AgentRuntime:
                 visibility="agent_private",
             ),
         ]
+        result_by_id = {result.proposal_id: result for result in results}
+        for proposal in decision.memory_proposals:
+            proposal_result = result_by_id.get(proposal.proposal_id)
+            if proposal.kind != "write" or proposal_result is None or not proposal_result.accepted:
+                continue
+            events.append(EventDraft(
+                sim_time_us=observation.sim_time_us,
+                priority=62,
+                tie_break_key=f"agent:{definition.agent_id}:{decision.decision_id}:memory:{proposal.proposal_id}",
+                event_type="MemoryWritten",
+                source_id=definition.agent_id,
+                target_ids=[definition.agent_id],
+                payload={
+                    "memory_id": proposal_result.resulting_ref,
+                    "source_ids": proposal.source_ids,
+                    "source_kind": "market_observation" if observation.observation_id in proposal.source_ids else "received_information",
+                },
+                observation_id=observation.observation_id,
+                visibility="agent_private",
+            ))
+        for proposal in decision.belief_proposals:
+            proposal_result = result_by_id.get(proposal.proposal_id)
+            if proposal_result is None or not proposal_result.accepted:
+                continue
+            events.append(EventDraft(
+                sim_time_us=observation.sim_time_us,
+                priority=63,
+                tie_break_key=f"agent:{definition.agent_id}:{decision.decision_id}:belief:{proposal.proposal_id}",
+                event_type="BeliefUpdated",
+                source_id=definition.agent_id,
+                target_ids=[definition.agent_id],
+                payload={
+                    "belief_id": proposal_result.resulting_ref,
+                    "subject": proposal.subject,
+                    "predicate": proposal.predicate,
+                    "confidence_milli": proposal.confidence_milli,
+                    "evidence_memory_ids": proposal.evidence_memory_ids,
+                },
+                observation_id=observation.observation_id,
+                visibility="agent_private",
+            ))
         if request is not None:
             events.append(EventDraft(
                 sim_time_us=observation.sim_time_us,

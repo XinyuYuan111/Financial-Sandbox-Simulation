@@ -237,7 +237,11 @@ class SimulationWorld:
         }
         if agent is None and action.agent_id not in background_actor_ids:
             raise ValidationError("unknown agent")
-        capabilities = agent.capabilities if agent is not None else ["market.trade", "information.read"]
+        capabilities = (
+            agent.capabilities
+            if agent is not None
+            else ["market.trade", "information.read", "information.publish"]
+        )
         if action.expected_execution_time_us < action.submitted_sim_time_us:
             raise ValidationError("action execution time cannot precede submission")
         if action.expected_execution_time_us > action.submitted_sim_time_us + action.validity_window_us:
@@ -747,6 +751,20 @@ class SimulationWorld:
             item.get("information_id") == derived_from for item in self.information_items
         ):
             raise ValidationError("derived information source does not exist")
+        claim_intent = action.payload.get("claim_intent", "sincere")
+        private_assessment = action.payload.get("private_assessment_direction")
+        claimed_direction = action.payload.get("signal_direction")
+        if claim_intent not in {"sincere", "strategic_deception"}:
+            raise ValidationError("unsupported communication claim intent")
+        if private_assessment is not None and private_assessment not in {"bullish", "bearish", "neutral"}:
+            raise ValidationError("unsupported private assessment direction")
+        if claim_intent == "strategic_deception":
+            if claimed_direction is None or private_assessment is None:
+                raise ValidationError("strategic deception requires claimed and private directions")
+            if claimed_direction == private_assessment:
+                raise ValidationError("strategic deception must contradict the private assessment")
+        elif claimed_direction is not None and private_assessment is not None and claimed_direction != private_assessment:
+            raise ValidationError("a sincere claim cannot contradict the private assessment")
         item, immediate_recipients, _ = self._publish_information_item(
             source_id=action.agent_id,
             channel=str(action.payload.get("channel", "PublicFeed")),
@@ -759,7 +777,32 @@ class SimulationWorld:
             action_id=action.action_id,
             correlation_id=action.client_command_id,
         )
-        events = [self._event(action, "InformationPublished", item, priority=40, visibility="agent_private" if item["visibility"] == "agent_private" else "public", phase="00-published")]
+        events = [
+            self._event(
+                action,
+                "InformationPublished",
+                item,
+                priority=40,
+                visibility="agent_private" if item["visibility"] == "agent_private" else "public",
+                phase="00-published",
+            ),
+            self._event(
+                action,
+                "CommunicationIntentRecorded",
+                {
+                    "information_id": item["information_id"],
+                    "channel": item["channel"],
+                    "disclosure_scope": "selective" if item["visibility"] == "agent_private" else "public",
+                    "claim_intent": claim_intent,
+                    "claimed_direction": claimed_direction,
+                    "private_assessment_direction": private_assessment,
+                    "derived_from_info_id": derived_from,
+                },
+                priority=41,
+                visibility="analyst_only",
+                phase="00-intent",
+            ),
+        ]
         for target in immediate_recipients:
             delivery_type = "PrivateMessageDelivered" if item["visibility"] == "agent_private" else "InformationDelivered"
             events.append(self._event(action, delivery_type, {"information_id": item["information_id"], "target_id": target}, priority=40, visibility="agent_private" if item["visibility"] == "agent_private" else "participants", phase=f"01-delivered:{target}").model_copy(update={"sim_time_us": int(item["delivery_times_us"][target]), "target_ids": [target]}))

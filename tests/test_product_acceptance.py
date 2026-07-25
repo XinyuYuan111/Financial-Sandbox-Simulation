@@ -202,11 +202,23 @@ class ProductAcceptanceTests(unittest.TestCase):
         initial_trade_count = len(initial["market"]["trades"])
         token_total = self.manager._world(branch_id).ledger.total("TOKEN")
         quote_total = self.manager._world(branch_id).ledger.total("USDX")
+        initial_policy_sequence = int(
+            self.manager._world(branch_id).background_market_sector.get("policy_sequence", 0)
+        )
 
         self.manager.command(branch_id, "background-flow-start", "start")
         self.manager._runner_cancel[branch_id].set()
-        for _ in range(24):
+        for _ in range(256):
+            if (
+                int(self.manager._world(branch_id).background_market_sector.get("policy_sequence", 0))
+                >= initial_policy_sequence + 24
+            ):
+                break
             self.assertTrue(self.manager._advance_background_once(branch_id))
+        self.assertGreaterEqual(
+            int(self.manager._world(branch_id).background_market_sector.get("policy_sequence", 0)),
+            initial_policy_sequence + 24,
+        )
 
         current = self.manager.branch_projection(branch_id)
         background_trades = [

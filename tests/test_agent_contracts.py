@@ -17,6 +17,7 @@ from sandbox.contracts.agent import (
     MemoryProposal,
 )
 from sandbox.contracts.planning import (
+    CommunicationDirective,
     CompareCondition,
     EmissionPolicy,
     PlanningRequest,
@@ -58,6 +59,39 @@ class AgentContractTests(unittest.TestCase):
             CompareCondition(path="world.secret", op="eq", value=1)  # type: ignore[arg-type]
         with self.assertRaises(PydanticValidationError):
             EmissionPolicy(mode="periodic", max_emissions=2)
+
+    def test_communication_contract_distinguishes_disclosure_withholding_and_deception(self) -> None:
+        emission = EmissionPolicy(mode="periodic", interval_us=2_000_000, max_emissions=6)
+        withheld = CommunicationDirective(
+            directive_key="keep-private-view",
+            channel="PublicFeed",
+            communication_mode="withhold",
+            private_assessment_direction="bullish",
+            emission=emission,
+        )
+        deceptive = CommunicationDirective(
+            directive_key="misstate-view",
+            channel="PublicFeed",
+            message_payload="Selling pressure is building.",
+            signal_direction="bearish",
+            signal_confidence_milli=700,
+            claim_intent="strategic_deception",
+            private_assessment_direction="bullish",
+            emission=emission,
+        )
+        self.assertEqual(withheld.communication_mode, "withhold")
+        self.assertEqual(deceptive.claim_intent, "strategic_deception")
+        with self.assertRaises(PydanticValidationError):
+            CommunicationDirective(
+                directive_key="invalid-deception",
+                channel="PublicFeed",
+                message_payload="Demand is strong.",
+                signal_direction="bullish",
+                signal_confidence_milli=700,
+                claim_intent="strategic_deception",
+                private_assessment_direction="bullish",
+                emission=emission,
+            )
 
     def test_decision_dependencies_only_point_forward_through_pipeline(self) -> None:
         memory = MemoryProposal(
