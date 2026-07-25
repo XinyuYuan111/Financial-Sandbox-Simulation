@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Check, CheckCircle2, Database, KeyRound, LoaderCircle, Play, RefreshCw, RotateCcw, ShieldAlert, X } from 'lucide-react'
+import { Check, CheckCircle2, Database, KeyRound, LoaderCircle, Play, Plus, RefreshCw, RotateCcw, ShieldAlert, Trash2, Users, X } from 'lucide-react'
 import { api } from '../../api'
 import type {
   AgentConfigurationDraft,
@@ -22,6 +22,44 @@ const BUILT_IN_CHAINS: ChainOption[] = [
 
 const asOptionalInteger = (value: string) => value.trim() ? Number.parseInt(value, 10) : null
 const populationPreset = (count: number) => count <= 4 ? 'smoke' : count <= 20 ? 'compact' : 'standard'
+const MAX_AGENT_COUNT = 10_000
+const isOptionalNonNegativeInteger = (value: string) => !value.trim() || (Number.isInteger(Number(value)) && Number(value) >= 0)
+const inputModeLabels: Record<AgentConfigurationDraft['input_mode'], string> = {
+  preset: '预设',
+  random: '随机',
+  natural_language: '自然语言',
+  detailed: '详细配置',
+}
+const horizonLabels = { short: '短期', medium: '中期', long: '长期' } as const
+
+const createDraft = (
+  inputMode: AgentConfigurationDraft['input_mode'],
+  values: Partial<AgentConfigurationDraft> = {},
+): AgentConfigurationDraft => ({
+  draft_id: `${inputMode}-${crypto.randomUUID()}`,
+  input_mode: inputMode,
+  agent_id: null,
+  display_name: null,
+  public_identity: null,
+  strategy: null,
+  archetype_ids: [],
+  role_tags: null,
+  capability_set: null,
+  base_persona: {},
+  cognitive_profile: {},
+  attention_profile: {},
+  latency_profile: {},
+  planner_profile_id: null,
+  portfolio: { token_amount: null, usdx_amount: null },
+  random_fields: [],
+  provenance: {},
+  suggestions: [],
+  accepted_suggestion_ids: [],
+  declined_suggestion_ids: [],
+  ambiguities: [],
+  schema_version: 'agent-configuration-draft.v0.1',
+  ...values,
+})
 
 export function QuickStartPage({ onRun, embedded = false }: { onRun: (run: Run) => void; embedded?: boolean }) {
   const [mode, setMode] = useState<Mode>('test_fixture')
@@ -45,6 +83,7 @@ export function QuickStartPage({ onRun, embedded = false }: { onRun: (run: Run) 
   const [detailUsdx, setDetailUsdx] = useState('')
   const [naturalIntent, setNaturalIntent] = useState('')
   const [interpretedDraft, setInterpretedDraft] = useState<AgentConfigurationDraft | null>(null)
+  const [agentDrafts, setAgentDrafts] = useState<AgentConfigurationDraft[]>([])
   const [preflight, setPreflight] = useState<Record<string, unknown> | null>(null)
   const [preview, setPreview] = useState<ResolvedPreview | null>(null)
   const [busy, setBusy] = useState(false)
@@ -67,6 +106,8 @@ export function QuickStartPage({ onRun, embedded = false }: { onRun: (run: Run) 
   const selectedProvider = useMemo(() => providers.find(item => item.provider === provider), [provider, providers])
   const selectedChain = useMemo(() => chains.find(item => item.chain_id === chain) ?? BUILT_IN_CHAINS[0], [chain, chains])
   const needsProvider = mode !== 'test_fixture' || inputMode === 'natural_language'
+  const smokeLimitExceeded = mode === 'live_llm_smoke' && agentDrafts.length > 4
+  const agentLimit = mode === 'live_llm_smoke' ? 4 : MAX_AGENT_COUNT
   const unresolvedSuggestions = interpretedDraft?.suggestions.filter(item => (
     !interpretedDraft.accepted_suggestion_ids.includes(item.suggestion_id)
     && !interpretedDraft.declined_suggestion_ids.includes(item.suggestion_id)
@@ -75,14 +116,13 @@ export function QuickStartPage({ onRun, embedded = false }: { onRun: (run: Run) 
   const invalidate = () => setPreview(null)
   const switchMode = (next: Mode) => {
     setMode(next)
-    if (next === 'live_llm_smoke') setAgentCount(4)
+    if (next === 'live_llm_smoke') setAgentCount(current => Math.min(current, 4))
     setPreview(null)
     setPreflight(null)
   }
 
   const switchInputMode = (next: InputMode) => {
     setInputMode(next)
-    setPreview(null)
   }
 
   const checkProvider = async () => {
@@ -94,7 +134,7 @@ export function QuickStartPage({ onRun, embedded = false }: { onRun: (run: Run) 
 
   const interpret = async () => {
     if (!naturalIntent.trim()) return
-    setBusy(true); setError(null); setPreview(null)
+    setBusy(true); setError(null)
     try {
       const result = await api.interpretAgentConfiguration<{ draft: AgentConfigurationDraft }>(naturalIntent.trim(), provider)
       setInterpretedDraft(result.draft)
@@ -111,15 +151,11 @@ export function QuickStartPage({ onRun, embedded = false }: { onRun: (run: Run) 
       accepted_suggestion_ids: disposition === 'accept' ? [...accepted, suggestionId] : accepted,
       declined_suggestion_ids: disposition === 'decline' ? [...declined, suggestionId] : declined,
     })
-    setPreview(null)
   }
 
-  const detailedDraft = (): Record<string, unknown> => ({
-    draft_id: 'detailed-agent-1',
-    input_mode: 'detailed',
-    agent_id: 'custom_agent_1',
+  const detailedDraft = () => createDraft('detailed', {
     display_name: detailName.trim() || '自定义参与者',
-    archetype_ids: selectedArchetypes,
+    archetype_ids: [...selectedArchetypes],
     base_persona: {
       risk_tolerance_milli: Number(detailRisk),
       time_horizon: detailHorizon,
@@ -130,11 +166,50 @@ export function QuickStartPage({ onRun, embedded = false }: { onRun: (run: Run) 
     },
   })
 
+  const resetNatural = () => {
+    setNaturalIntent('')
+    setInterpretedDraft(null)
+  }
+
+  const resetDetailed = () => {
+    setSelectedArchetypes(['ordinary_participant'])
+    setDetailName('自定义参与者')
+    setDetailRisk('500')
+    setDetailHorizon('medium')
+    setDetailToken('')
+    setDetailUsdx('')
+  }
+
+  const addAgentDrafts = () => {
+    const additions = inputMode === 'random'
+      ? Array.from({ length: agentCount }, () => createDraft('random'))
+      : inputMode === 'natural_language' && interpretedDraft && unresolvedSuggestions.length === 0
+        ? [{ ...interpretedDraft, draft_id: `natural_language-${crypto.randomUUID()}` }]
+        : inputMode === 'detailed' ? [detailedDraft()] : []
+    if (!additions.length) return
+    if (agentDrafts.length + additions.length > agentLimit) {
+      setError(mode === 'live_llm_smoke'
+        ? 'LLM 烟测最多允许 4 个 Agent；请减少本次数量或移除已加入的 Agent。'
+        : `单个场景最多允许 ${MAX_AGENT_COUNT} 个 Agent。`)
+      return
+    }
+    setAgentDrafts(current => [...current, ...additions])
+    setPreview(null)
+    setError(null)
+    if (inputMode === 'random') setAgentCount(1)
+    if (inputMode === 'natural_language') resetNatural()
+    if (inputMode === 'detailed') resetDetailed()
+  }
+
+  const removeAgentDraft = (draftId: string) => {
+    setAgentDrafts(current => current.filter(draft => draft.draft_id !== draftId))
+    setPreview(null)
+  }
+
   const resolve = async () => {
-    if (inputMode === 'natural_language' && (!interpretedDraft || unresolvedSuggestions.length)) return
+    if (!agentDrafts.length || smokeLimitExceeded) return
     setBusy(true); setError(null)
     try {
-      const count = mode === 'live_llm_smoke' ? Math.min(agentCount, 4) : agentCount
       const scenario = await api.createScenario<{ scenario_id: string }>({
         name,
         mode,
@@ -142,17 +217,13 @@ export function QuickStartPage({ onRun, embedded = false }: { onRun: (run: Run) 
         target_token: token.trim().toUpperCase(),
         chain_id: mode === 'live' ? chain : null,
         llm_provider: mode === 'test_fixture' ? null : provider,
-        population: inputMode === 'random'
-          ? { preset: populationPreset(count), agent_count: count }
-          : { preset: 'smoke' },
+        population: { preset: populationPreset(agentDrafts.length), agent_count: agentDrafts.length },
         portfolio: {
           token_distribution: 'long_tail',
           quote_coverage_ratio_ppm: Math.round(quoteCoverage * 10_000),
           token_usdx_correlation_milli: Math.round(compositionCorrelation * 10),
         },
-        agent_configuration_drafts: inputMode === 'natural_language'
-          ? [interpretedDraft]
-          : inputMode === 'detailed' ? [detailedDraft()] : null,
+        agent_configuration_drafts: agentDrafts,
       })
       setPreview(await api.resolveScenario<ResolvedPreview>(scenario.scenario_id))
     } catch (reason) { setError(reason instanceof Error ? reason.message : '场景解析失败') }
@@ -171,24 +242,26 @@ export function QuickStartPage({ onRun, embedded = false }: { onRun: (run: Run) 
     setSelectedArchetypes(current => current.includes(archetypeId)
       ? current.filter(item => item !== archetypeId)
       : [...current, archetypeId])
-    setPreview(null)
-  }
-
-  const resetDetailed = () => {
-    setSelectedArchetypes(['ordinary_participant'])
-    setDetailName('自定义参与者')
-    setDetailRisk('500')
-    setDetailHorizon('medium')
-    setDetailToken('')
-    setDetailUsdx('')
-    setPreview(null)
   }
 
   const resolveDisabled = busy || !name.trim() || !token.trim()
+    || !agentDrafts.length
+    || smokeLimitExceeded
     || (mode === 'live' && !selectedChain.holder_source_configured)
+  const addDisabled = busy
+    || agentDrafts.length + (inputMode === 'random' ? agentCount : 1) > agentLimit
     || (inputMode === 'natural_language' && (!interpretedDraft || unresolvedSuggestions.length > 0))
-    || (inputMode === 'detailed' && (!selectedArchetypes.length || Number(detailRisk) < 0 || Number(detailRisk) > 1000))
+    || (inputMode === 'detailed' && (
+      !selectedArchetypes.length
+      || !detailRisk.trim()
+      || !Number.isInteger(Number(detailRisk))
+      || Number(detailRisk) < 0
+      || Number(detailRisk) > 1000
+      || !isOptionalNonNegativeInteger(detailToken)
+      || !isOptionalNonNegativeInteger(detailUsdx)
+    ))
   const previewAgents = preview?.agent_definitions.slice(0, 10) ?? []
+  const visibleDrafts = agentDrafts.slice(0, 50)
   const allocationById = new Map(preview?.agents.map(agent => [agent.agent_id, agent]) ?? [])
   const previewAssets = preview?.preview.assets
 
@@ -214,10 +287,10 @@ export function QuickStartPage({ onRun, embedded = false }: { onRun: (run: Run) 
         </div></div>
         <div className="form-row"><label>目标资产<input value={token} onChange={event => { setToken(event.target.value); invalidate() }} /></label><label>随机种子<input type="number" value={seed} onChange={event => { setSeed(Number(event.target.value)); invalidate() }} /></label></div>
 
-        {inputMode === 'random' ? <label>Agent 数量<input type="number" min={1} max={mode === 'live_llm_smoke' ? 4 : 10000} value={agentCount} onChange={event => { setAgentCount(Math.max(1, Number(event.target.value))); invalidate() }} /></label> : null}
+        {inputMode === 'random' ? <label>本次加入数量<input type="number" min={1} max={agentLimit} value={agentCount} onChange={event => { const next = Number(event.target.value); setAgentCount(Number.isFinite(next) ? Math.min(agentLimit, Math.max(1, Math.floor(next))) : 1) }} /></label> : null}
 
         {inputMode === 'natural_language' ? <div className="config-editor">
-          <label>参与者描述<textarea value={naturalIntent} maxLength={4000} onChange={event => { setNaturalIntent(event.target.value); setInterpretedDraft(null); invalidate() }} /></label>
+          <label>参与者描述<textarea value={naturalIntent} maxLength={4000} onChange={event => { setNaturalIntent(event.target.value); setInterpretedDraft(null) }} /></label>
           <button className="secondary-button wide" onClick={interpret} disabled={busy || !naturalIntent.trim()}>{busy ? <LoaderCircle className="spin" size={15} /> : <RefreshCw size={15} />}解析描述</button>
           {interpretedDraft ? <div className="interpretation-result">
             <div className="interpretation-heading"><strong>{interpretedDraft.display_name ?? '未命名参与者'}</strong><StatusBadge status={unresolvedSuggestions.length ? 'Pending' : 'Confirmed'} /></div>
@@ -235,10 +308,12 @@ export function QuickStartPage({ onRun, embedded = false }: { onRun: (run: Run) 
         {inputMode === 'detailed' ? <div className="config-editor">
           <div className="editor-heading"><strong>Participant Archetype</strong><button className="icon-button" title="重置详细配置" onClick={resetDetailed}><RotateCcw size={15} /></button></div>
           <div className="archetype-options">{archetypes.map(archetype => <label className="check-option" key={archetype.archetype_id}><input type="checkbox" checked={selectedArchetypes.includes(archetype.archetype_id)} onChange={() => toggleArchetype(archetype.archetype_id)} /><span><b>{archetype.label}</b><small>{archetype.suggested_role_tags.join(', ')}</small></span></label>)}</div>
-          <label>显示名称<input value={detailName} onChange={event => { setDetailName(event.target.value); invalidate() }} /></label>
-          <div className="form-row"><label>风险承受度<input type="number" min={0} max={1000} value={detailRisk} onChange={event => { setDetailRisk(event.target.value); invalidate() }} /></label><label>时间周期<select value={detailHorizon} onChange={event => { setDetailHorizon(event.target.value as typeof detailHorizon); invalidate() }}><option value="short">短期</option><option value="medium">中期</option><option value="long">长期</option></select></label></div>
-          <div className="form-row"><label>Token 数量<input type="number" min={0} placeholder="自动分配" value={detailToken} onChange={event => { setDetailToken(event.target.value); invalidate() }} /></label><label>USDx 数量<input type="number" min={0} placeholder="自动分配" value={detailUsdx} onChange={event => { setDetailUsdx(event.target.value); invalidate() }} /></label></div>
+          <label>显示名称<input value={detailName} onChange={event => setDetailName(event.target.value)} /></label>
+          <div className="form-row"><label>风险承受度<input type="number" min={0} max={1000} value={detailRisk} onChange={event => setDetailRisk(event.target.value)} /></label><label>时间周期<select value={detailHorizon} onChange={event => setDetailHorizon(event.target.value as typeof detailHorizon)}><option value="short">短期</option><option value="medium">中期</option><option value="long">长期</option></select></label></div>
+          <div className="form-row"><label>Token 数量<input type="number" min={0} placeholder="自动分配" value={detailToken} onChange={event => setDetailToken(event.target.value)} /></label><label>USDx 数量<input type="number" min={0} placeholder="自动分配" value={detailUsdx} onChange={event => setDetailUsdx(event.target.value)} /></label></div>
         </div> : null}
+
+        <button className="secondary-button wide add-agent-button" onClick={addAgentDrafts} disabled={addDisabled}><Plus size={16} />{inputMode === 'random' ? `将 ${agentCount} 个随机 Agent 加入右侧` : inputMode === 'natural_language' ? '将解析后的 Agent 加入右侧' : '加入右侧 Agent 列表'}</button>
 
         <div className="form-row"><label>报价覆盖率 (%)<input type="number" min={0.01} max={1000} step={1} value={quoteCoverage} onChange={event => { setQuoteCoverage(Number(event.target.value)); invalidate() }} /></label><label>Token / USDx 相关度 (%)<input type="number" min={0} max={100} value={compositionCorrelation} onChange={event => { setCompositionCorrelation(Number(event.target.value)); invalidate() }} /></label></div>
 
@@ -253,7 +328,20 @@ export function QuickStartPage({ onRun, embedded = false }: { onRun: (run: Run) 
       </section>
 
       <section className="preview-panel">
-        <div className="section-title"><div><h2>解析预览</h2><p>{preview?.preset_version ?? '等待配置确认'}</p></div>{preview ? <CheckCircle2 size={19} /> : <Database size={19} />}</div>
+        <div className="section-title"><div><h2>已加入 Agent</h2><p>{mode === 'live_llm_smoke' ? `${agentDrafts.length} / 4` : `${agentDrafts.length} 个已配置`}</p></div><Users size={19} /></div>
+        {agentDrafts.length ? <div className="agent-draft-list">{visibleDrafts.map((draft, index) => {
+          const horizon = draft.base_persona.time_horizon
+          const risk = draft.base_persona.risk_tolerance_milli
+          return <div className="agent-draft-row" key={draft.draft_id}>
+            <div className="agent-draft-index">{index + 1}</div>
+            <div className="agent-draft-main"><strong>{draft.display_name ?? `随机参与者 ${index + 1}`}</strong><span>{draft.archetype_ids.length ? draft.archetype_ids.join(', ') : 'market_participant'}</span></div>
+            <div className="agent-draft-source"><b>{inputModeLabels[draft.input_mode]}</b><span>{risk === undefined ? '随机风险' : `风险 ${String(risk)}`} · {typeof horizon === 'string' && horizon in horizonLabels ? horizonLabels[horizon as keyof typeof horizonLabels] : '随机周期'}</span><small>{draft.portfolio.token_amount ?? '自动'} Token / {draft.portfolio.usdx_amount ?? '自动'} USDx</small></div>
+            <button className="icon-button danger" title={`移除 ${draft.display_name ?? `随机参与者 ${index + 1}`}`} aria-label={`移除 ${draft.display_name ?? `随机参与者 ${index + 1}`}`} onClick={() => removeAgentDraft(draft.draft_id)}><Trash2 size={15} /></button>
+          </div>
+        })}{agentDrafts.length > visibleDrafts.length ? <div className="table-more">另有 {agentDrafts.length - visibleDrafts.length} 个 Agent</div> : null}</div> : <div className="agent-queue-empty"><Users size={24} /><strong>暂无 Agent</strong><span>0 个待初始化</span></div>}
+        {smokeLimitExceeded ? <div className="warning-line">LLM 烟测最多允许 4 个 Agent；当前队列不会被自动删除，请手动移除多余配置。</div> : null}
+
+        <div className="preview-section-heading"><div><h2>解析预览</h2><p>{preview?.preset_version ?? '等待配置确认'}</p></div>{preview ? <CheckCircle2 size={19} /> : <Database size={19} />}</div>
         {preview ? <>
           <div className="fact-grid"><div><span>显式 Agent</span><strong>{preview.agent_definitions.length}</strong></div><div><span>Eligible Active</span><strong>{formatInteger(preview.chain_snapshot.eligible_active_supply)}</strong></div><div><span>Token 总量</span><strong>{formatInteger(preview.total_supply[preview.market.base_asset])}</strong></div><div><span>Active USDx</span><strong>{formatInteger(preview.total_supply[preview.market.quote_asset])}</strong></div></div>
           <div className="preview-table table-scroll"><table><thead><tr><th>Agent</th><th>角色</th><th>Token / USDx</th><th>风险 / 周期</th><th>配置来源</th></tr></thead><tbody>{previewAgents.map(agent => { const allocation = allocationById.get(agent.agent_id); const sources = [...new Set(Object.values(agent.configuration_provenance).map(item => item.source))]; return <tr key={agent.agent_id}><td><strong>{agent.display_name}</strong><small>{agent.agent_id}</small></td><td>{agent.role_tags.join(', ') || '-'}</td><td>{formatInteger(allocation?.token_balance ?? 0)} / {formatInteger(allocation?.usdx_balance ?? 0)}</td><td>{agent.base_persona.risk_tolerance_milli} / {agent.base_persona.time_horizon}</td><td>{sources.join(', ')}</td></tr> })}</tbody></table>{preview.agent_definitions.length > previewAgents.length ? <div className="table-more">另有 {preview.agent_definitions.length - previewAgents.length} 个 Agent</div> : null}</div>
