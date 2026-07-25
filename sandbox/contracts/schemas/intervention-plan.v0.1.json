@@ -325,6 +325,14 @@
           "title": "Effective Sim Time Us",
           "type": "integer"
         },
+        "background_order_flow_impact_milli": {
+          "default": 0,
+          "description": "Signed impact on future background order flow: negative is bearish sell pressure, positive is bullish buy pressure, and zero is neutral.",
+          "maximum": 1000,
+          "minimum": -1000,
+          "title": "Background Order Flow Impact Milli",
+          "type": "integer"
+        },
         "effects": {
           "items": {
             "discriminator": {

@@ -27,6 +27,7 @@ from sandbox.core.errors import MissingCausalStateError, ValidationError
 from sandbox.core.ids import deterministic_id, new_id
 from sandbox.core.numeric import ceil_basis_points, require_int
 from sandbox.core.rng import NamedRandomStreams
+from sandbox.core.time import SIMULATION_PLAN_HORIZON_US
 from sandbox.world.information import publish_information
 from sandbox.world.ledger import Ledger
 from sandbox.world.market.clob import CLOB
@@ -139,8 +140,31 @@ class SimulationWorld:
             "created_sim_time_us": 0,
         }
         world.ledger.open_account(background.sector_id, [base_asset, quote_asset], reason="initial_background_account")
-        world.ledger.transfer_free(genesis_account, background.sector_id, base_asset, background.token_balance, reason="initial_allocation")
-        world.ledger.transfer_free(genesis_account, background.sector_id, quote_asset, background.usdx_balance, reason="initial_allocation")
+        world.ledger.open_account(background.flow_account_id, [base_asset, quote_asset], reason="initial_background_flow_account")
+        flow_token = background.token_balance * background.flow_inventory_fraction_ppm // 1_000_000
+        flow_usdx = background.usdx_balance * background.flow_inventory_fraction_ppm // 1_000_000
+        world.ledger.transfer_free(
+            genesis_account,
+            background.sector_id,
+            base_asset,
+            background.token_balance - flow_token,
+            reason="initial_allocation",
+        )
+        world.ledger.transfer_free(
+            genesis_account,
+            background.sector_id,
+            quote_asset,
+            background.usdx_balance - flow_usdx,
+            reason="initial_allocation",
+        )
+        world.ledger.transfer_free(genesis_account, background.flow_account_id, base_asset, flow_token, reason="initial_allocation")
+        world.ledger.transfer_free(genesis_account, background.flow_account_id, quote_asset, flow_usdx, reason="initial_allocation")
+        world.world_entities[background.flow_account_id] = {
+            "entity_id": background.flow_account_id,
+            "entity_type": "background_order_flow",
+            "display_name": background.flow_account_id,
+            "created_sim_time_us": 0,
+        }
         for account in resolved.other_explicit_accounts:
             world.ledger.open_account(account.account_id, [base_asset, quote_asset], reason="initial_explicit_account")
             world.ledger.transfer_free(genesis_account, account.account_id, base_asset, account.token_amount, reason="initial_allocation")
@@ -208,9 +232,17 @@ class SimulationWorld:
             raise ValidationError("branch_id is required")
         agent = world.agents.get(action.agent_id)
         background_id = str(world.background_market_sector.get("sector_id", "background"))
-        if agent is None and action.agent_id != background_id:
+        background_actor_ids = {
+            background_id,
+            str(world.background_market_sector.get("flow_account_id", "background_order_flow")),
+        }
+        if agent is None and action.agent_id not in background_actor_ids:
             raise ValidationError("unknown agent")
-        capabilities = agent.capabilities if agent is not None else ["market.trade", "information.read"]
+        capabilities = (
+            agent.capabilities
+            if agent is not None
+            else ["market.trade", "information.read", "information.publish"]
+        )
         if action.expected_execution_time_us < action.submitted_sim_time_us:
             raise ValidationError("action execution time cannot precede submission")
         if action.expected_execution_time_us > action.submitted_sim_time_us + action.validity_window_us:
@@ -439,6 +471,40 @@ class SimulationWorld:
         events: list[EventDraft] = []
         affected_agents: set[str] = set()
         triggers_by_agent: dict[str, list[DecisionTrigger]] = {}
+        if stage.background_order_flow_impact_milli != 0:
+            impact_id = deterministic_id("background-order-flow-impact", plan_id, stage.stage_id)
+            active_impacts = [
+                dict(item)
+                for item in world.background_market_sector.get("active_intervention_impacts", [])
+                if isinstance(item, dict) and int(item.get("expires_sim_time_us", 0)) > world.sim_time_us
+            ]
+            active_impacts.append({
+                "impact_id": impact_id,
+                "intervention_plan_id": plan_id,
+                "intervention_stage_id": stage.stage_id,
+                "impact_milli": stage.background_order_flow_impact_milli,
+                "applied_sim_time_us": world.sim_time_us,
+                "expires_sim_time_us": world.sim_time_us + SIMULATION_PLAN_HORIZON_US,
+            })
+            world.background_market_sector["active_intervention_impacts"] = active_impacts
+            direction = "bullish" if stage.background_order_flow_impact_milli > 0 else "bearish"
+            events.append(world._intervention_event(
+                plan_id,
+                stage.stage_id,
+                impact_id,
+                "BackgroundOrderFlowImpactApplied",
+                {
+                    "impact_id": impact_id,
+                    "direction": direction,
+                    "strength_milli": abs(stage.background_order_flow_impact_milli),
+                    "signed_impact_milli": stage.background_order_flow_impact_milli,
+                    "applied_sim_time_us": world.sim_time_us,
+                    "expires_sim_time_us": world.sim_time_us + SIMULATION_PLAN_HORIZON_US,
+                },
+                priority=35,
+                visibility="analyst_only",
+                phase="background-order-flow-impact",
+            ))
         state_effects = [effect for effect in stage.effects if not isinstance(effect, PublishInformationEffect)]
         information_effects = [effect for effect in stage.effects if isinstance(effect, PublishInformationEffect)]
         for effect in state_effects:
@@ -720,17 +786,58 @@ class SimulationWorld:
             item.get("information_id") == derived_from for item in self.information_items
         ):
             raise ValidationError("derived information source does not exist")
+        claim_intent = action.payload.get("claim_intent", "sincere")
+        private_assessment = action.payload.get("private_assessment_direction")
+        claimed_direction = action.payload.get("signal_direction")
+        if claim_intent not in {"sincere", "strategic_deception"}:
+            raise ValidationError("unsupported communication claim intent")
+        if private_assessment is not None and private_assessment not in {"bullish", "bearish", "neutral"}:
+            raise ValidationError("unsupported private assessment direction")
+        if claim_intent == "strategic_deception":
+            if claimed_direction is None or private_assessment is None:
+                raise ValidationError("strategic deception requires claimed and private directions")
+            if claimed_direction == private_assessment:
+                raise ValidationError("strategic deception must contradict the private assessment")
+        elif claimed_direction is not None and private_assessment is not None and claimed_direction != private_assessment:
+            raise ValidationError("a sincere claim cannot contradict the private assessment")
         item, immediate_recipients, _ = self._publish_information_item(
             source_id=action.agent_id,
             channel=str(action.payload.get("channel", "PublicFeed")),
             content=str(action.payload.get("content", "")),
             target_ids=list(action.payload.get("target_ids", [])),
+            signal_direction=action.payload.get("signal_direction"),
+            signal_confidence_milli=action.payload.get("signal_confidence_milli"),
             derived_from_info_id=str(derived_from) if derived_from is not None else None,
             information_id=deterministic_id("information", action.action_id),
             action_id=action.action_id,
             correlation_id=action.client_command_id,
         )
-        events = [self._event(action, "InformationPublished", item, priority=40, visibility="agent_private" if item["visibility"] == "agent_private" else "public", phase="00-published")]
+        events = [
+            self._event(
+                action,
+                "InformationPublished",
+                item,
+                priority=40,
+                visibility="agent_private" if item["visibility"] == "agent_private" else "public",
+                phase="00-published",
+            ),
+            self._event(
+                action,
+                "CommunicationIntentRecorded",
+                {
+                    "information_id": item["information_id"],
+                    "channel": item["channel"],
+                    "disclosure_scope": "selective" if item["visibility"] == "agent_private" else "public",
+                    "claim_intent": claim_intent,
+                    "claimed_direction": claimed_direction,
+                    "private_assessment_direction": private_assessment,
+                    "derived_from_info_id": derived_from,
+                },
+                priority=41,
+                visibility="analyst_only",
+                phase="00-intent",
+            ),
+        ]
         for target in immediate_recipients:
             delivery_type = "PrivateMessageDelivered" if item["visibility"] == "agent_private" else "InformationDelivered"
             events.append(self._event(action, delivery_type, {"information_id": item["information_id"], "target_id": target}, priority=40, visibility="agent_private" if item["visibility"] == "agent_private" else "participants", phase=f"01-delivered:{target}").model_copy(update={"sim_time_us": int(item["delivery_times_us"][target]), "target_ids": [target]}))
@@ -744,6 +851,8 @@ class SimulationWorld:
         content: str,
         target_ids: list[str],
         information_id: str,
+        signal_direction: object = None,
+        signal_confidence_milli: object = None,
         derived_from_info_id: str | None = None,
         action_id: str | None = None,
         correlation_id: str | None = None,
@@ -755,6 +864,8 @@ class SimulationWorld:
             content=content,
             sim_time_us=self.sim_time_us,
             target_ids=target_ids,
+            signal_direction=signal_direction,
+            signal_confidence_milli=signal_confidence_milli,
             derived_from_info_id=derived_from_info_id,
             information_id=information_id,
         )
@@ -880,7 +991,16 @@ class SimulationWorld:
         bids = sorted([item for item in orders if item["side"] == "buy" and item["status"] in {"open", "partially_filled"}], key=lambda item: (-int(item["price"] or 0), int(item["submitted_seq"])))
         asks = sorted([item for item in orders if item["side"] == "sell" and item["status"] in {"open", "partially_filled"}], key=lambda item: (int(item["price"] or 0), int(item["submitted_seq"])))
         last_trade = self.clob.to_json()["trades"][-1] if self.clob.trades else None
-        return {"market_id": self.market["market_id"], "bids": bids[:20], "asks": asks[:20], "last_trade": last_trade, "trades": self.clob.to_json()["trades"][-100:]}
+        return {
+            "market_id": self.market["market_id"],
+            "base_asset": self.market["base_asset"],
+            "quote_asset": self.market["quote_asset"],
+            "price_tick": self.market["price_tick"],
+            "bids": bids[:20],
+            "asks": asks[:20],
+            "last_trade": last_trade,
+            "trades": self.clob.to_json()["trades"][-100:],
+        }
 
     def agent_projection(self, agent_id: str) -> dict[str, object]:
         agent = self.agents[agent_id]

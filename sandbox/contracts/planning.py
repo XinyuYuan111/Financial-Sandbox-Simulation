@@ -113,17 +113,46 @@ class CommunicationDirective(StrictFrozenModel):
     type: Literal["communication"] = "communication"
     directive_key: str = Field(min_length=1, max_length=128)
     channel: Literal["PublicFeed", "OfficialAnnouncement", "TradingTerminal", "PrivateChannel"]
-    message_payload: str = Field(min_length=1, max_length=4_000)
+    communication_mode: Literal["disclose", "withhold"] = "disclose"
+    message_payload: str = Field(default="", max_length=4_000)
     target_ids: list[str] = Field(default_factory=list, max_length=64)
+    signal_direction: Literal["bullish", "bearish", "neutral"] | None = None
+    signal_confidence_milli: int | None = Field(default=None, ge=0, le=1_000)
+    claim_intent: Literal["sincere", "strategic_deception"] = "sincere"
+    private_assessment_direction: Literal["bullish", "bearish", "neutral"] | None = None
+    derived_from_info_id: str | None = Field(default=None, min_length=1, max_length=256)
     guard: ConditionExpr | None = None
     emission: EmissionPolicy
 
     @model_validator(mode="after")
     def validate_targets(self) -> "CommunicationDirective":
+        if self.communication_mode == "withhold":
+            if self.target_ids:
+                raise ValueError("withheld communication cannot declare recipients")
+            if self.message_payload or self.signal_direction is not None or self.signal_confidence_milli is not None:
+                raise ValueError("withheld communication cannot contain a released claim")
+            if self.claim_intent != "sincere" or self.private_assessment_direction is None:
+                raise ValueError("withheld communication requires only a private assessment")
+            return self
+        if not self.message_payload.strip():
+            raise ValueError("disclosed communication requires a message")
         if self.channel == "PrivateChannel" and not self.target_ids:
             raise ValueError("private communication requires target_ids")
         if self.channel != "PrivateChannel" and self.target_ids:
             raise ValueError("public communication channels cannot declare target_ids")
+        if (self.signal_direction is None) != (self.signal_confidence_milli is None):
+            raise ValueError("communication signal direction and confidence must be supplied together")
+        if self.claim_intent == "strategic_deception":
+            if self.signal_direction is None or self.private_assessment_direction is None:
+                raise ValueError("strategic deception requires a claimed and private direction")
+            if self.signal_direction == self.private_assessment_direction:
+                raise ValueError("strategic deception must contradict the private assessment")
+        elif (
+            self.signal_direction is not None
+            and self.private_assessment_direction is not None
+            and self.signal_direction != self.private_assessment_direction
+        ):
+            raise ValueError("a sincere claim cannot contradict the private assessment")
         return self
 
 
@@ -257,6 +286,9 @@ class PlanningProviderRequest(StrictFrozenModel):
     context_hash: str
     based_on_strategy_revision: int = Field(default=0, ge=0)
     planner_instructions: str = Field(min_length=1, max_length=10_000)
+    capabilities: list[str] = Field(default_factory=list, max_length=32)
+    role_tags: list[str] = Field(default_factory=list, max_length=16)
+    public_identity: str = Field(default="", max_length=500)
     persona: dict[str, object]
     observation: dict[str, object]
     cognition: dict[str, object]

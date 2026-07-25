@@ -70,6 +70,7 @@ class FakeChatCompletions:
                 stages=[{
                     "stage_id": "stage-director",
                     "effective_sim_time_us": 0,
+                    "background_order_flow_impact_milli": -700,
                     "effects": [{
                         "effect_id": "effect-director",
                         "effect_type": "set_market_status",
@@ -121,6 +122,9 @@ class OpenAIAdapterTests(unittest.IsolatedAsyncioTestCase):
                 agent_id="agent-1",
                 context_hash="sha256:context",
                 planner_instructions="Create a bounded plan.",
+                capabilities=["market.trade", "information.read"],
+                role_tags=["capital_holder"],
+                public_identity="Long-horizon capital holder",
                 persona={"notes": "untrusted"},
                 observation={"observation_id": "observation-1"},
                 cognition={"memory_ids": []},
@@ -196,6 +200,7 @@ class OpenAIAdapterTests(unittest.IsolatedAsyncioTestCase):
             record_raw=records.append,
         )
         self.assertEqual(candidate.stages[0].effects[0].effect_type, "set_market_status")
+        self.assertEqual(candidate.stages[0].background_order_flow_impact_milli, -700)
         self.assertEqual(records[0].agent_id, "scenario_director")
         self.assertNotIn("Halt the market", str(records[0].redacted_request))
         self.assertNotIn("secret-key-value", str(records[0].model_dump()))

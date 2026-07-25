@@ -67,7 +67,7 @@ ARCHETYPE_TEMPLATES: dict[ParticipantArchetypeId, dict[str, Any]] = {
     "ordinary_participant": {
         "label": "普通参与者",
         "role_tags": ["market_participant"],
-        "capability_set": ["market.trade", "information.read"],
+        "capability_set": ["market.trade", "information.read", "information.publish"],
         "persona": {
             "risk_tolerance_milli": 450,
             "time_horizon": "medium",
@@ -80,7 +80,7 @@ ARCHETYPE_TEMPLATES: dict[ParticipantArchetypeId, dict[str, Any]] = {
     "capital_holder": {
         "label": "资本型持有者",
         "role_tags": ["capital_holder"],
-        "capability_set": ["market.trade", "information.read"],
+        "capability_set": ["market.trade", "information.read", "information.publish"],
         "persona": {
             "risk_tolerance_milli": 600,
             "time_horizon": "long",
@@ -93,7 +93,7 @@ ARCHETYPE_TEMPLATES: dict[ParticipantArchetypeId, dict[str, Any]] = {
     "liquidity_provider": {
         "label": "流动性提供者",
         "role_tags": ["liquidity_provider"],
-        "capability_set": ["market.trade", "market.quote", "information.read"],
+        "capability_set": ["market.trade", "market.quote", "information.read", "information.publish"],
         "persona": {
             "risk_tolerance_milli": 550,
             "time_horizon": "short",
@@ -276,7 +276,7 @@ def compile_agent_configuration(
     if not role_tags:
         role_tags = ["market_participant"]
     if not capabilities:
-        capabilities = ["market.trade", "information.read"]
+        capabilities = ["market.trade", "information.read", "information.publish"]
     unknown_capabilities = sorted(set(capabilities) - CAPABILITY_REGISTRY)
     if unknown_capabilities:
         raise ValidationError(f"unregistered Agent capabilities: {', '.join(unknown_capabilities)}")

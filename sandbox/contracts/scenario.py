@@ -15,7 +15,9 @@ class AgentConfig(BaseModel):
     display_name: str
     strategy: Literal["rule", "replay", "openai", "deepseek"]
     role_tags: list[str] = Field(default_factory=list)
-    capabilities: list[str] = Field(default_factory=lambda: ["market.trade", "information.read"])
+    capabilities: list[str] = Field(
+        default_factory=lambda: ["market.trade", "information.read", "information.publish"]
+    )
     token_balance: int = Field(ge=0)
     usdx_balance: int = Field(ge=0)
     configuration_provenance: dict[str, ConfigurationProvenance] = Field(default_factory=dict)
@@ -122,17 +124,29 @@ class BackgroundMarketSector(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
 
     sector_id: str = "background"
+    flow_account_id: str = "background_order_flow"
     token_balance: int = Field(default=0, ge=0)
     usdx_balance: int = Field(default=0, ge=0)
     enabled: bool = True
     two_sided_ready: bool = False
-    participation_policy_id: str = "background.seeded.v0.1"
+    participation_policy_id: str = "background.seeded.v0.2"
     target_spread_bps: int = Field(default=20, ge=0, le=10_000)
     impact_target_bps: int = Field(default=400, ge=1, le=10_000)
     quote_levels: int = Field(default=5, ge=1, le=20)
     quote_refresh_interval_us: int = Field(default=1_000_000, ge=1)
     quote_size_fraction_ppm: int = Field(default=100_000, ge=1, le=1_000_000)
+    flow_inventory_fraction_ppm: int = Field(default=200_000, ge=1, le=500_000)
+    taker_probability_milli: int = Field(default=300, ge=0, le=1_000)
+    directional_limit_probability_milli: int = Field(default=250, ge=0, le=1_000)
     schema_version: Literal["background-market-sector.v0.1"] = "background-market-sector.v0.1"
+
+    @model_validator(mode="after")
+    def validate_order_flow_policy(self) -> "BackgroundMarketSector":
+        if self.flow_account_id == self.sector_id:
+            raise ValueError("background flow account must differ from the maker account")
+        if self.taker_probability_milli + self.directional_limit_probability_milli > 1_000:
+            raise ValueError("background order-flow probabilities cannot exceed 1000 milli")
+        return self
 
 
 class PopulationConfig(BaseModel):

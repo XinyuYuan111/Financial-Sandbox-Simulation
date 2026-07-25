@@ -44,6 +44,9 @@ class TradeView(StrictFrozenModel):
 
 class MarketObservation(StrictFrozenModel):
     market_id: str
+    base_asset: str = "TOKEN"
+    quote_asset: str = "USDX"
+    price_tick: int = Field(default=1, ge=1)
     bids: list[OrderView] = Field(default_factory=list)
     asks: list[OrderView] = Field(default_factory=list)
     last_trade: TradeView | None = None
@@ -61,6 +64,8 @@ class ObservedInformation(StrictFrozenModel):
     expires_sim_time_us: int | None = Field(default=None, ge=0)
     target_ids: list[str] = Field(default_factory=list)
     visibility: Literal["public", "agent_private"]
+    signal_direction: Literal["bullish", "bearish", "neutral"] | None = None
+    signal_confidence_milli: int | None = Field(default=None, ge=0, le=1_000)
     derived_from_info_id: str | None = None
     intervention_plan_id: str | None = None
     intervention_stage_id: str | None = None

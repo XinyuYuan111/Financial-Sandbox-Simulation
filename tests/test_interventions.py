@@ -59,14 +59,17 @@ class BlockingPlanningAdapter:
 
 
 class TypedDirectorAdapter:
-    name = "openai"
-    profile = BlockingPlanningAdapter.profile.model_copy(update={"model": "director-test"})
-
-    def __init__(self) -> None:
+    def __init__(self, provider: str = "openai") -> None:
+        self.name = provider
+        self.provider = provider
+        self.profile = BlockingPlanningAdapter.profile.model_copy(update={
+            "provider": provider,
+            "model": f"{provider}-director-test",
+        })
         self.request = None
 
     async def preflight(self) -> dict[str, object]:
-        return {"ok": True, "provider": "openai"}
+        return {"ok": True, "provider": self.provider}
 
     async def create_intervention_plan(self, request, *, record_raw=None):
         self.request = request
@@ -76,8 +79,8 @@ class TypedDirectorAdapter:
                 request_id=request.request_id,
                 agent_id="scenario_director",
                 attempt=1,
-                provider="openai",
-                model="director-test",
+                provider=self.provider,
+                model=self.profile.model,
                 context_hash=request.context_hash,
                 redacted_request={"request_id": request.request_id, "context_hash": request.context_hash},
                 raw_response={"typed": True},
@@ -88,6 +91,7 @@ class TypedDirectorAdapter:
             stages=[{
                 "stage_id": "stage-ai",
                 "effective_sim_time_us": request.requested_effective_time_us,
+                "background_order_flow_impact_milli": -700,
                 "effects": [{
                     "effect_id": "effect-ai-halt",
                     "effect_type": "set_market_status",
@@ -332,6 +336,7 @@ class InterventionTests(unittest.TestCase):
         self.assertEqual(created["status"], "draft")
         self.assertEqual(created["plan"]["director_record"]["director_kind"], "openai.v0.1")
         self.assertEqual(created["plan"]["director_record"]["call_ids"], ["llm-director-test"])
+        self.assertEqual(created["plan"]["stages"][0]["background_order_flow_impact_milli"], -700)
         self.assertEqual(adapter.request.private_context, {})
         self.assertNotIn("base_persona", str(adapter.request.world_context))
         self.assertNotIn("memory_entries", str(adapter.request.world_context))
@@ -355,6 +360,35 @@ class InterventionTests(unittest.TestCase):
             records = archive.read("llm/records.jsonl").decode().splitlines()
             self.assertEqual(len(records), 1)
             self.assertIn("scenario_director", records[0])
+
+    def test_director_uses_resolved_scenario_provider_over_request_hint(self) -> None:
+        adapter = TypedDirectorAdapter("deepseek")
+        self.manager.initializer.llm_gateway = LLMGateway({"deepseek": adapter})
+        scenario = self.manager.create_scenario(ScenarioDraft(
+            mode="live_llm_smoke",
+            llm_provider="deepseek",
+            population={"preset": "smoke"},
+        ))
+        resolved = asyncio.run(self.manager.resolve_scenario(str(scenario["scenario_id"])))
+        run = self.manager.create_run(str(scenario["scenario_id"]), resolved.resolution_hash)
+        branch_id = str(run["branches"][0]["branch_id"])
+        self.manager.command(branch_id, "deepseek-start", "start")
+        self.manager.command(branch_id, "deepseek-pause", "pause")
+
+        # The stale UI hint says OpenAI, but the immutable run configuration
+        # must route the director call through DeepSeek.
+        created = asyncio.run(self.manager.interpret_intervention_plan(
+            branch_id,
+            "deepseek-director-command",
+            user_intent="Halt TOKEN-USDX now",
+            requested_effective_time_us=0,
+            provider_name="openai",
+            access_scope=DirectorAccessScope(),
+            private_read_refs=[],
+        ))
+        self.assertEqual(created["plan"]["director_record"]["provider"], "deepseek")
+        self.assertEqual(created["plan"]["director_record"]["director_kind"], "deepseek.v0.1")
+        self.assertEqual(adapter.request.user_intent, "Halt TOKEN-USDX now")
 
     def test_director_rejects_runtime_secret_material_before_provider_use(self) -> None:
         self.pause()

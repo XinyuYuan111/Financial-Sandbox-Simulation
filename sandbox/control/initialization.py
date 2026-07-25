@@ -601,6 +601,11 @@ class Initializer:
                 "background_participation_policy_id": background.participation_policy_id,
             },
         }
+        # Persist the provider selected in the scenario, even if an adapter's
+        # diagnostic payload omits or mislabels it. This is the routing source
+        # of truth for every later LLM call in the run.
+        if draft.llm_provider is not None:
+            llm_report = {**llm_report, "provider": draft.llm_provider}
         provider_report = {**provider_report, "llm": llm_report}
         initial_states = list(draft.initial_agent_states or [])
         if initial_states:
@@ -617,6 +622,7 @@ class Initializer:
         }
         reserved_account_ids = {
             background.sector_id,
+            background.flow_account_id,
             "fee_account",
             "genesis_asset_pool",
             *source_account_ids,

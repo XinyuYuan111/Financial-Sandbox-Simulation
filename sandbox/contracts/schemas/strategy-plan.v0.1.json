@@ -220,9 +220,18 @@
           "title": "Channel",
           "type": "string"
         },
+        "communication_mode": {
+          "default": "disclose",
+          "enum": [
+            "disclose",
+            "withhold"
+          ],
+          "title": "Communication Mode",
+          "type": "string"
+        },
         "message_payload": {
+          "default": "",
           "maxLength": 4000,
-          "minLength": 1,
           "title": "Message Payload",
           "type": "string"
         },
@@ -233,6 +242,77 @@
           "maxItems": 64,
           "title": "Target Ids",
           "type": "array"
+        },
+        "signal_direction": {
+          "anyOf": [
+            {
+              "enum": [
+                "bullish",
+                "bearish",
+                "neutral"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Signal Direction"
+        },
+        "signal_confidence_milli": {
+          "anyOf": [
+            {
+              "maximum": 1000,
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Signal Confidence Milli"
+        },
+        "claim_intent": {
+          "default": "sincere",
+          "enum": [
+            "sincere",
+            "strategic_deception"
+          ],
+          "title": "Claim Intent",
+          "type": "string"
+        },
+        "private_assessment_direction": {
+          "anyOf": [
+            {
+              "enum": [
+                "bullish",
+                "bearish",
+                "neutral"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Private Assessment Direction"
+        },
+        "derived_from_info_id": {
+          "anyOf": [
+            {
+              "maxLength": 256,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Derived From Info Id"
         },
         "guard": {
           "anyOf": [
@@ -275,7 +355,6 @@
       "required": [
         "directive_key",
         "channel",
-        "message_payload",
         "emission"
       ],
       "title": "CommunicationDirective",

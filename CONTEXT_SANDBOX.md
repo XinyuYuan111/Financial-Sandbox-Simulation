@@ -36,6 +36,10 @@ _Avoid_: Intervention Draft 实体、已生效事件、自由状态 Patch
 Intervention Plan 中绑定一个虚拟生效时刻的有序效果边界；同一 Stage 的必要世界变化原子提交，依赖这些变化的信息只在提交成功后形成。
 _Avoid_: 独立 Intervention 实体、含糊的效果列表、部分提交边界
 
+**Background Order-flow Impact**:
+Scenario Director 对一个 Intervention Stage 未来市场含义作出的有符号强度判断，范围从 -1000（极强利空卖压）到 +1000（极强利多买压）。它只在确认后通过有界、可衰减的 Background Market 真实订单影响价格形成，不能直接修改价格，也不能与信息发布者的主观 `signal_direction` 或可信度混为一谈。
+_Avoid_: 直接价格 Patch、无限订单、把消息主张当作权威冲击、由用户额外编写价格路径
+
 **Intervention Template**:
 一种版本化的受支持复合干预定义，用于把常见外生情景确定地解释为既有领域效果；它不能引入任意代码或绕过状态所有权。
 _Avoid_: 自由文本脚本、通用 JSON Patch

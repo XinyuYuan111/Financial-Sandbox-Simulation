@@ -103,6 +103,9 @@ class DeepSeekAdapterTests(unittest.IsolatedAsyncioTestCase):
                 agent_id="agent-deepseek",
                 context_hash="sha256:deepseek-context",
                 planner_instructions="Create a bounded plan.",
+                capabilities=["information.read", "information.publish"],
+                role_tags=["information_participant"],
+                public_identity="Independent market analyst",
                 persona={"notes": "untrusted"},
                 observation={"observation_id": "observation-deepseek"},
                 cognition={"memory_ids": []},
@@ -120,6 +123,10 @@ class DeepSeekAdapterTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(all(call["url"] == "https://api.deepseek.com/chat/completions" for call in client.calls))
         self.assertTrue(all(call["json"]["response_format"] == {"type": "json_object"} for call in client.calls))
         self.assertTrue(all(call["headers"]["Authorization"] == "Bearer deepseek-secret" for call in client.calls))
+        payload = json.loads(client.calls[-1]["json"]["messages"][1]["content"])
+        self.assertEqual(payload["capabilities"], ["information.read", "information.publish"])
+        self.assertEqual(payload["role_tags"], ["information_participant"])
+        self.assertEqual(payload["public_identity"], "Independent market analyst")
 
     async def test_missing_key_is_reported(self) -> None:
         adapter = DeepSeekProviderAdapter(api_key=None)

@@ -59,6 +59,7 @@ class InterpretInterventionPlanRequest(BaseModel):
     client_command_id: str = Field(min_length=1, max_length=256)
     user_intent: str = Field(min_length=1, max_length=4_000)
     requested_effective_time_us: int = Field(ge=0)
-    provider: Literal["openai", "deepseek"] = "openai"
+    # Optional compatibility hint. The run's resolved scenario provider is authoritative.
+    provider: Literal["openai", "deepseek"] | None = None
     access_scope: DirectorAccessScope = Field(default_factory=DirectorAccessScope)
     private_read_refs: list[PrivateStateRef] = Field(default_factory=list, max_length=2_048)

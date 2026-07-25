@@ -112,8 +112,8 @@ Acceptance:
 ### P-005 - Cognition and planning lifecycle contracts are disconnected
 
 Status: **PARTIAL / 部分解决**  
-Implemented: planning request states, declarative plans, directive cursors, bounded memory writes/forget, evidence-backed belief proposals, attention/cognitive budget consumption, and budget-window reset exist.  
-Missing: memory merge/search services, competing-belief policies, trigger accumulation, tool loop, planning timeout/expiry, and scheduled directive wakeups.
+Implemented: planning request states, declarative plans, directive cursors, bounded memory writes/forget, evidence-backed belief proposals, attention/cognitive budget consumption, budget-window reset, market-observation cognition, and scheduled directive wakeups exist.
+Missing: memory merge/search services, competing-belief policies, trigger accumulation, tool loop, and planning timeout/expiry.
 
 Required resolution:
 
@@ -128,8 +128,8 @@ Acceptance:
 ### P-006 - Agent-to-Agent interaction lacks a complete response loop
 
 Status: **PARTIAL / 部分解决**  
-Implemented: typed communication directives, public publication, private targeting, immutable information items, and communication capability checks.  
-Missing: autonomous recipient response, forwarding/summary/misquotation derivation, subjective trust inputs, conversation delay/failure, and social protocol events.
+Implemented: typed communication directives, public publication, private targeting, explicit withholding, Agent-relative deceptive claims, immutable information items, derived-source references, communication capability checks, and recipient cognition/replanning exist. Random Agents receive publish capability by default, and the host enriches non-replay market plans that omit the independent communication lane.
+Missing: complete forwarding/summary/misquotation policies, subjective trust inputs, conversation delay/failure, and social protocol events.
 
 Required resolution:
 
@@ -234,7 +234,7 @@ Acceptance:
 ### P-013 - Product intervention catalog is incomplete
 
 Status: **PARTIAL / 部分解决**  
-Implemented: paused command-scoped Director, draft/confirm, typed state and information effects, atomic current stages, future stages, causal-state checks, audit records, a versioned seven-entry template catalog, and manual UI fields for entity/relationship effects.  
+Implemented: paused command-scoped Director, draft/confirm, typed state and information effects, atomic current stages, future stages, causal-state checks, audit records, a versioned seven-entry template catalog, manual UI fields for entity/relationship effects, and an AI-inferred signed market-impact degree that drives bounded, decaying Background Order Flow after confirmation.
 Missing: executable compound template bodies and per-template archive/fork/replay acceptance coverage.
 
 Required resolution:

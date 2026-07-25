@@ -4,6 +4,7 @@ import type { Projection } from '../../types'
 import { EmptyState, formatInteger, formatTime, shortId } from '../../components/ui'
 import { useTradeEffects } from '../../hooks/useTradeEffects'
 import { ParticleLayer } from '../../components/ParticleLayer'
+import { channelText, informationNarrative } from '../agents/auditNarrative'
 
 export function MarketWorkspace({ projection }: { projection: Projection }) {
   const last = projection.market.last_trade
@@ -41,5 +42,12 @@ export function MarketWorkspace({ projection }: { projection: Projection }) {
 }
 
 export function InformationWorkspace({ projection }: { projection: Projection }) {
-  return <section className="workspace-panel full-panel"><div className="panel-heading"><div><h2>信息流</h2><p>{projection.information.length} 条已发布信息</p></div><Info size={18} /></div>{projection.information.length ? <div className="information-list">{[...projection.information].reverse().map((item, index) => <article key={String(item.information_id ?? index)}><div><strong>{String(item.channel ?? 'PublicFeed')}</strong><span>{formatTime(Number(item.sim_time_us ?? 0))}</span></div><p>{String(item.rendered_content ?? '')}</p><small>{String(item.source_id ?? '-')}</small></article>)}</div> : <EmptyState title="暂无信息" />}</section>
+  return <section className="workspace-panel full-panel"><div className="panel-heading"><div><h2>Agent 交流</h2><p>{projection.information.length} 条已进入传播链的信息</p></div><Info size={18} /></div>{projection.information.length ? <div className="information-list">{[...projection.information].reverse().map((item, index) => {
+    const narrative = informationNarrative(item)
+    return <article key={String(item.information_id ?? index)}>
+      <div><strong>{channelText(item.channel)}</strong><span>{formatTime(Number(item.sim_time_us ?? 0))}</span></div>
+      <p>“{String(item.rendered_content ?? '')}”</p>
+      <dl className="information-meta"><div><dt>发布者</dt><dd>{String(item.source_id ?? '未知来源')}</dd></div><div><dt>披露范围</dt><dd>{narrative.scope}</dd></div><div><dt>主张</dt><dd>{narrative.claim}</dd></div><div><dt>信息血缘</dt><dd>{narrative.provenance}</dd></div></dl>
+    </article>
+  })}</div> : <EmptyState title="暂无 Agent 交流" detail="Agent 的公开观点、定向披露和信息派生会显示在这里；保留未发布的判断只出现在分析审计中。" />}</section>
 }
