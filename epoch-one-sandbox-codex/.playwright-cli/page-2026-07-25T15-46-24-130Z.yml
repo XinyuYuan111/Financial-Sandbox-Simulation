@@ -1,0 +1,91 @@
+- generic [ref=e2]:
+  - banner [ref=e3]:
+    - heading "EPOCH ONE" [level=1] [ref=e5]
+    - generic [ref=e6]:
+      - generic [ref=e7]:
+        - text: 最新成交
+        - strong [ref=e8]: "99.96"
+      - generic [ref=e9]:
+        - text: 最优买卖
+        - strong [ref=e10]: "99.87"
+        - text: /
+        - strong [ref=e11]: "100.05"
+      - generic [ref=e12]:
+        - text: 累计成交
+        - strong [ref=e13]: "0"
+      - generic [ref=e14]:
+        - text: 价差
+        - strong [ref=e15]: "18.7"
+        - text: bps
+    - generic [ref=e16]:
+      - generic [ref=e17]:
+        - generic [ref=e18]: 世界时 07:52:00
+        - generic [ref=e19]: AGENTS 6
+        - generic [ref=e20]: 封存 01:30
+        - generic [ref=e21]: 模拟
+      - button "指标▼" [ref=e22] [cursor=pointer]
+      - button "场景" [ref=e23] [cursor=pointer]
+      - button "暂停" [ref=e24] [cursor=pointer]
+      - button "重置" [ref=e25] [cursor=pointer]
+      - slider "Agent 数量" [ref=e26] [cursor=pointer]: "6"
+  - main [ref=e27]:
+    - complementary [ref=e28]:
+      - generic [ref=e29]:
+        - generic [ref=e30]: 信息注入台
+        - generic [ref=e31]:
+          - button "信息注入" [ref=e32] [cursor=pointer]
+          - button "干预效果" [ref=e33] [cursor=pointer]
+      - generic [ref=e34]:
+        - textbox "写一条你想放进世界的消息……" [ref=e35]
+        - generic [ref=e36]:
+          - generic [ref=e37] [cursor=pointer]:
+            - radio "公开快讯" [checked]
+            - generic [ref=e38]: 公开快讯
+          - generic [ref=e39] [cursor=pointer]:
+            - radio "官方公告"
+            - generic [ref=e40]: 官方公告
+          - generic [ref=e41] [cursor=pointer]:
+            - radio "终端数据"
+            - generic [ref=e42]: 终端数据
+          - generic [ref=e43] [cursor=pointer]:
+            - radio "私信"
+            - generic [ref=e44]: 私信
+        - button "注 入" [ref=e45] [cursor=pointer]
+    - generic [ref=e47]:
+      - generic [ref=e121]:
+        - generic [ref=e127]:
+          - generic [ref=e128]: "99.96"
+          - generic [ref=e129]: "-0.01%"
+        - generic [ref=e130]: 模拟
+      - generic [ref=e131]:
+        - generic:
+          - generic [ref=e132] [cursor=pointer]: ◇
+          - generic [ref=e136] [cursor=pointer]: 锚点
+        - generic:
+          - generic [ref=e137] [cursor=pointer]: △
+          - generic [ref=e141] [cursor=pointer]: 玄枢
+        - generic:
+          - generic [ref=e142] [cursor=pointer]: ○
+          - generic [ref=e146] [cursor=pointer]: 薄暮
+        - generic:
+          - generic [ref=e147] [cursor=pointer]: ▽
+          - generic [ref=e151] [cursor=pointer]: 灯塔
+        - generic:
+          - generic [ref=e152] [cursor=pointer]: ☰
+          - generic [ref=e156] [cursor=pointer]: 回声
+        - generic:
+          - generic [ref=e157] [cursor=pointer]: ✕
+          - generic [ref=e161] [cursor=pointer]: 观星
+      - generic [ref=e163]:
+        - generic [ref=e164]: STANDBY
+        - button "开 始" [ref=e165] [cursor=pointer]
+    - complementary [ref=e166]:
+      - generic [ref=e167]:
+        - generic [ref=e168]: 世界账本
+        - generic [ref=e169]:
+          - button "账本" [ref=e170] [cursor=pointer]
+          - button "事件" [ref=e171] [cursor=pointer]
+          - button "归档" [ref=e172] [cursor=pointer]
+      - generic [ref=e173]:
+        - generic [ref=e174]: "t+0s world init #8ad6…"
+        - generic [ref=e177]: EPOCH ONE · Injective EVM 语义 · 模拟演示

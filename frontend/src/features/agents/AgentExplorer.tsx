@@ -35,7 +35,7 @@ type DecisionResponse = { decisions: AgentAudit['decisions'] }
 type PlanResponse = { plans: AgentAudit['plans'] }
 type ReceiptResponse = { receipts: AgentAudit['receipts'] }
 
-export function AgentExplorer({ branchId, cursor }: { branchId: string; cursor?: number }) {
+export function AgentExplorer({ branchId, cursor, initialAgentId }: { branchId: string; cursor?: number; initialAgentId?: string }) {
   const [agents, setAgents] = useState<AgentProjection[]>([])
   const [selectedId, setSelectedId] = useState('')
   const [detail, setDetail] = useState<AgentDetail | null>(null)
@@ -49,10 +49,10 @@ export function AgentExplorer({ branchId, cursor }: { branchId: string; cursor?:
     api.agents<{ agents: AgentProjection[] }>(branchId, cursor).then(response => {
       if (!active) return
       setAgents(response.agents)
-      setSelectedId(response.agents[0]?.agent_id ?? '')
+      setSelectedId(response.agents.some(agent => agent.agent_id === initialAgentId) ? initialAgentId! : response.agents[0]?.agent_id ?? '')
     }).catch(reason => active && setError(reason instanceof Error ? reason.message : 'Agent 列表加载失败'))
     return () => { active = false }
-  }, [branchId, cursor])
+  }, [branchId, cursor, initialAgentId])
 
   useEffect(() => {
     if (!selectedId) return

@@ -112,18 +112,35 @@ function stageStatusText(status: InterventionPlan['stages'][number]['status']): 
   return { pending: '待生效', applied: '已生效', failed: '应用失败', canceled: '已取消' }[status]
 }
 
-export function InterventionWorkspace({ branchId, branchStatus, simTimeUs, provider, onChanged }: {
+export function InterventionWorkspace({ branchId, branchStatus, simTimeUs, provider, onChanged, initialInformation }: {
   branchId: string
   branchStatus: string
   simTimeUs: number
   provider: 'openai' | 'deepseek' | null
   onChanged: () => Promise<void>
+  initialInformation?: {
+    intent: string
+    content: string
+    channel: EffectDraft['channel']
+    targetIds: string
+  }
 }) {
   const [plans, setPlans] = useState<InterventionPlan[]>([])
-  const [intent, setIntent] = useState('')
+  const [intent, setIntent] = useState(initialInformation?.intent ?? '')
   const [effectiveTime, setEffectiveTime] = useState(String(simTimeUs))
-  const [effectDraft, setEffectDraft] = useState<EffectDraft>(blankEffect)
-  const [effects, setEffects] = useState<InterventionEffect[]>([])
+  const [effectDraft, setEffectDraft] = useState<EffectDraft>(() => ({
+    ...blankEffect(),
+    content: initialInformation?.content ?? '',
+    channel: initialInformation?.channel ?? 'OfficialAnnouncement',
+    target_ids: initialInformation?.targetIds ?? '',
+  }))
+  const [effects, setEffects] = useState<InterventionEffect[]>(() => initialInformation ? [buildEffect({
+    ...blankEffect(),
+    effect_type: 'publish_information',
+    content: initialInformation.content,
+    channel: initialInformation.channel,
+    target_ids: initialInformation.targetIds,
+  })] : [])
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
