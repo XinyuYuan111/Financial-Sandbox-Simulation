@@ -18,9 +18,12 @@ const CURRENTS = [
 ]
 const SEAL_PERIOD_US = 90_000_000
 const MAX_PAWNS = 12
+const CHANNEL_RING: Record<string, string> = {
+  PublicFeed: '#5B8DBE', OfficialAnnouncement: '#C9922A', TradingTerminal: '#6FA287', PrivateChannel: '#8B7F9E',
+}
 
 type StageTone = 'neutral' | 'calm' | 'heat' | 'halted'
-type FxKind = 'trade' | 'info' | 'seal' | 'intervention' | 'link'
+type FxKind = 'footprint' | 'glyph' | 'ripple' | 'packet' | 'ring' | 'seal' | 'intervention' | 'link'
 type FxItem = {
   id: string
   kind: FxKind
@@ -30,8 +33,12 @@ type FxItem = {
   text?: string
   x2?: number
   y2?: number
+  agentId?: string
+  peerId?: string
   ttl: number
 }
+type BubbleOverride = { id: string; agentId: string; text: string; kind: 'speak' | 'judge' | 'pm'; cred?: string }
+type PawnPos = { x: number; y: number; s: number; index: number }
 
 function mulberry32(seed: number) {
   let a = seed
@@ -69,7 +76,7 @@ export function SimulationStage({ projection, events, branchStatus, onOpenAgent,
   const tradeVolume = trades.reduce((sum, trade) => sum + trade.quantity, 0)
 
   const positions = useMemo(() => {
-    const map = new Map<string, { x: number; y: number; s: number; index: number }>()
+    const map = new Map<string, PawnPos>()
     agents.forEach((agent, index) => map.set(agent.agent_id, { ...slotPos(index, agents.length), index }))
     return map
   }, [agents])
@@ -83,22 +90,17 @@ export function SimulationStage({ projection, events, branchStatus, onOpenAgent,
     return 'neutral'
   }, [events, projection.market_status])
 
-  /* ---------- 市场脉搏：价格线 / 幽灵均线 / 量能柱 ---------- */
   const pulse = useMemo(() => buildPulse(trades, projection.market.last_trade?.price), [trades, projection.market.last_trade?.price])
-
-  /* ---------- 深度地形：订单簿累计深度剪影 ---------- */
   const depth = useMemo(() => buildDepth(projection.market.bids.map(o => o.remaining), projection.market.asks.map(o => o.remaining)), [projection.market.bids, projection.market.asks])
-
-  /* ---------- 封存地环：距上次检查点的模拟时间进度 ---------- */
   const sealProgress = useMemo(() => {
     const lastSeal = [...events].reverse().find(event => event.event_type === 'CheckpointCreated')
-    const base = lastSeal?.sim_time_us ?? 0
-    return Math.min(100, Math.max(0, (projection.sim_time_us - base) / SEAL_PERIOD_US * 100))
+    return Math.min(100, Math.max(0, (projection.sim_time_us - (lastSeal?.sim_time_us ?? 0)) / SEAL_PERIOD_US * 100))
   }, [events, projection.sim_time_us])
 
-  /* ---------- 特效：事件驱动的飞行物 / 足迹 / 封存仪式 ---------- */
+  /* ---------- 演出：事件驱动的行动 / 气泡 / 连线 ---------- */
   const [fx, setFx] = useState<FxItem[]>([])
-  // 挂载与分支切换时以既有事件快照为基线：历史事件不重放特效，只演出新到事件
+  const [bubbles, setBubbles] = useState<BubbleOverride[]>([])
+  // 挂载与分支切换时以既有事件快照为基线：历史事件不重放演出，只演出新到事件
   const seenRef = useRef<Set<string> | null>(null)
   const seenBranchRef = useRef<string | null>(null)
   if (seenRef.current === null || seenBranchRef.current !== projection.branch_id) {
@@ -107,53 +109,98 @@ export function SimulationStage({ projection, events, branchStatus, onOpenAgent,
   }
   const timersRef = useRef<number[]>([])
   useEffect(() => () => { timersRef.current.forEach(timer => window.clearTimeout(timer)) }, [])
+
   useEffect(() => {
     const seen = seenRef.current ?? new Set<string>()
     seenRef.current = seen
     const additions: FxItem[] = []
+    const newBubbles: BubbleOverride[] = []
     for (const event of events) {
       if (seen.has(event.event_id)) continue
       seen.add(event.event_id)
       const payload = asRecord(event.payload)
+
       if (event.event_type === 'TradeMatched') {
         const buyer = String(payload.buyer_id ?? '')
         const seller = String(payload.seller_id ?? '')
-        const target = positions.get(buyer) ?? positions.get(seller)
+        const isBuy = positions.has(buyer)
+        const agentId = isBuy ? buyer : seller
+        const pos = positions.get(agentId)
         const quantity = num(payload.quantity)
-        if (target && quantity !== null) {
-          additions.push({ id: event.event_id, kind: 'trade', x: target.x, y: target.y - 14, color: positions.has(buyer) ? '#7FA88F' : '#B0705F', text: `${positions.has(buyer) ? '▲' : '▼'}${formatInteger(quantity)}`, ttl: 6200 })
+        if (pos) {
+          const color = PALETTE[pos.index % PALETTE.length]
+          const glyph = isBuy ? '▲' : '▼'
+          // 行动符号：从棋子飞向市场脉搏
+          additions.push({ id: `${event.event_id}:glyph`, kind: 'glyph', x: pos.x, y: pos.y - 12, x2: 96, y2: 6, color, text: glyph, agentId, ttl: 1150 })
+          // 落子涟漪
+          additions.push({ id: `${event.event_id}:ripple`, kind: 'ripple', x: pos.x, y: pos.y, color, agentId, ttl: 1000 })
+          // 成交足迹（约 20s 渐隐）
+          additions.push({ id: `${event.event_id}:fp`, kind: 'footprint', x: pos.x + 2, y: pos.y + 1, color, text: quantity !== null ? `${glyph}${formatInteger(quantity)}` : glyph, ttl: 20000 })
+        } else {
+          // 背景市场部门的成交：未建模参与者从舞台之外飞入的行动符号
+          const flowBuyer = buyer.includes('flow')
+          const flowSeller = seller.includes('flow')
+          const glyph = flowBuyer ? '▲' : flowSeller ? '▼' : '△'
+          const hash = [...event.event_id].reduce((sum, ch) => sum + ch.charCodeAt(0), 0)
+          additions.push({ id: `${event.event_id}:glyph`, kind: 'glyph', x: 15 + (hash % 70), y: 96, x2: 96, y2: 6, color: '#7A8B8F', text: glyph, ttl: 1150 })
         }
       } else if (event.event_type === 'InformationPublished') {
         const channel = String(payload.channel ?? '')
+        const ringColor = CHANNEL_RING[channel] ?? '#C8432B'
+        const author = positions.get(event.source_id)
+        const origin = author ? { x: author.x, y: author.y - 10 } : { x: 50, y: 42 }
         const targetIds = Array.isArray(payload.target_ids) ? payload.target_ids.map(String) : []
-        const targets = targetIds.length ? targetIds : agents.map(agent => agent.agent_id)
+        const targets = (targetIds.length ? targetIds : agents.map(agent => agent.agent_id)).filter(id => id !== event.source_id)
         targets.slice(0, MAX_PAWNS).forEach((agentId, index) => {
           const target = positions.get(agentId)
           if (!target) return
-          additions.push({ id: `${event.event_id}:${index}`, kind: 'info', x: 50, y: 42, x2: target.x, y2: target.y - 10, color: channel === 'PrivateChannel' ? '#8B7F9E' : '#C8432B', ttl: 1500 + index * 90 })
+          additions.push({ id: `${event.event_id}:pkt:${index}`, kind: 'packet', x: origin.x, y: origin.y, x2: target.x, y2: target.y - 10, color: ringColor, ttl: 1500 + index * 90 })
         })
-        additions.push({ id: `${event.event_id}:ring`, kind: 'info', x: 50, y: 42, ttl: 1200 })
+        additions.push({ id: `${event.event_id}:ring`, kind: 'ring', x: origin.x, y: origin.y, color: ringColor, ttl: 1200 })
+        if (author) newBubbles.push({ id: event.event_id, agentId: event.source_id, kind: 'speak', text: String(payload.rendered_content ?? '').slice(0, 42) })
+      } else if (event.event_type === 'PrivateMessageDelivered') {
+        const from = positions.get(event.source_id)
+        const targetId = String(payload.target_id ?? '')
+        const to = positions.get(targetId)
+        if (from && to) {
+          additions.push({ id: event.event_id, kind: 'link', x: from.x, y: from.y - 8, x2: to.x, y2: to.y - 8, agentId: event.source_id, peerId: targetId, ttl: 5200 })
+          newBubbles.push({ id: `${event.event_id}:pm`, agentId: targetId, kind: 'pm', text: '收到一条定向消息' })
+        }
+      } else if (event.event_type === 'BeliefUpdated') {
+        const pos = positions.get(event.source_id)
+        const confidence = num(payload.confidence_milli)
+        if (pos && confidence !== null) {
+          newBubbles.push({ id: event.event_id, agentId: event.source_id, kind: 'judge', text: String(payload.subject ?? '市场'), cred: `研判 · 信心 ${confidence} / 1000` })
+        }
       } else if (event.event_type === 'CheckpointCreated') {
         additions.push({ id: event.event_id, kind: 'seal', x: 50, y: 42, ttl: 1600 })
       } else if (event.event_type === 'InterventionStageApplied' || event.event_type === 'ControlInterventionApplied') {
         additions.push({ id: event.event_id, kind: 'intervention', x: 50, y: 42, ttl: 1200 })
-      } else if (event.event_type === 'PrivateMessageDelivered') {
-        const from = positions.get(event.source_id)
-        const to = positions.get(String(payload.target_id ?? ''))
-        if (from && to) additions.push({ id: event.event_id, kind: 'link', x: from.x, y: from.y - 8, x2: to.x, y2: to.y - 8, ttl: 5200 })
       }
     }
     if (seen.size > 2000) {
       seen.clear()
       events.forEach(event => seen.add(event.event_id))
     }
-    if (!additions.length) return
-    setFx(current => [...current.slice(-40), ...additions])
+    if (!additions.length && !newBubbles.length) return
+    if (additions.length) setFx(current => [...current.slice(-48), ...additions])
+    if (newBubbles.length) {
+      setBubbles(current => [...current.filter(item => !newBubbles.some(addition => addition.agentId === item.agentId)), ...newBubbles].slice(-MAX_PAWNS))
+    }
+    const ttl = Math.max(...[...additions.map(item => item.ttl), ...newBubbles.map(() => 6800)]) + 200
     const timer = window.setTimeout(() => {
       setFx(current => current.filter(item => !additions.some(addition => addition.id === item.id)))
-    }, Math.max(...additions.map(item => item.ttl)) + 200)
+      setBubbles(current => current.filter(item => !newBubbles.some(addition => addition.id === item.id)))
+    }, ttl)
     timersRef.current.push(timer)
-  }, [events, positions])
+  }, [events, positions, agents])
+
+  /* ---------- 演出状态派生 ---------- */
+  const actingIds = useMemo(() => new Set(fx.filter(item => item.kind === 'glyph' || item.kind === 'ripple').map(item => item.agentId)), [fx])
+  const engagedIds = useMemo(() => new Set(fx.filter(item => item.kind === 'link').flatMap(item => [item.agentId ?? '', item.peerId ?? ''])), [fx])
+  const focusing = engagedIds.size > 0
+  const shocking = fx.some(item => item.kind === 'glyph' || item.kind === 'intervention')
+  const bubbleByAgent = useMemo(() => new Map(bubbles.map(item => [item.agentId, item])), [bubbles])
 
   /* ---------- 地面装饰（确定性种子，只在挂载时生成一次） ---------- */
   const ground = useMemo(() => {
@@ -190,7 +237,7 @@ export function SimulationStage({ projection, events, branchStatus, onOpenAgent,
       <ellipse className="seal-dial" cx={500} cy={380} rx={310} ry={142} pathLength={100} strokeDasharray={`${sealProgress.toFixed(1)} 100`} />
     </svg>
 
-    <button className="market-pulse" onClick={onOpenMarket} aria-label="打开订单簿与成交">
+    <button className={`market-pulse ${shocking ? 'pulse-shock' : ''}`} onClick={onOpenMarket} aria-label="打开订单簿与成交">
       <svg viewBox="0 0 1000 128" preserveAspectRatio="none" aria-hidden="true">
         {pulse.bars.map((bar, index) => <rect key={index} x={bar.x} y={bar.y} width={bar.w} height={bar.h} fill={bar.color} />)}
         <path className="pulse-area" d={pulse.area} />
@@ -207,40 +254,37 @@ export function SimulationStage({ projection, events, branchStatus, onOpenAgent,
       {fx.filter(item => item.kind === 'link').map(item => <line key={item.id} className="rel-line" x1={item.x} y1={item.y} x2={item.x2} y2={item.y2} vectorEffect="non-scaling-stroke" />)}
     </svg>
 
-    <div className="stage-agent-layer">
+    <div className={`stage-agent-layer ${focusing ? 'focus' : ''}`}>
       {agents.map((agent, index) => {
         const position = positions.get(agent.agent_id) ?? { x: 50, y: 62, s: 1, index }
-        const color = PALETTE[index % PALETTE.length]
-        const communicating = agent.agent_id === latestSource && latestInformation
-        const trading = latestTrade && (latestTrade.buyer_id === agent.agent_id || latestTrade.seller_id === agent.agent_id)
-        const planning = Boolean(agent.planning_request_id)
-        return <button
-          className={`agent-pawn ${communicating ? 'communicating' : ''} ${trading ? 'trading' : ''} ${planning ? 'planning' : ''}`}
-          style={{ left: `${position.x}%`, top: `${position.y}%`, transform: `scale(${position.s})`, '--agent-color': color, '--delay': `${(index % 6) * -0.7}s` } as React.CSSProperties}
+        const override = bubbleByAgent.get(agent.agent_id)
+        return <AgentPawn
           key={agent.agent_id}
-          onClick={() => onOpenAgent(agent.agent_id)}
-          aria-label={`打开 ${agent.display_name ?? agent.agent_id} 的 Agent 审计`}
-        >
-          {communicating ? <span className={`agent-bubble ${index % 2 === 1 ? 'raise' : ''}`}>{String(latestInformation?.rendered_content ?? '').slice(0, 42)}</span> : null}
-          <span className="agent-emblem">{EMBLEMS[index % EMBLEMS.length]}</span>
-          <svg className="pawn-svg" viewBox="0 0 48 72" aria-hidden="true">
-            <path d={PAWN_PATH} fill={color} fillOpacity=".12" stroke={color} strokeWidth="1.6" strokeLinejoin="round" />
-          </svg>
-          <span className="agent-shadow" />
-          <span className="agent-glow" />
-          <span className="agent-name">{agent.display_name ?? agent.agent_id.slice(0, 8)}</span>
-          <span className="agent-state">{planning ? '规划中' : agent.portfolio.open_orders.length ? `${agent.portfolio.open_orders.length} 挂单` : agent.role_tags?.[0] ?? '观察'}</span>
-        </button>
+          agent={agent}
+          index={index}
+          position={position}
+          color={PALETTE[index % PALETTE.length]}
+          emblem={EMBLEMS[index % EMBLEMS.length]}
+          override={override}
+          communicating={!override && agent.agent_id === latestSource && Boolean(latestInformation)}
+          infoText={String(latestInformation?.rendered_content ?? '').slice(0, 42)}
+          planning={Boolean(agent.planning_request_id)}
+          trading={Boolean(latestTrade && (latestTrade.buyer_id === agent.agent_id || latestTrade.seller_id === agent.agent_id))}
+          acting={actingIds.has(agent.agent_id)}
+          engaged={engagedIds.has(agent.agent_id)}
+          onOpenAgent={onOpenAgent}
+        />
       })}
       {projection.agents.length > agents.length ? <div className="agent-overflow">+{projection.agents.length - agents.length}<span>更多 Agent 在运行</span></div> : null}
     </div>
 
     <div className="fx-layer" aria-hidden="true">
       {fx.filter(item => item.kind !== 'link').map(item => {
-        if (item.kind === 'trade') return <span key={item.id} className="fx-footprint" style={{ left: `${item.x}%`, top: `${item.y}%`, color: item.color }}>{item.text}</span>
+        if (item.kind === 'footprint') return <span key={item.id} className="fx-footprint" style={{ left: `${item.x}%`, top: `${item.y}%`, color: item.color }}>{item.text}</span>
+        if (item.kind === 'glyph') return <FlyingGlyph key={item.id} item={item} />
+        if (item.kind === 'ripple') return <span key={item.id} className="fx-ripple" style={{ left: `${item.x}%`, top: `${item.y}%`, '--fx-color': item.color } as React.CSSProperties} />
         if (item.kind === 'seal') return <span key={item.id} className="fx-seal-sweep" style={{ left: `${item.x}%`, top: `${item.y}%` }} />
-        if (item.kind === 'intervention') return <span key={item.id} className="fx-ring" style={{ left: `${item.x}%`, top: `${item.y}%` }} />
-        if (item.id.endsWith(':ring')) return <span key={item.id} className="fx-ring" style={{ left: `${item.x}%`, top: `${item.y}%` }} />
+        if (item.kind === 'intervention' || item.kind === 'ring') return <span key={item.id} className="fx-ring" style={{ left: `${item.x}%`, top: `${item.y}%`, borderColor: item.color }} />
         return <FlyingPacket key={item.id} item={item} />
       })}
     </div>
@@ -263,12 +307,85 @@ export function SimulationStage({ projection, events, branchStatus, onOpenAgent,
   </section>
 }
 
+/* ---------- 棋子：入场走位 + 气泡优先级（事件 > 交流 > 思考） ---------- */
+function AgentPawn({ agent, index, position, color, emblem, override, communicating, infoText, planning, trading, acting, engaged, onOpenAgent }: {
+  agent: Projection['agents'][number]
+  index: number
+  position: PawnPos
+  color: string
+  emblem: string
+  override?: BubbleOverride
+  communicating: boolean
+  infoText: string
+  planning: boolean
+  trading: boolean
+  acting: boolean
+  engaged: boolean
+  onOpenAgent: (agentId: string) => void
+}) {
+  const [entered, setEntered] = useState(false)
+  useEffect(() => {
+    // setTimeout 而非 rAF：后台标签页 rAF 不触发，棋子会停留在透明态
+    const timer = window.setTimeout(() => setEntered(true), 40)
+    return () => window.clearTimeout(timer)
+  }, [])
+  const fromX = position.x < 50 ? -70 : 70
+  return <button
+    className={`agent-pawn ${override ? 'communicating' : communicating ? 'communicating' : ''} ${trading ? 'trading' : ''} ${acting ? 'acting' : ''} ${planning ? 'planning' : ''} ${engaged ? 'engaged' : ''}`}
+    style={{
+      left: `${position.x}%`,
+      top: `${position.y}%`,
+      transform: entered ? `scale(${position.s})` : `translate(${fromX}px, 0) scale(${position.s})`,
+      opacity: entered ? undefined : 0,
+      transitionDelay: entered ? `${index * 120}ms` : '0ms',
+      '--agent-color': color,
+      '--delay': `${(index % 6) * -0.7}s`,
+    } as React.CSSProperties}
+    onClick={() => onOpenAgent(agent.agent_id)}
+    aria-label={`打开 ${agent.display_name ?? agent.agent_id} 的 Agent 审计`}
+  >
+    {override
+      ? <span className={`agent-bubble show ${override.kind} ${index % 2 === 1 ? 'raise' : ''}`}>{override.text}{override.cred ? <span className="cred">{override.cred}</span> : null}</span>
+      : communicating
+        ? <span className={`agent-bubble ${index % 2 === 1 ? 'raise' : ''}`}>{infoText}</span>
+        : planning
+          ? <span className="agent-bubble thinking"><span className="tdots"><i /><i /><i /></span></span>
+          : null}
+    <span className="agent-emblem">{emblem}</span>
+    <svg className="pawn-svg" viewBox="0 0 48 72" aria-hidden="true">
+      <path d={PAWN_PATH} fill={color} fillOpacity=".12" stroke={color} strokeWidth="1.6" strokeLinejoin="round" />
+    </svg>
+    <span className="agent-shadow" />
+    <span className="agent-glow" />
+    <span className="agent-name">{agent.display_name ?? agent.agent_id.slice(0, 8)}</span>
+    <span className="agent-state">{planning ? '规划中' : agent.portfolio.open_orders.length ? `${agent.portfolio.open_orders.length} 挂单` : agent.role_tags?.[0] ?? '观察'}</span>
+  </button>
+}
+
+/* ---------- 行动符号：从棋子飞向市场脉搏 ---------- */
+function FlyingGlyph({ item }: { item: FxItem }) {
+  const [arrived, setArrived] = useState(false)
+  useEffect(() => {
+    const timer = window.setTimeout(() => setArrived(true), 30)
+    return () => window.clearTimeout(timer)
+  }, [])
+  return <span
+    className="fx-glyph"
+    style={{
+      left: `${arrived ? (item.x2 ?? item.x) : item.x}%`,
+      top: `${arrived ? (item.y2 ?? item.y) : item.y}%`,
+      color: item.color,
+      opacity: arrived ? 0 : 1,
+    }}
+  >{item.text}</span>
+}
+
 /* ---------- 信息包：从舞台中心飞向目标棋子 ---------- */
 function FlyingPacket({ item }: { item: FxItem }) {
   const [arrived, setArrived] = useState(false)
   useEffect(() => {
-    const frame = requestAnimationFrame(() => setArrived(true))
-    return () => cancelAnimationFrame(frame)
+    const timer = window.setTimeout(() => setArrived(true), 30)
+    return () => window.clearTimeout(timer)
   }, [])
   return <span
     className="fx-pkt mini"

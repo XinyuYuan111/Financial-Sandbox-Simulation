@@ -53,10 +53,11 @@ export function AppShell() {
     setBusy(true)
     setError(null)
     try {
-      const [nextProjection, eventResponse] = await Promise.all([
-        api.state<Projection>(targetBranchId, cursor),
-        api.events<{ events: EventEnvelope[] }>(targetBranchId),
-      ])
+      // 先取投影拿到最新游标，再以尾部窗口拉取事件：分支事件可能远超 500 条，
+      // 固定 after=0 会让事件源永远冻结在头部，舞台演出与账本都依赖新事件。
+      const nextProjection = await api.state<Projection>(targetBranchId, cursor)
+      const base = cursor ?? nextProjection.cursor
+      const eventResponse = await api.events<{ events: EventEnvelope[] }>(targetBranchId, Math.max(0, base - 400))
       const branch = targetRun.branches.find(item => item.branch_id === targetBranchId)
       const historical = cursor !== undefined && branch !== undefined && cursor < branch.state_version
       setHistoricalCursor(historical ? cursor : null)
