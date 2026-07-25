@@ -29,7 +29,7 @@ _RECORD_ATTESTATION_ABI: list[dict[str, Any]] = [
 ]
 
 _DEFAULT_GAS = 500_000
-_RECEIPT_TIMEOUT_S = 60
+_RECEIPT_TIMEOUT_S = 300
 
 
 class InjectiveAttestationWriter:
@@ -107,6 +107,76 @@ class InjectiveAttestationWriter:
                 run_id=request.run_id,
                 branch_id=request.branch_id,
                 tx_hash="",
+                block_number=0,
+                status="failed",
+                error_message=str(exc),
+            )
+
+    # ------------------------------------------------------------------
+    # Two-phase API: broadcast immediately, confirm later
+    # ------------------------------------------------------------------
+
+    def broadcast(self, request: AttestationRequest) -> str:
+        """Build, sign and broadcast the transaction; return the tx hash hex string.
+
+        This never waits for confirmation — the caller can save the tx hash
+        immediately (e.g. mark the attestation as *pending*) and then call
+        :meth:`confirm` later.
+        """
+        result_hash_bytes = bytes.fromhex(request.world_state_hash)
+        tx = self._contract.functions.recordAttestation(
+            request.run_id,
+            request.branch_id,
+            result_hash_bytes,
+            request.agent_count,
+            request.sim_time_us,
+        ).build_transaction(
+            {
+                "from": self._account.address,
+                "nonce": self._w3.eth.get_transaction_count(self._account.address),
+                "gas": _DEFAULT_GAS,
+                "chainId": self._w3.eth.chain_id,
+            }
+        )
+        signed = self._w3.eth.account.sign_transaction(tx, private_key=self._private_key)
+        tx_hash = self._w3.eth.send_raw_transaction(signed.raw_transaction)
+        return tx_hash.hex()
+
+    def confirm(self, request: AttestationRequest, tx_hash_hex: str) -> AttestationResult:
+        """Wait for the transaction receipt and return the final attestation result.
+
+        Blocks until the receipt is available or ``_RECEIPT_TIMEOUT_S`` elapses.
+        """
+        return self.confirm_str(request.run_id, request.branch_id, tx_hash_hex)
+
+    def confirm_str(self, run_id: str, branch_id: str, tx_hash_hex: str) -> AttestationResult:
+        """Like :meth:`confirm` but accepts raw strings instead of an
+        :class:`AttestationRequest` object.  Used by recovery paths."""
+        try:
+            tx_hash = bytes.fromhex(tx_hash_hex) if isinstance(tx_hash_hex, str) else tx_hash_hex
+            receipt = self._w3.eth.wait_for_transaction_receipt(tx_hash, timeout=_RECEIPT_TIMEOUT_S)
+            status: str
+            error_msg: str | None = None
+            if receipt["status"] == 1:
+                status = "confirmed"
+            else:
+                status = "failed"
+                error_msg = f"transaction reverted (receipt status={receipt['status']})"
+            return AttestationResult(
+                run_id=run_id,
+                branch_id=branch_id,
+                tx_hash=tx_hash_hex,
+                block_number=receipt["blockNumber"],
+                status=status,
+                error_message=error_msg,
+            )
+        except Exception as exc:
+            logger.warning("attestation confirm failed for run=%s tx=%s: %s",
+                           run_id, tx_hash_hex, exc)
+            return AttestationResult(
+                run_id=run_id,
+                branch_id=branch_id,
+                tx_hash=tx_hash_hex,
                 block_number=0,
                 status="failed",
                 error_message=str(exc),

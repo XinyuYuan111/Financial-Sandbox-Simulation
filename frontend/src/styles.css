@@ -57,6 +57,17 @@ small { color: var(--muted); }
 .icon-button { width: 34px; height: 34px; display: inline-grid; place-items: center; padding: 0; border: 1px solid var(--apple-border); border-radius: var(--radius-sm); background: var(--surface-alt); cursor: pointer; transition: background var(--duration-fast) var(--ease-smooth), transform var(--duration-fast) var(--ease-smooth); }
 .icon-button:hover:not(:disabled) { background: var(--teal-soft); color: var(--teal-dark); transform: scale(1.02); }
 .icon-button:disabled { opacity: .38; cursor: not-allowed; }
+.attest-section { display: inline-flex; align-items: center; gap: 6px; margin: 0 2px; }
+.attest-link { display: inline-flex; align-items: center; gap: 4px; padding: 4px 10px; border-radius: var(--radius-sm); text-decoration: none; font-size: 13px; font-weight: 500; white-space: nowrap; }
+.attest-link.confirmed { color: var(--green, #30b94e); background: rgba(48, 185, 78, 0.1); border: 1px solid rgba(48, 185, 78, 0.25); }
+.attest-link.confirmed:hover { background: rgba(48, 185, 78, 0.18); }
+.attest-pending { display: inline-flex; align-items: center; gap: 5px; color: var(--teal-dark, #1d7b8a); font-size: 13px; font-weight: 500; white-space: nowrap; padding: 4px 10px; }
+.attest-error-msg { font-size: 12px; color: var(--red, #e04343); max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.attest-failed-icon { color: var(--red, #e04343); }
+.attest-notice { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 8px 16px; margin: 8px 16px 0; border-radius: var(--radius-sm); background: rgba(29, 123, 138, 0.08); border: 1px solid rgba(29, 123, 138, 0.2); font-size: 14px; animation: fadeIn 0.2s ease-out; }
+.attest-notice button { background: none; border: none; font-size: 18px; cursor: pointer; color: var(--muted); padding: 0 4px; line-height: 1; }
+.attest-notice button:hover { color: var(--ink); }
+@keyframes fadeIn { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: translateY(0); } }
 
 .app-sidebar { min-height: 0; display: flex; flex-direction: column; background: var(--glass-bg-dark); backdrop-filter: blur(var(--glass-blur)) saturate(1.2); -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.2); color: #eef2f3; border-right: 1px solid var(--glass-border-dark); border-radius: 0; }
 .app-sidebar nav { flex: 1; padding: 16px 12px; overflow-y: auto; }

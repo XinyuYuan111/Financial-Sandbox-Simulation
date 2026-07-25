@@ -67,7 +67,7 @@ ARCHETYPE_TEMPLATES: dict[ParticipantArchetypeId, dict[str, Any]] = {
     "ordinary_participant": {
         "label": "普通参与者",
         "role_tags": ["market_participant"],
-        "capability_set": ["market.trade", "information.read", "information.publish"],
+        "capability_set": ["market.trade", "market.quote", "information.read"],
         "persona": {
             "risk_tolerance_milli": 450,
             "time_horizon": "medium",
@@ -80,7 +80,7 @@ ARCHETYPE_TEMPLATES: dict[ParticipantArchetypeId, dict[str, Any]] = {
     "capital_holder": {
         "label": "资本型持有者",
         "role_tags": ["capital_holder"],
-        "capability_set": ["market.trade", "information.read", "information.publish"],
+        "capability_set": ["market.trade", "market.quote", "information.read"],
         "persona": {
             "risk_tolerance_milli": 600,
             "time_horizon": "long",
@@ -106,7 +106,7 @@ ARCHETYPE_TEMPLATES: dict[ParticipantArchetypeId, dict[str, Any]] = {
     "asset_issuer": {
         "label": "资产发行方",
         "role_tags": ["asset_issuer"],
-        "capability_set": ["market.trade", "information.read", "information.publish"],
+        "capability_set": ["market.trade", "market.quote", "information.read", "information.publish"],
         "persona": {
             "risk_tolerance_milli": 500,
             "time_horizon": "long",

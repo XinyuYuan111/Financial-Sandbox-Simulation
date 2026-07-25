@@ -2635,11 +2635,19 @@ class RunManager:
             request_id = str(row["request_id"])
             payload = json.loads(row["payload_json"])
             if row["result_status"] == "ready":
-                self._complete_planning_candidate(
-                    branch_id,
-                    request_id,
-                    PlanningResultCandidate.model_validate(payload),
-                )
+                try:
+                    self._complete_planning_candidate(
+                        branch_id,
+                        request_id,
+                        PlanningResultCandidate.model_validate(payload),
+                    )
+                except (ConflictError, ValidationError) as exc:
+                    self._fail_planning_request(
+                        branch_id,
+                        request_id,
+                        "CANDIDATE_ACTIVATION_FAILED",
+                        str(exc),
+                    )
             else:
                 self._fail_planning_request(
                     branch_id,
@@ -3573,7 +3581,7 @@ class RunManager:
             branch_id = str(latest_branch["branch_id"])
             world = self._world(branch_id)
         if self.attestation_writer is None:
-            raise ConflictError("ATTESTATION_DISABLED", "attestation writer is not configured")
+            raise ConflictError("attestation writer is not configured", error_code="ATTESTATION_DISABLED")
         self._enqueue_attestation(run_id, branch_id, world)
         return {"run_id": run_id, "branch_id": branch_id, "queued": True}
 
@@ -3584,7 +3592,7 @@ class RunManager:
             "       a.error_message, a.created_at AS attested_at, "
             "       (SELECT COUNT(*) FROM branches b WHERE b.run_id=r.run_id) AS branch_count, "
             "       (SELECT MAX(s.branch_seq) FROM snapshots s WHERE s.run_id=r.run_id) AS max_cursor, "
-            "       (SELECT MAX(sim_time_us) FROM snapshots s WHERE s.run_id=r.run_id) AS total_sim_time_us "
+            "       (SELECT MAX(json_extract(s.snapshot_json, '$.sim_time_us')) FROM snapshots s WHERE s.run_id=r.run_id) AS total_sim_time_us "
             "FROM runs r LEFT JOIN attestations a ON r.run_id = a.run_id "
             "ORDER BY r.created_at DESC"
         )
@@ -3617,6 +3625,7 @@ class RunManager:
         """Start the background attestation worker thread."""
         if self._attestation_thread is not None:
             return
+        self._recover_pending_attestations()
         self._attestation_cancel.clear()
         thread = threading.Thread(
             target=self._attestation_worker_loop,
@@ -3625,6 +3634,43 @@ class RunManager:
         )
         self._attestation_thread = thread
         thread.start()
+
+    @staticmethod
+    def _make_failed_result(run_id: str, branch_id: str, error_message: str) -> AttestationResult:
+        """Build an ``AttestationResult`` with ``status="failed"`` inline."""
+        return AttestationResult(
+            run_id=run_id,
+            branch_id=branch_id,
+            tx_hash="",
+            block_number=0,
+            status="failed",
+            error_message=error_message,
+        )
+
+    def _recover_pending_attestations(self) -> None:
+        """Re-queue run-level attestations that were left in 'pending' status
+        after a server restart so the worker will attempt to confirm them."""
+        import logging
+        log = logging.getLogger(__name__)
+        try:
+            rows = self.store.connection.execute(
+                "SELECT run_id, branch_id, tx_hash FROM attestations WHERE status='pending'"
+            ).fetchall()
+            for row in rows:
+                run_id = str(row["run_id"])
+                branch_id = str(row["branch_id"])
+                tx_hash = str(row["tx_hash"])
+                log.info("Recovering pending attestation run=%s tx=%s", run_id, tx_hash)
+                with self._attestation_lock:
+                    marker = f"recover:{run_id}"
+                    if marker not in self._attestation_queue:
+                        self._attestation_queue[marker] = (
+                            "run_recover",
+                            run_id,
+                            {"branch_id": branch_id, "tx_hash": tx_hash},
+                        )
+        except Exception:
+            log.warning("Failed to recover pending attestations", exc_info=True)
 
     def _attestation_worker_loop(self) -> None:
         """Background loop: process attestation queue (run + checkpoint types)."""
@@ -3642,40 +3688,53 @@ class RunManager:
                 self._attestation_cancel.wait(2.0)
                 continue
             try:
-                result = self.attestation_writer.write_attestation(request)
-                with self.store.transaction() as conn:
-                    if kind == "checkpoint":
+                # ── Recovery path: confirm an already-broadcast tx ──────────
+                if kind == "run_recover":
+                    run_id: str = request  # type: ignore[assignment]
+                    branch_id = str(meta.get("branch_id", ""))
+                    tx_hash = str(meta.get("tx_hash", ""))
+                    log.info("Recovering pending attestation run=%s tx=%s", run_id, tx_hash)
+                    if tx_hash:
+                        result = self.attestation_writer.confirm_str(run_id, branch_id, tx_hash)
+                    else:
+                        result = self._make_failed_result(run_id, branch_id, "no tx hash to confirm")
+                    with self.store.transaction() as conn:
                         conn.execute(
-                            "INSERT OR REPLACE INTO checkpoint_attestations "
-                            "(checkpoint_id, run_id, branch_id, checkpoint_hash, archive_path, archive_hash, "
-                            "tx_hash, block_number, status, error_message) "
-                            "VALUES (?, ?, ?, ?, COALESCE(?, (SELECT archive_path FROM checkpoint_attestations WHERE checkpoint_id=?)), "
-                            "        COALESCE(?, (SELECT archive_hash FROM checkpoint_attestations WHERE checkpoint_id=?)), "
-                            "        ?, ?, ?, ?)",
-                            (
-                                meta.get("checkpoint_id", ""),
-                                request.run_id,
-                                request.branch_id,
-                                meta.get("checkpoint_hash", request.world_state_hash),
-                                None, meta.get("checkpoint_id", ""),
-                                None, meta.get("checkpoint_id", ""),
-                                result.tx_hash,
-                                result.block_number,
-                                result.status,
-                                result.error_message,
-                            ),
+                            "UPDATE attestations SET tx_hash=?, block_number=?, status=?, error_message=? "
+                            "WHERE run_id=? AND branch_id=?",
+                            (result.tx_hash, result.block_number, result.status,
+                             result.error_message, run_id, branch_id),
                         )
-                    elif kind == "archive":
-                        ckpt = conn.execute(
-                            "SELECT checkpoint_id FROM checkpoint_attestations WHERE run_id=? AND archive_hash IS NOT NULL "
-                            "ORDER BY created_at DESC LIMIT 1",
-                            (request.run_id,),
-                        ).fetchone()
-                        if ckpt is not None:
+                    if result.status == "confirmed":
+                        log.info("Recovered attestation confirmed run=%s tx=%s", run_id, result.tx_hash)
+                    else:
+                        log.warning("Recovered attestation failed run=%s: %s", run_id, result.error_message)
+                    continue  # skip Phase 2 below
+                else:
+                    # ── Normal path: broadcast + confirm ────────────────────
+                    tx_hash = self.attestation_writer.broadcast(request)
+                    # Save pending status right away so frontend can see it
+                    with self.store.transaction() as conn:
+                        if kind == "checkpoint":
                             conn.execute(
-                                "UPDATE checkpoint_attestations SET tx_hash=?, block_number=?, status=?, error_message=? "
-                                "WHERE checkpoint_id=?",
-                                (result.tx_hash, result.block_number, result.status, result.error_message, ckpt["checkpoint_id"]),
+                                "INSERT OR REPLACE INTO checkpoint_attestations "
+                                "(checkpoint_id, run_id, branch_id, checkpoint_hash, archive_path, archive_hash, "
+                                "tx_hash, block_number, status, error_message) "
+                                "VALUES (?, ?, ?, ?, COALESCE(?, (SELECT archive_path FROM checkpoint_attestations WHERE checkpoint_id=?)), "
+                                "        COALESCE(?, (SELECT archive_hash FROM checkpoint_attestations WHERE checkpoint_id=?)), "
+                                "        ?, ?, ?, ?)",
+                                (
+                                    meta.get("checkpoint_id", ""),
+                                    request.run_id,
+                                    request.branch_id,
+                                    meta.get("checkpoint_hash", request.world_state_hash),
+                                    None, meta.get("checkpoint_id", ""),
+                                    None, meta.get("checkpoint_id", ""),
+                                    tx_hash,
+                                    0,
+                                    "pending",
+                                    None,
+                                ),
                             )
                         else:
                             conn.execute(
@@ -3686,33 +3745,36 @@ class RunManager:
                                     request.run_id,
                                     request.branch_id,
                                     request.world_state_hash,
-                                    result.tx_hash,
-                                    result.block_number,
-                                    result.status,
-                                    result.error_message,
-                                ),
-                            )
+                                tx_hash,
+                                0,
+                                "pending",
+                                None,
+                            ),
+                        )
+                log.info("Attestation broadcast for %s: tx=%s", request.run_id, tx_hash)
+
+                # Phase 2: wait for confirmation
+                result = self.attestation_writer.confirm(request, tx_hash)
+                with self.store.transaction() as conn:
+                    if kind == "checkpoint":
+                        conn.execute(
+                            "UPDATE checkpoint_attestations SET tx_hash=?, block_number=?, status=?, error_message=? "
+                            "WHERE checkpoint_id=?",
+                            (result.tx_hash, result.block_number, result.status, result.error_message, meta.get("checkpoint_id", "")),
+                        )
                     else:
                         conn.execute(
-                            "INSERT OR REPLACE INTO attestations "
-                            "(run_id, branch_id, world_state_hash, tx_hash, block_number, status, error_message) "
-                            "VALUES (?, ?, ?, ?, ?, ?, ?)",
-                            (
-                                request.run_id,
-                                request.branch_id,
-                                request.world_state_hash,
-                                result.tx_hash,
-                                result.block_number,
-                                result.status,
-                                result.error_message,
-                            ),
+                            "UPDATE attestations SET tx_hash=?, block_number=?, status=?, error_message=? "
+                            "WHERE run_id=? AND branch_id=?",
+                            (result.tx_hash, result.block_number, result.status, result.error_message, request.run_id, request.branch_id),
                         )
                 if result.status == "confirmed":
                     log.info(
-                        "Attestation confirmed for %s %s: tx=%s",
+                        "Attestation confirmed for %s %s: tx=%s block=%s",
                         kind or "run",
                         meta.get("checkpoint_id") if kind == "checkpoint" else request.run_id,
                         result.tx_hash,
+                        result.block_number,
                     )
                 else:
                     log.warning(
@@ -3722,7 +3784,12 @@ class RunManager:
                         result.error_message,
                     )
             except Exception:
-                target_id = meta.get("checkpoint_id") if kind == "checkpoint" else (request.run_id if request else "?")
+                if kind == "run_recover":
+                    target_id = str(request) if request else "?"
+                elif kind == "checkpoint":
+                    target_id = meta.get("checkpoint_id", "?")
+                else:
+                    target_id = request.run_id if request else "?"
                 log.warning("Attestation worker error for %s %s", kind or "run", target_id, exc_info=True)
             finally:
                 if queue_key:

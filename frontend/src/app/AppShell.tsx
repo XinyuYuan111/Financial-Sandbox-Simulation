@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Activity, Boxes, FileKey, GitFork, Info, LayoutDashboard, Plus, Settings2, SlidersHorizontal, Users } from 'lucide-react'
 import { api } from '../api'
-import type { EventEnvelope, Projection, Run } from '../types'
+import type { AttestedRun, EventEnvelope, Projection, Run } from '../types'
 import { ErrorBanner, shortId } from '../components/ui'
 import { QuickStartPage } from '../features/quickstart/QuickStartPage'
 import { AgentExplorer } from '../features/agents/AgentExplorer'
@@ -36,6 +36,11 @@ export function AppShell() {
   const [historicalCursor, setHistoricalCursor] = useState<number | null>(null)
   const [busy, setBusy] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [attestationStatus, setAttestationStatus] = useState<'not_submitted' | 'pending' | 'confirmed' | 'failed' | null>(null)
+  const [attesting, setAttesting] = useState(false)
+  const [attestationTxHash, setAttestationTxHash] = useState<string | null>(null)
+  const [attestationError, setAttestationError] = useState<string | null>(null)
+  const [attestNotice, setAttestNotice] = useState<string | null>(null)
 
   const activeBranch = useMemo(() => run?.branches.find(branch => branch.branch_id === branchId) ?? null, [branchId, run])
   const activeLlmProvider = projection?.planning?.provider ?? null
@@ -140,6 +145,55 @@ export function AppShell() {
     finally { setBusy(false) }
   }
 
+  const attestRun = async () => {
+    if (!run) return
+    setAttesting(true); setAttestationError(null); setAttestNotice(null)
+    try {
+      await api.attestRun(run.run_id)
+      setAttestationStatus('pending')
+      setAttestNotice('上链交易已提交')
+    } catch (reason) {
+      const msg = reason instanceof Error ? reason.message : '上链请求失败'
+      setAttestationError(msg); setAttesting(false)
+    }
+  }
+
+  // Poll attestation status when pending
+  useEffect(() => {
+    if (attestationStatus !== 'pending' || !run) return
+    const poll = async () => {
+      try {
+        const list = await api.listAttestedRuns<AttestedRun[]>()
+        const found = list.find(item => item.run_id === run!.run_id)
+        if (found) {
+          setAttestationStatus(found.attestation.status)
+          setAttestationTxHash(found.attestation.tx_hash)
+          setAttestationError(found.attestation.error_message)
+          setAttesting(found.attestation.status === 'pending')
+          if (found.attestation.status === 'confirmed') {
+            setAttestNotice('✅ 实验结果已成功上链！')
+          } else if (found.attestation.status === 'failed') {
+            // silently mark as failed without showing a notice
+          }
+        }
+      } catch { /* ignore polling errors */ }
+    }
+    const timer = window.setInterval(poll, 4000)
+    return () => window.clearInterval(timer)
+  }, [attestationStatus, run])
+
+  // Auto-dismiss notice after 8 seconds
+  useEffect(() => {
+    if (!attestNotice) return
+    const timer = window.setTimeout(() => setAttestNotice(null), 8000)
+    return () => window.clearTimeout(timer)
+  }, [attestNotice])
+
+  // Reset attestation status when switching runs
+  useEffect(() => {
+    setAttestationStatus(null); setAttesting(false); setAttestationTxHash(null); setAttestationError(null); setAttestNotice(null)
+  }, [run?.run_id])
+
   const resume = async (newBranchId: string) => {
     if (!run) return
     setBusy(true); setError(null)
@@ -165,9 +219,9 @@ export function AppShell() {
   }
 
   return <div className="app-shell">
-    <RunTopbar run={run} branch={historicalCursor === null ? activeBranch : { ...activeBranch, status: 'Historical' }} simTimeUs={projection.sim_time_us} cursor={projection.cursor} agents={projection.agents} planning={projection.planning} busy={busy} onCommand={command} onRefresh={refresh} />
+    <RunTopbar run={run} branch={historicalCursor === null ? activeBranch : { ...activeBranch, status: 'Historical' }} simTimeUs={projection.sim_time_us} cursor={projection.cursor} agents={projection.agents} planning={projection.planning} busy={busy} onCommand={command} onRefresh={refresh} attestationStatus={attestationStatus} attesting={attesting} attestationTxHash={attestationTxHash} attestationError={attestationError} onAttest={attestRun} />
     <aside className="app-sidebar glass-dark"><nav>{(['run', 'manage'] as const).map(group => <div className="nav-group" key={group}><span>{group === 'run' ? '运行' : '管理'}</span>{navigation.filter(item => item.group === group).map(item => { const Icon = item.icon; return <button key={item.id} className={view === item.id ? 'selected' : ''} onClick={() => setView(item.id)}><Icon size={17} /><b>{item.label}</b></button> })}</div>)}</nav><div className="run-switcher"><label>当前实验<select value={run.run_id} onChange={event => { void selectRun(event.target.value) }}>{runs.map(item => <option value={item.run_id} key={item.run_id}>{item.name}</option>)}</select></label><span><Boxes size={14} />{run.branches.length} branches</span><small>{shortId(run.run_id)}</small></div></aside>
-    <main className="app-workspace anim-fade-in-up">{error ? <ErrorBanner message={error} onClose={() => setError(null)} /> : null}{busy ? <div className="loading-bar" /> : null}
+    <main className="app-workspace anim-fade-in-up">{error ? <ErrorBanner message={error} onClose={() => setError(null)} /> : null}{attestNotice ? <div className="attest-notice"><span>{attestNotice}</span><button onClick={() => setAttestNotice(null)}>×</button></div> : null}{busy ? <div className="loading-bar" /> : null}
       {view === 'market' ? <MarketWorkspace projection={projection} /> : null}
       {view === 'agents' ? <AgentExplorer branchId={branchId} cursor={historicalCursor ?? undefined} projection={projection} /> : null}
       {view === 'events' ? <EventExplorer events={events} /> : null}
