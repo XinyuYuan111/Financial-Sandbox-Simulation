@@ -26,6 +26,25 @@ from sandbox.core.errors import ValidationError
 from sandbox.core.ids import deterministic_id
 
 
+DEMO_ACTIVITY_REPLAN_COOLDOWN_US = 5_000_000
+
+
+def _plan_exhaustion(
+    plan: StrategyPlan,
+    state: AgentRuntimeState,
+) -> tuple[bool, int | None]:
+    """Return whether every directive has spent its bounded emission budget."""
+    if not plan.directives:
+        return True, plan.valid_from_sim_time_us
+    emission_times: list[int] = []
+    for directive in plan.directives:
+        cursor = state.directive_cursors.get(f"{plan.strategy_revision}:{directive.directive_key}")
+        if cursor is None or cursor.emission_count < directive.emission.max_emissions:
+            return False, None
+        emission_times.append(cursor.last_eligible_sim_time_us or plan.valid_from_sim_time_us)
+    return True, max(emission_times, default=plan.valid_from_sim_time_us)
+
+
 @dataclass(frozen=True, slots=True)
 class RuntimeResult:
     decision: AgentDecision
@@ -68,6 +87,7 @@ class AgentRuntime:
         observation: ObservationPacket,
         active_plan: StrategyPlan | None = None,
         activate_plan: StrategyPlan | None = None,
+        planning_rationale: DecisionRationale | None = None,
     ) -> RuntimeResult | None:
         if definition.agent_id != state.agent_id or observation.agent_id != state.agent_id:
             raise ValidationError("Agent Runtime ownership mismatch")
@@ -110,11 +130,30 @@ class AgentRuntime:
             and active_plan.valid_from_sim_time_us <= observation.sim_time_us < active_plan.valid_until_sim_time_us
         )
         replan_due = False
+        plan_exhausted = False
+        exhaustion_time_us = None
+        activity_cooldown_elapsed = False
         if active_plan is not None:
-            replan_due = not active_plan_is_current or any(
+            plan_exhausted, exhaustion_time_us = _plan_exhaustion(active_plan, state)
+            activity_cooldown_elapsed = (
+                plan_exhausted
+                and exhaustion_time_us is not None
+                and observation.sim_time_us >= exhaustion_time_us + DEMO_ACTIVITY_REPLAN_COOLDOWN_US
+            )
+            replan_due = not active_plan_is_current or activity_cooldown_elapsed or any(
                 evaluate_condition(condition, observation, state)
                 for condition in active_plan.replan_conditions
             )
+        cognitive_budget = state.cognitive_budget_state
+        planning_window_elapsed = (
+            observation.sim_time_us - cognitive_budget.window_started_sim_time_us
+            >= definition.cognitive_profile.planning_window_us
+        )
+        available_planning_slots = (
+            definition.cognitive_profile.max_plans_per_window
+            if planning_window_elapsed
+            else cognitive_budget.plans_remaining
+        )
         # An expired plan must stop producing directives and reopen the planning
         # gate. Replanning conditions have the same boundary semantics.
         plan_for_controller = activate_plan or (active_plan if active_plan_is_current and not replan_due else None)
@@ -139,11 +178,19 @@ class AgentRuntime:
             reactive_actions = reactive.action_proposals
 
         planning_proposal = None
-        if plan_for_controller is None and state.planning_request_id is None and state.cognitive_budget_state.plans_remaining > 0:
+        if plan_for_controller is None and state.planning_request_id is None and available_planning_slots > 0:
+            if activity_cooldown_elapsed:
+                reason_keys = ["plan_directives_exhausted", "activity_cooldown_elapsed"]
+            elif active_plan is not None and not active_plan_is_current:
+                reason_keys = ["plan_expired"]
+            elif replan_due:
+                reason_keys = ["plan_replan_condition_met"]
+            else:
+                reason_keys = [trigger.semantic_key for trigger in observation.decision_triggers] or ["no_active_plan"]
             planning_proposal = PlanningRequestProposal(
                 proposal_id=deterministic_id("proposal", decision_id, "planning"),
                 depends_on=[item.proposal_id for item in memory_proposals],
-                reason_keys=[trigger.semantic_key for trigger in observation.decision_triggers] or ["no_active_plan"],
+                reason_keys=reason_keys,
                 requested_planner_profile_id=definition.planner_profile_id,
             )
         proposal_ids = [item.proposal_id for item in memory_proposals]
@@ -153,6 +200,69 @@ class AgentRuntime:
         if strategy_proposal is not None:
             proposal_ids.append(strategy_proposal.proposal_id)
         proposal_ids.extend(item.proposal_id for item in reactive_actions)
+        rationale: DecisionRationale
+        if activate_plan is not None and planning_rationale is not None:
+            rationale = planning_rationale.model_copy(update={
+                "evidence_ids": list(dict.fromkeys([
+                    *planning_rationale.evidence_ids,
+                    observation.observation_id,
+                    *observation.provenance,
+                ]))[:64],
+                "strategy_revision": activate_plan.strategy_revision,
+                "proposal_ids": proposal_ids,
+            })
+        else:
+            risk_flags: list[str] = []
+            belief_ids = [belief.belief_id for belief in state.beliefs[:64]]
+            if reactive_actions:
+                goal_summary = "Execute eligible directives from the active bounded plan."
+                stated_reason = (
+                    f"The active plan produced {len(reactive_actions)} capability-checked action proposal(s) "
+                    "from the current order book and account snapshot."
+                )
+            elif planning_proposal is not None:
+                goal_summary = "Request a new plan because the current strategy cannot produce another action."
+                if activity_cooldown_elapsed:
+                    risk_flags.extend(["plan_directives_exhausted", "activity_cooldown_elapsed"])
+                    stated_reason = (
+                        f"Every directive in strategy revision {state.active_strategy_revision} spent its emission budget; "
+                        f"the {DEMO_ACTIVITY_REPLAN_COOLDOWN_US}us simulation-time activity cooldown elapsed, so replanning was requested."
+                    )
+                elif active_plan is not None and not active_plan_is_current:
+                    risk_flags.append("plan_expired")
+                    stated_reason = "The active plan left its validity window, so its directives were not reused and replanning was requested."
+                else:
+                    stated_reason = "No current plan can safely produce actions, so the planning gate was opened."
+            elif plan_exhausted and exhaustion_time_us is not None and not activity_cooldown_elapsed:
+                goal_summary = "Wait until the activity cooldown permits another bounded plan."
+                risk_flags.extend(["plan_directives_exhausted", "activity_cooldown"])
+                next_eligible = exhaustion_time_us + DEMO_ACTIVITY_REPLAN_COOLDOWN_US
+                stated_reason = (
+                    f"Every directive in strategy revision {state.active_strategy_revision} spent its emission budget. "
+                    f"Replanning is held until simulation time {next_eligible}; current time is {observation.sim_time_us}."
+                )
+            elif replan_due and available_planning_slots <= 0:
+                goal_summary = "Wait for the cognitive planning budget to reset."
+                risk_flags.extend(["plan_directives_exhausted", "cognitive_budget_exhausted"])
+                stated_reason = "The plan cannot produce another action, but no planning slot remains in the current simulation-time budget window."
+            elif plan_for_controller is not None:
+                goal_summary = "Monitor the active plan until a directive becomes eligible."
+                risk_flags.append("no_directive_eligible")
+                stated_reason = "The active plan remains valid, but no guarded or scheduled directive was eligible on this observation."
+            else:
+                goal_summary = "Update cognition while preserving current risk."
+                risk_flags.append("hold_and_protect")
+                stated_reason = "No capability-safe action or planning request was eligible on this observation."
+            rationale = DecisionRationale(
+                goal_summary=goal_summary,
+                evidence_ids=[observation.observation_id, *observation.provenance][:64],
+                belief_ids=belief_ids,
+                strategy_revision=state.active_strategy_revision,
+                risk_flags=risk_flags,
+                uncertainty_milli=350 if reactive_actions else 600,
+                proposal_ids=proposal_ids,
+                stated_reason=stated_reason,
+            )
         decision = AgentDecision(
             decision_id=decision_id,
             branch_id=observation.branch_id,
@@ -172,15 +282,7 @@ class AgentRuntime:
             planning_request_proposal=planning_proposal,
             strategy_plan_proposal=strategy_proposal,
             action_proposals=reactive_actions,
-            rationale=DecisionRationale(
-                goal_summary=(activate_plan and "Activate a validated plan and interpret its directives") or "Update cognition and request planning",
-                evidence_ids=[observation.observation_id, *observation.provenance],
-                strategy_revision=state.active_strategy_revision,
-                risk_flags=[] if plan_for_controller else ["hold_and_protect"],
-                uncertainty_milli=0 if activate_plan else 600,
-                proposal_ids=proposal_ids,
-                stated_reason="All proposals were produced by the fixed Agent Decision Pipeline.",
-            ),
+            rationale=rationale,
             planning_request_id=activate_plan.planning_request_id if activate_plan else state.planning_request_id,
         )
         return self._commit(definition, state, observation, decision, reactive.cursors, activate_plan)

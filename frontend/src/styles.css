@@ -272,6 +272,22 @@ summary { color: var(--teal-dark); cursor: pointer; font-size: 10px; font-weight
 .directive-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; margin-top: 9px; }
 .directive-list > div { min-width: 0; display: flex; align-items: center; gap: 5px; padding: 7px; background: var(--surface-alt); font-size: 9px; }
 .directive-list span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.narrative-rows { display: grid; gap: 7px; margin: 10px 0 0; }
+.narrative-rows > div { display: grid; grid-template-columns: 74px minmax(0, 1fr); gap: 9px; align-items: start; }
+.narrative-rows dt { color: var(--muted); font-size: 9px; font-weight: 700; }
+.narrative-rows dd { min-width: 0; margin: 0; color: var(--ink); font-size: 10px; line-height: 1.55; overflow-wrap: anywhere; }
+.narrative-rows.compact { gap: 5px; }
+.narrative-directives > div { display: grid; grid-template-columns: 15px minmax(82px, auto) minmax(0, 1fr); align-items: start; }
+.narrative-directives svg { margin-top: 1px; color: var(--teal); }
+.narrative-directives span { white-space: normal; line-height: 1.45; }
+.plan-constraints { display: flex; gap: 7px; align-items: baseline; }
+.audit-callout { padding: 8px 10px; border-left: 3px solid #a8b1b5; background: var(--surface-alt); color: var(--ink) !important; }
+.audit-callout.action { border-left-color: #18815f; background: #edf8f3; }
+.audit-callout.planning, .audit-callout.waiting-plan { border-left-color: #b57914; background: #fff8e9; }
+.audit-callout.plan-wait, .audit-callout.cognition { border-left-color: #69808a; }
+.action-narratives { display: grid; gap: 5px; margin: 8px 0 0; padding: 0; list-style: none; }
+.action-narratives li { position: relative; padding: 7px 9px 7px 22px; border: 1px solid #cfe6dc; border-radius: 4px; background: #f5fbf8; color: #21473a; font-size: 10px; line-height: 1.45; }
+.action-narratives li::before { position: absolute; left: 9px; content: '\2022'; color: #18815f; font-weight: 800; }
 .decision-chain { display: flex; align-items: center; gap: 7px; margin: 10px 0; overflow-x: auto; }
 .decision-chain > div { min-width: 120px; display: grid; grid-template-columns: 17px 1fr; gap: 1px 5px; padding: 8px; border: 1px solid var(--line); border-radius: 4px; background: var(--surface-alt); }
 .decision-chain > div svg { grid-row: 1 / 3; align-self: center; color: var(--teal); }

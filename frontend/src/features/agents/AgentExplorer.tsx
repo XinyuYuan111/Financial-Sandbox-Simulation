@@ -1,8 +1,22 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { BrainCircuit, ChevronRight, CircleDot, ClipboardList, Eye, MemoryStick, ReceiptText, Target, Users } from 'lucide-react'
 import { api } from '../../api'
 import type { AgentAudit, AgentDetail, AgentProjection } from '../../types'
 import { EmptyState, ErrorBanner, formatInteger, formatTime, JsonBlock, shortId, StatusBadge } from '../../components/ui'
+import {
+  asArray,
+  asRecord,
+  constraintText,
+  decisionNarrative,
+  directiveNarrative,
+  goalText,
+  observationNarrative,
+  outcomeText,
+  rationaleLines,
+  receiptNarrative,
+  triggerText,
+  type NarrativeLine,
+} from './auditNarrative'
 
 type Tab = 'overview' | 'observations' | 'memory' | 'plans' | 'decisions' | 'actions'
 const tabs: Array<{ id: Tab; label: string; icon: typeof Eye }> = [
@@ -71,7 +85,7 @@ export function AgentExplorer({ branchId, cursor }: { branchId: string; cursor?:
           {tab === 'memory' ? <MemoryBeliefs detail={detail} /> : null}
           {tab === 'plans' ? <Plans plans={audit.plans} /> : null}
           {tab === 'decisions' ? <Decisions decisions={audit.decisions} receipts={audit.receipts} /> : null}
-          {tab === 'actions' ? <Receipts receipts={audit.receipts} /> : null}
+          {tab === 'actions' ? <Receipts receipts={audit.receipts} decisions={audit.decisions} /> : null}
         </div>
       </> : <EmptyState title="选择一个 Agent" />}
     </section>
@@ -90,7 +104,15 @@ function Overview({ detail, audit }: { detail: AgentDetail; audit: AgentAudit })
 
 function Observations({ observations }: { observations: Array<Record<string, unknown>> }) {
   if (!observations.length) return <EmptyState title="暂无观察" />
-  return <div className="audit-list">{observations.map(observation => <article key={String(observation.observation_id)}><header><div><strong>{shortId(String(observation.observation_id))}</strong><span>{formatTime(Number(observation.sim_time_us))}</span></div><span>world v{String(observation.world_version)}</span></header><div className="trigger-row">{asArray(observation.decision_triggers).map((trigger, index) => { const item = asRecord(trigger); return <StatusBadge key={index} status={String(item.type ?? 'observation')} /> })}{!asArray(observation.decision_triggers).length ? <span className="muted">无决策触发</span> : null}</div><details><summary>观察快照</summary><JsonBlock value={observation} /></details></article>)}</div>
+  return <div className="audit-list">{observations.map(observation => {
+    const triggers = asArray(observation.decision_triggers)
+    return <article key={String(observation.observation_id)}>
+      <header><div><strong>市场与账户观察</strong><span>{formatTime(Number(observation.sim_time_us))}</span></div><span>world v{String(observation.world_version)}</span></header>
+      <NarrativeRows lines={observationNarrative(observation)} />
+      <div className="trigger-row">{triggers.map((trigger, index) => <span className="audit-chip" key={index}>{triggerText(trigger)}</span>)}{!triggers.length ? <span className="muted">本次观察没有附带决策触发器</span> : null}</div>
+      <details><summary>技术审计数据</summary><JsonBlock value={observation} /></details>
+    </article>
+  })}</div>
 }
 
 function MemoryBeliefs({ detail }: { detail: AgentDetail }) {
@@ -101,27 +123,57 @@ function MemoryBeliefs({ detail }: { detail: AgentDetail }) {
 
 function Plans({ plans }: { plans: AgentAudit['plans'] }) {
   if (!plans.length) return <EmptyState title="暂无策略计划" />
-  return <div className="audit-list">{plans.map(({ plan, active }) => <article key={String(plan.plan_id)}><header><div><strong>Strategy rev {String(plan.strategy_revision)}</strong><span>{shortId(String(plan.plan_id))}</span></div><StatusBadge status={active ? 'active' : 'inactive'} /></header><div className="plan-summary"><span>有效期 {formatTime(Number(plan.valid_from_sim_time_us))} - {formatTime(Number(plan.valid_until_sim_time_us))}</span><span>{asArray(plan.directives).length} 条指令</span><span>{asArray(plan.constraints).length} 项约束</span></div><div className="directive-list">{asArray(plan.directives).map((directive, index) => { const item = asRecord(directive); return <div key={index}><CircleDot size={13} /><b>{String(item.type)}</b><span>{String(item.directive_key)}</span></div> })}</div><details><summary>完整计划</summary><JsonBlock value={plan} /></details></article>)}</div>
+  return <div className="audit-list">{plans.map(({ plan, active }) => {
+    const directives = asArray(plan.directives)
+    const goals = asArray(plan.goals).map(goalText)
+    const constraints = asArray(plan.constraints).map(constraintText)
+    return <article key={String(plan.plan_id)}>
+      <header><div><strong>策略版本 {String(plan.strategy_revision)}</strong><span>{shortId(String(plan.plan_id))}</span></div><StatusBadge status={active ? 'active' : 'inactive'} /></header>
+      <div className="plan-summary"><span>有效期 {formatTime(Number(plan.valid_from_sim_time_us))} 至 {formatTime(Number(plan.valid_until_sim_time_us))}</span><span>{directives.length} 条可执行指令</span></div>
+      {goals.length ? <NarrativeRows lines={[{ title: '计划目标', text: goals.join('；') }]} /> : null}
+      <div className="directive-list narrative-directives">{directives.map((directive, index) => { const narrative = directiveNarrative(directive); return <div key={index}><CircleDot size={13} /><b>{narrative.title}</b><span>{narrative.text}</span></div> })}</div>
+      {constraints.length ? <p className="plan-constraints"><b>风险约束</b>{constraints.join('；')}</p> : null}
+      {!directives.length ? <p className="audit-callout neutral">该计划没有市场或通信指令，只定义了目标与约束。</p> : null}
+      <details><summary>技术审计数据</summary><JsonBlock value={plan} /></details>
+    </article>
+  })}</div>
 }
 
 function Decisions({ decisions, receipts }: { decisions: AgentAudit['decisions']; receipts: AgentAudit['receipts'] }) {
   if (!decisions.length) return <EmptyState title="暂无决策" />
   return <div className="audit-list decision-list">{decisions.map(({ decision, outcome }) => {
-    const rationale = asRecord(decision.rationale)
-    const receipt = receipts.find(item => item.decision_id === decision.decision_id)
-    return <article key={String(decision.decision_id)}><header><div><strong>{formatTime(Number(decision.sim_time_us))}</strong><span>{shortId(String(decision.decision_id))}</span></div><StatusBadge status={outcome.accepted ? 'accepted' : 'rejected'} /></header><div className="decision-chain"><div><Eye size={15} /><span>观察</span><b>{shortId(String(decision.observation_id))}</b></div><ChevronRight size={15} /><div><BrainCircuit size={15} /><span>决策</span><b>{asArray(decision.action_proposals).length} 动作</b></div><ChevronRight size={15} /><div><ClipboardList size={15} /><span>结果</span><b>Agent rev {String(outcome.resulting_agent_revision)}</b></div>{receipt ? <><ChevronRight size={15} /><div><ReceiptText size={15} /><span>回执</span><b>{String(receipt.outcome)}</b></div></> : null}</div><dl className="detail-list"><div><dt>目标</dt><dd>{String(rationale.goal_summary ?? '-')}</dd></div><div><dt>理由</dt><dd>{String(rationale.stated_reason ?? '-')}</dd></div><div><dt>不确定度</dt><dd>{String(rationale.uncertainty_milli ?? 0)} / 1000</dd></div><div><dt>风险标记</dt><dd>{asArray(rationale.risk_flags).join(', ') || '-'}</dd></div></dl><details><summary>决策与结果</summary><JsonBlock value={{ decision, outcome }} /></details></article>
+    const narrative = decisionNarrative(decision, outcome)
+    const relatedReceipts = receipts.filter(item => item.decision_id === decision.decision_id)
+    return <article key={String(decision.decision_id)} className={`decision-${narrative.kind}`}>
+      <header><div><strong>{formatTime(Number(decision.sim_time_us))}</strong><span>{shortId(String(decision.decision_id))}</span></div><StatusBadge status={outcome.accepted ? 'accepted' : 'rejected'} /></header>
+      <div className="decision-chain"><div><Eye size={15} /><span>观察</span><b>{shortId(String(decision.observation_id))}</b></div><ChevronRight size={15} /><div><BrainCircuit size={15} /><span>决策</span><b>{narrative.label}</b></div><ChevronRight size={15} /><div><ClipboardList size={15} /><span>结果</span><b>Agent rev {String(outcome.resulting_agent_revision)}</b></div>{relatedReceipts.length ? <><ChevronRight size={15} /><div><ReceiptText size={15} /><span>动作回执</span><b>{relatedReceipts.map(item => outcomeText(item.outcome)).join('、')}</b></div></> : null}</div>
+      <p className={`audit-callout ${narrative.kind}`}>{narrative.summary}</p>
+      {narrative.actions.length ? <ul className="action-narratives">{narrative.actions.map((action, index) => <li key={index}>{action}</li>)}</ul> : null}
+      <NarrativeRows lines={rationaleLines(decision)} compact />
+      <details><summary>技术审计数据</summary><JsonBlock value={{ decision, outcome }} /></details>
+    </article>
   })}</div>
 }
 
-function Receipts({ receipts }: { receipts: AgentAudit['receipts'] }) {
+function Receipts({ receipts, decisions }: { receipts: AgentAudit['receipts']; decisions: AgentAudit['decisions'] }) {
   if (!receipts.length) return <EmptyState title="暂无动作回执" />
-  return <div className="table-scroll"><table><thead><tr><th>时间</th><th>结果</th><th>原因</th><th>动作</th><th>决策</th><th>权威事件</th></tr></thead><tbody>{receipts.map(receipt => <tr key={String(receipt.receipt_id)}><td>{formatTime(Number(receipt.resolved_sim_time_us))}</td><td><StatusBadge status={String(receipt.outcome)} /></td><td>{String(receipt.reason_code)}</td><td title={String(receipt.action_id)}>{shortId(String(receipt.action_id))}</td><td title={String(receipt.decision_id ?? '')}>{shortId(receipt.decision_id as string | undefined)}</td><td>{asArray(receipt.authoritative_event_ids).length}</td></tr>)}</tbody></table></div>
+  const proposalById = new Map<string, Record<string, unknown>>()
+  decisions.forEach(({ decision }) => asArray(decision.action_proposals).forEach(raw => {
+    const proposal = asRecord(raw)
+    if (proposal.proposal_id) proposalById.set(String(proposal.proposal_id), proposal)
+  }))
+  return <div className="audit-list receipt-list">{receipts.map(receipt => {
+    const proposal = proposalById.get(String(receipt.proposal_id ?? ''))
+    return <article key={String(receipt.receipt_id)}>
+      <header><div><strong>{formatTime(Number(receipt.resolved_sim_time_us))}</strong><span>{shortId(String(receipt.action_id))}</span></div><StatusBadge status={String(receipt.outcome)} /></header>
+      <NarrativeRows lines={receiptNarrative(receipt, proposal)} />
+      {!proposal ? <p className="muted">该回执未关联可见的动作 proposal；动作标识为 {shortId(String(receipt.action_id))}。</p> : null}
+      <details><summary>技术审计数据</summary><JsonBlock value={receipt} /></details>
+    </article>
+  })}</div>
 }
 
-function asRecord(value: unknown): Record<string, unknown> {
-  return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {}
-}
-
-function asArray(value: unknown): unknown[] {
-  return Array.isArray(value) ? value : []
+function NarrativeRows({ lines, compact = false }: { lines: NarrativeLine[]; compact?: boolean }) {
+  if (!lines.length) return null
+  return <dl className={`narrative-rows${compact ? ' compact' : ''}`}>{lines.map((line, index) => <div key={`${line.title}-${index}`}><dt>{line.title}</dt><dd>{line.text}</dd></div>)}</dl>
 }

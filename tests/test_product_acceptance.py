@@ -228,6 +228,20 @@ class ProductAcceptanceTests(unittest.TestCase):
         self.assertEqual(world.ledger.total("USDX"), quote_total)
         self.assertTrue(self.manager.events.verify_chain(branch_id))
 
+    def test_background_refresh_recovers_when_the_selected_side_is_empty(self) -> None:
+        _, branch_id = self.create_fixture()
+        world = self.manager._world(branch_id).clone()
+        world.background_market_sector["flow_account_id"] = "disabled_for_boundary_test"
+        for order in world.clob.orders.values():
+            if order.agent_id == "background" and order.side == "sell":
+                order.status = "cancelled"
+                order.remaining = 0
+
+        action = self.manager._next_background_action(world, branch_id, 8)
+
+        self.assertIsNotNone(action)
+        self.assertIn(action.action_type, {"SubmitLimitOrder", "ReplaceOrder"})
+
     def test_running_advances_and_pause_freezes_a_complete_boundary(self) -> None:
         _, branch_id = self.create_fixture()
         initial = self.manager.branch_projection(branch_id)

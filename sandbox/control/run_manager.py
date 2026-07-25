@@ -1282,11 +1282,12 @@ class RunManager:
                 if side == "buy"
                 else (int(order.price or 0), order.submitted_seq),
             )
-            target = same_side[min(level, len(same_side) - 1)]
-            world.background_market_sector["pending_quote_replacement"] = {"side": side, "level": level}
-            action_type = "CancelOrder"
-            payload = {"order_id": target.order_id}
-        elif not payload:
+            if same_side:
+                target = same_side[min(level, len(same_side) - 1)]
+                world.background_market_sector["pending_quote_replacement"] = {"side": side, "level": level}
+                action_type = "CancelOrder"
+                payload = {"order_id": target.order_id}
+        if not payload:
             side, level, price = grid[sequence % len(grid)]
             same_side = sorted(
                 (order for order in open_orders if order.side == side),
@@ -2012,7 +2013,7 @@ class RunManager:
         results = await asyncio.gather(*(execute(item) for item in prepared)) if prepared else []
         effective_results: list[tuple[PlanningResultCandidate | None, Exception | None, dict[str, object] | None]] = []
         for item, (candidate, provider_error) in zip(prepared, results):
-            request, provider_name, _, definition, _, observation, seed = item
+            request, provider_name, _, definition, state, observation, seed = item
             fallback_meta = None
             if (
                 scenario_mode == "live_llm_smoke"
@@ -2026,6 +2027,7 @@ class RunManager:
                     observation=observation,
                     request=request,
                     seed=seed,
+                    state=state,
                 )
                 fallback_meta = {
                     "policy_id": DEMO_ACTIVITY_POLICY_ID,
@@ -2045,7 +2047,7 @@ class RunManager:
         ):
             for index, (item, effective) in enumerate(zip(prepared, effective_results)):
                 candidate, provider_error, fallback_meta = effective
-                request, provider_name, _, definition, _, observation, seed = item
+                request, provider_name, _, definition, state, observation, seed = item
                 if provider_name in {"rule", "replay"} or provider_error is not None or candidate is None or candidate.directives:
                     continue
                 fallback_candidate, sample_milli = sample_noop_fallback(
@@ -2053,6 +2055,7 @@ class RunManager:
                     observation=observation,
                     request=request,
                     seed=seed,
+                    state=state,
                     force=True,
                 )
                 if fallback_candidate is None:
@@ -2182,6 +2185,7 @@ class RunManager:
             state=state,
             observation=observation,
             activate_plan=plan,
+            planning_rationale=candidate.rationale,
         )
         if runtime_result is None:
             raise ConflictError("planning activation observation was already processed", error_code="DUPLICATE_DECISION")
@@ -2750,6 +2754,7 @@ class RunManager:
             state=state,
             observation=activation_observation,
             activate_plan=plan,
+            planning_rationale=candidate.rationale,
         )
         if activation_result is None or not activation_result.action_proposals:
             raise ConflictError("fixture plan produced no action proposal", error_code="FIXTURE_PLAN_NO_ACTION")

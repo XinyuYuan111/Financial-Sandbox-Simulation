@@ -149,7 +149,7 @@ Stop-Process -Id $sandboxProcessId
 9. 恢复运行，观察市场、信息流和各 Agent 的独立反应。
 10. 点击停止按钮结束当前分支。
 
-Fixture 中的本地 rule Agent 会依据角色、能力、Persona、可用余额和场景 seed 生成确定性的演示计划：市场参与者交易，流动性提供者挂双边报价，信息参与者发布公开信息。所有动作仍经过正常的能力校验、风控、资产预留、延迟队列、撮合和回执链。修改代码后应新建运行；已有运行中保存的空计划不会被追溯改写。
+Fixture 中的本地 rule Agent 会依据角色、能力、Persona、可用余额和场景 seed 生成确定性的演示计划：市场参与者交易，流动性提供者挂双边报价，信息参与者发布公开信息。演示指令每 5 个仿真分钟最多发射一次，每份计划最多发射两次，再经过活动冷却请求新计划。所有动作仍经过正常的能力校验、风控、资产预留、延迟队列、撮合和回执链。修改代码后应新建运行；已有运行中保存的空计划不会被追溯改写。
 
 Agent 之间的公开信息通过 `InformationDelivered`、`InformationViewed` 和 observation 链路传播，不会直接写入其他 Agent 的私有状态。演示信息可带有结构化的 bullish/bearish 信号和置信度；交易型 Agent 会按自身 skepticism 折扣信号，写入 belief，并在收到新信息后重新规划。只有有结构化信号的消息会直接影响 rule planner 的买卖方向，普通文本仍作为待判断证据交给 Agent/LLM。
 
@@ -165,7 +165,7 @@ data\sandbox.db
 
 Fixture 模式完全在本地运行。`LLM 烟测` 和 `Live` 可以选择 `openai` 或 `deepseek` Provider，并会产生对应服务的实际 API 费用。
 
-`LLM 烟测` 是活动导向的演示模式。若 Provider 返回合法但无 directive 的计划，系统会按场景 seed 确定性采样 50% 的能力安全 fallback；若同一批仍全部无动作，会强制选取第一个合法 fallback，确保烟测能展示市场或信息流。原始 Provider 记录不会改写，宿主选择会单独记录为 `AgentNoOpFallbackSampled` 事件。`Live` 不使用该机制，Agent 在 Live 中仍可合法选择不行动。
+`LLM 烟测` 是活动导向的演示模式。若 Provider 返回合法但无 directive 的计划，系统会按场景 seed 确定性采样 75% 的能力安全 fallback；若同一批仍全部无动作，会强制选取第一个合法 fallback，确保烟测能展示市场或信息流。原始 Provider 记录不会改写，宿主选择会单独记录为 `AgentNoOpFallbackSampled` 事件。`Live` 不使用该机制，Agent 在 Live 中仍可合法选择不行动。
 
 运行顶部会分别显示 `active plans`（当前有效计划）和 `pending`（仍在等待 Provider 的规划请求）；`0 pending` 只表示没有等待中的请求，不表示从未产生计划。
 

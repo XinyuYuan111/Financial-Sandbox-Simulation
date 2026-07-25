@@ -9,7 +9,13 @@ import zipfile
 from pathlib import Path
 
 from sandbox.agents.llm_gateway import LLMGateway
-from sandbox.agents.planning import RulePlanner
+from sandbox.agents.planning import (
+    DEMO_ACTIVITY_EMISSION_INTERVAL_US,
+    DEMO_ACTIVITY_MAX_EMISSIONS,
+    DEMO_NOOP_FALLBACK_PROBABILITY_MILLI,
+    RulePlanner,
+)
+from sandbox.agents.runtime import DEMO_ACTIVITY_REPLAN_COOLDOWN_US
 from sandbox.agents.strategies import StrategyDecision
 from sandbox.contracts.agent import DecisionRationale
 from sandbox.contracts.action import ActionContract
@@ -323,6 +329,14 @@ class AgentRuntimeTests(unittest.TestCase):
             (branch_id,),
         ).fetchone()
         self.assertTrue(json.loads(active_plan["plan_json"])["directives"])
+        activated = next(
+            record["decision"]
+            for record in self.manager.agent_decisions(branch_id, str(fallback.source_id))
+            if record["decision"]["strategy_plan_proposal"] is not None
+        )
+        self.assertEqual(fallback.payload["probability_milli"], DEMO_NOOP_FALLBACK_PROBABILITY_MILLI)
+        self.assertIn("no_op_fallback", activated["rationale"]["risk_flags"])
+        self.assertIn("saved observation", activated["rationale"]["stated_reason"])
         self.manager.command(branch_id, "live-save", "save")
         archive_path = Path(self.temp.name) / "live-agent.sandbox"
         self.manager.export_archive(str(run["run_id"]), archive_path)
@@ -434,6 +448,11 @@ class AgentRuntimeTests(unittest.TestCase):
         self.assertEqual(len(plans), 4)
         self.assertTrue({"trade", "quote", "communication"}.issubset(directive_types))
         self.assertEqual(trade_styles, {"passive", "protected_market"})
+        for row in plans:
+            for directive in json.loads(row["plan_json"])["directives"]:
+                self.assertEqual(directive["emission"]["mode"], "periodic")
+                self.assertEqual(directive["emission"]["interval_us"], DEMO_ACTIVITY_EMISSION_INTERVAL_US)
+                self.assertEqual(directive["emission"]["max_emissions"], DEMO_ACTIVITY_MAX_EMISSIONS)
 
         for _ in range(40):
             world = self.manager._world(branch_id)
@@ -453,6 +472,84 @@ class AgentRuntimeTests(unittest.TestCase):
             for event in events
         ))
         self.assertTrue(any(self.manager.agent_receipts(branch_id, agent_id) for agent_id in agent_ids))
+
+    def test_exhausted_plan_cools_down_then_reopens_planning_gate(self) -> None:
+        _, branch_id = self.create_running()
+        self.manager.command(branch_id, "background-step", "step_fixture")
+        self.manager.command(branch_id, "agent-step", "step_fixture")
+        world = self.manager._world(branch_id)
+        definition = world.agent_definitions["rule_alpha"]
+        state = world.agent_runtime_states["rule_alpha"]
+        plan = world.strategy_plans[state.active_plan_id]
+        cursor_key, cursor = next(iter(state.directive_cursors.items()))
+        self.assertGreaterEqual(cursor.emission_count, 1)
+        cursor = cursor.model_copy(update={"emission_count": DEMO_ACTIVITY_MAX_EMISSIONS})
+        state = state.model_copy(update={
+            "directive_cursors": {**state.directive_cursors, cursor_key: cursor},
+        })
+        emitted_at = cursor.last_eligible_sim_time_us or plan.valid_from_sim_time_us
+        previous = ObservationPacket.model_validate(self.manager.observations(branch_id, "rule_alpha")[0])
+
+        cooling_observation = previous.model_copy(update={
+            "observation_id": "obs-cooling",
+            "sim_time_us": emitted_at + DEMO_ACTIVITY_REPLAN_COOLDOWN_US - 1,
+            "decision_triggers": [],
+        })
+        cooling = self.manager.agent_runtime.decide(
+            definition=definition,
+            state=state,
+            observation=cooling_observation,
+            active_plan=plan,
+        )
+        self.assertIsNotNone(cooling)
+        self.assertIsNone(cooling.decision.planning_request_proposal)
+        self.assertIn("activity_cooldown", cooling.decision.rationale.risk_flags)
+
+        elapsed_observation = previous.model_copy(update={
+            "observation_id": "obs-cooldown-elapsed",
+            "sim_time_us": emitted_at + DEMO_ACTIVITY_REPLAN_COOLDOWN_US,
+            "decision_triggers": [],
+        })
+        elapsed = self.manager.agent_runtime.decide(
+            definition=definition,
+            state=cooling.state,
+            observation=elapsed_observation,
+            active_plan=plan,
+        )
+        self.assertIsNotNone(elapsed)
+        self.assertIsNotNone(elapsed.decision.planning_request_proposal)
+        self.assertEqual(
+            elapsed.decision.planning_request_proposal.reason_keys,
+            ["plan_directives_exhausted", "activity_cooldown_elapsed"],
+        )
+
+    def test_elapsed_budget_window_allows_replanning_in_the_same_decision(self) -> None:
+        _, branch_id = self.create_running()
+        world = self.manager._world(branch_id)
+        definition = world.agent_definitions["rule_alpha"]
+        state = world.agent_runtime_states["rule_alpha"]
+        exhausted_budget = state.cognitive_budget_state.model_copy(update={"plans_remaining": 0})
+        state = state.model_copy(update={
+            "cognitive_budget_state": exhausted_budget,
+            "planning_request_id": None,
+        })
+        previous = ObservationPacket.model_validate(self.manager.observations(branch_id, "rule_alpha")[0])
+        observation = previous.model_copy(update={
+            "observation_id": "obs-budget-window-elapsed",
+            "sim_time_us": definition.cognitive_profile.planning_window_us,
+            "decision_triggers": [],
+        })
+
+        result = self.manager.agent_runtime.decide(
+            definition=definition,
+            state=state,
+            observation=observation,
+        )
+
+        self.assertIsNotNone(result)
+        self.assertIsNotNone(result.decision.planning_request_proposal)
+        self.assertEqual(result.state.cognitive_budget_state.plans_remaining, definition.cognitive_profile.max_plans_per_window - 1)
+        self.assertTrue(any(change.operation == "reset" for change in result.outcome.budget_changes))
 
     def test_autonomous_clock_advances_while_llm_is_still_pending(self) -> None:
         adapter = SlowPlanningAdapter(2.0)

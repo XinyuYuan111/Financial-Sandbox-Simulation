@@ -25,7 +25,11 @@ from sandbox.agents.reactive import align_price, evaluate_condition, market_refe
 
 
 DEMO_ACTIVITY_POLICY_ID = "demo-agent-activity.v0.1"
-DEMO_NOOP_FALLBACK_PROBABILITY_MILLI = 500
+DEMO_ACTIVITY_EMISSION_INTERVAL_US = 5_000_000
+DEMO_ACTIVITY_MAX_EMISSIONS = 2
+# An empty LLM plan is a useful signal that the provider declined to act, not a
+# reason for the market to become inert. Keep the sample explicit and bounded.
+DEMO_NOOP_FALLBACK_PROBABILITY_MILLI = 750
 
 
 def _draw_milli(seed: int, namespace: str, *parts: object) -> int:
@@ -63,10 +67,12 @@ def _available_quantities(
 def _observed_market_signal(
     definition: AgentDefinition,
     observation: ObservationPacket,
-) -> tuple[Literal["buy", "sell"] | None, list[str]]:
+    state: AgentRuntimeState,
+) -> tuple[Literal["buy", "sell"] | None, list[str], list[str]]:
     trust_milli = max(0, 1_000 - definition.base_persona.skepticism_milli)
     net_signal = 0
     evidence_ids: list[str] = []
+    belief_ids: list[str] = []
     for item in observation.information_items[:8]:
         if item.source_id == definition.agent_id or item.signal_direction in {None, "neutral"}:
             continue
@@ -74,9 +80,25 @@ def _observed_market_signal(
         weight = confidence * trust_milli // 1_000
         net_signal += weight if item.signal_direction == "bullish" else -weight
         evidence_ids.append(item.information_id)
+    # Beliefs are only used when their supporting memory remains accessible. Do
+    # not infer a direction from free-form text; only structured market_signal
+    # beliefs can affect the sampled side.
+    accessible_memory_ids = {
+        entry.memory_id
+        for entry in state.memory_entries
+        if entry.accessible
+    }
+    for belief in state.beliefs:
+        if belief.predicate != "market_signal" or belief.value not in {"bullish", "bearish"}:
+            continue
+        if not set(belief.evidence_memory_ids).issubset(accessible_memory_ids):
+            continue
+        weight = belief.confidence_milli * trust_milli // 1_000
+        net_signal += weight if belief.value == "bullish" else -weight
+        belief_ids.append(belief.belief_id)
     if abs(net_signal) < 100:
-        return None, evidence_ids
-    return ("buy" if net_signal > 0 else "sell"), evidence_ids
+        return None, evidence_ids, belief_ids
+    return ("buy" if net_signal > 0 else "sell"), evidence_ids, belief_ids
 
 
 def activity_candidate(
@@ -85,13 +107,14 @@ def activity_candidate(
     observation: ObservationPacket,
     request: PlanningRequest,
     seed: int,
+    state: AgentRuntimeState,
     fallback: bool = False,
 ) -> PlanningResultCandidate:
     capabilities = set(definition.capability_set)
     role_tags = set(definition.role_tags)
     persona = definition.base_persona
     reference = market_reference(observation)
-    observed_side, signal_evidence_ids = _observed_market_signal(definition, observation)
+    observed_side, signal_evidence_ids, signal_belief_ids = _observed_market_signal(definition, observation, state)
     buy_quantity, sell_quantity = _available_quantities(
         observation,
         risk_tolerance_milli=persona.risk_tolerance_milli,
@@ -134,7 +157,11 @@ def activity_candidate(
             message_payload=messages[message_draw * len(messages) // 1_000],
             signal_direction=signal_direction,
             signal_confidence_milli=signal_confidence,
-            emission=EmissionPolicy(mode="once", max_emissions=1),
+            emission=EmissionPolicy(
+                mode="periodic",
+                interval_us=DEMO_ACTIVITY_EMISSION_INTERVAL_US,
+                max_emissions=DEMO_ACTIVITY_MAX_EMISSIONS,
+            ),
         ))
         goal_key = "share_market_information"
     elif "market.quote" in capabilities and "market.trade" in capabilities and buy_quantity and sell_quantity:
@@ -144,7 +171,11 @@ def activity_candidate(
             target_spread_bps=max(20, 120 - persona.risk_tolerance_milli // 10),
             max_quantity_per_side=min(buy_quantity, sell_quantity),
             refresh_interval_us=5_000_000,
-            emission=EmissionPolicy(mode="once", max_emissions=1),
+            emission=EmissionPolicy(
+                mode="periodic",
+                interval_us=DEMO_ACTIVITY_EMISSION_INTERVAL_US,
+                max_emissions=DEMO_ACTIVITY_MAX_EMISSIONS,
+            ),
         ))
         goal_key = "provide_liquidity"
     elif "market.trade" in capabilities and (buy_quantity or sell_quantity):
@@ -167,7 +198,11 @@ def activity_candidate(
             style="protected_market" if protected else "passive",
             max_quantity=quantity,
             price_offset_bps=0 if protected else (-20 if side == "buy" else 20),
-            emission=EmissionPolicy(mode="once", max_emissions=1),
+            emission=EmissionPolicy(
+                mode="periodic",
+                interval_us=DEMO_ACTIVITY_EMISSION_INTERVAL_US,
+                max_emissions=DEMO_ACTIVITY_MAX_EMISSIONS,
+            ),
         ))
         goal_key = "seek_risk_adjusted_return"
     elif "information.publish" in capabilities:
@@ -175,14 +210,31 @@ def activity_candidate(
             directive_key="publish_market_view",
             channel="PublicFeed",
             message_payload=f"{definition.display_name} market view: monitoring visible liquidity around {reference}.",
-            emission=EmissionPolicy(mode="once", max_emissions=1),
+            emission=EmissionPolicy(
+                mode="periodic",
+                interval_us=DEMO_ACTIVITY_EMISSION_INTERVAL_US,
+                max_emissions=DEMO_ACTIVITY_MAX_EMISSIONS,
+            ),
         ))
         goal_key = "share_market_information"
 
     source = "no-op fallback" if fallback else "local rule planner"
     risk_flags = [DEMO_ACTIVITY_POLICY_ID]
     if fallback:
-        risk_flags.append("no_op_fallback")
+        risk_flags.extend(["no_op_fallback", "activity_sampled"])
+        if observed_side is None and "market.trade" in capabilities:
+            risk_flags.append("exploratory_direction_sample")
+        elif observed_side is not None:
+            risk_flags.append("evidence_directed_action")
+    reason = (
+        f"The {source} used the saved observation, accessible memory/beliefs, Persona, "
+        "capabilities, and free balances."
+    )
+    if fallback:
+        if observed_side is None:
+            reason += " No structured directional signal was available; the side is an explicitly bounded exploratory sample."
+        else:
+            reason += f" A {observed_side} direction was supported by structured observation or belief evidence."
     return PlanningResultCandidate(
         based_on_strategy_revision=request.based_on_strategy_revision,
         valid_for_us=SIMULATION_PLAN_HORIZON_US,
@@ -202,10 +254,11 @@ def activity_candidate(
                 else "Preserve capital because no capability-safe demo directive is available."
             ),
             evidence_ids=[observation.observation_id, *signal_evidence_ids],
+            belief_ids=signal_belief_ids,
             strategy_revision=request.based_on_strategy_revision,
             risk_flags=risk_flags,
             uncertainty_milli=350 if directives else 700,
-            stated_reason=f"The {source} used the saved observation, Persona, capabilities, and free balances.",
+            stated_reason=reason,
         ),
     )
 
@@ -216,6 +269,7 @@ def sample_noop_fallback(
     observation: ObservationPacket,
     request: PlanningRequest,
     seed: int,
+    state: AgentRuntimeState,
     force: bool = False,
 ) -> tuple[PlanningResultCandidate | None, int]:
     sample_milli = _draw_milli(
@@ -231,6 +285,7 @@ def sample_noop_fallback(
         observation=observation,
         request=request,
         seed=seed,
+        state=state,
         fallback=True,
     )
     return (candidate if candidate.directives else None), sample_milli
@@ -264,6 +319,7 @@ class RulePlanner:
             observation=observation,
             request=request,
             seed=self.seed,
+            state=state,
         )
 
 
