@@ -154,6 +154,19 @@ export type ChainOption = {
   holder_source_configured: boolean
 }
 
+export type ChainPreflight = {
+  ok: boolean
+  chain_id: string
+  provider?: string
+  target_token?: string
+  token_symbol?: string
+  token_address?: string
+  decimals?: number
+  total_supply?: number
+  latest_block?: number
+  message?: string
+}
+
 export type ConfigurationProvenance = {
   source: 'default' | 'archetype' | 'random' | 'user' | 'llm_interpreted'
   source_ref: string | null

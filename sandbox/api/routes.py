@@ -46,6 +46,11 @@ def chains(request: Request) -> list[dict[str, object]]:
     return manager(request).chain_catalog()
 
 
+@router.get("/chains/{chain_id}/preflight")
+async def chain_preflight(chain_id: str, request: Request, target_token: str = Query(default="")) -> dict[str, object]:
+    return await manager(request).chain_preflight(chain_id, target_token)
+
+
 @router.post("/providers/{provider_name}/preflight")
 async def provider_preflight(provider_name: str, request: Request) -> dict[str, object]:
     return await manager(request).provider_preflight(provider_name)

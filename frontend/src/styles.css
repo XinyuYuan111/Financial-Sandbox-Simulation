@@ -162,6 +162,21 @@ small { color: var(--muted); }
 .preview-placeholder strong { color: #59666e; font-size: 13px; }
 .preview-placeholder span { max-width: 300px; font-size: 11px; line-height: 1.5; }
 
+.chain-status-bar { display: flex; align-items: center; flex-wrap: wrap; gap: 10px 18px; margin-bottom: 14px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); font-size: 11px; color: #4b5860; }
+.chain-status-bar .chain-badge { display: inline-flex; align-items: center; gap: 6px; padding: 4px 9px; border-radius: 5px; background: var(--teal-soft); color: var(--teal-dark); font-weight: 700; }
+.chain-status-bar b { color: var(--ink); }
+.chain-status-loading { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); }
+
+.chain-preflight-card { margin-bottom: 11px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface-alt); overflow: hidden; }
+.chain-preflight-header { display: flex; align-items: center; gap: 8px; padding: 9px 11px; border-bottom: 1px solid var(--line); font-size: 11px; }
+.chain-preflight-header strong { flex: 1; }
+.chain-preflight-body { padding: 10px 11px; }
+.chain-preflight-row { display: grid; grid-template-columns: 90px minmax(0, 1fr); gap: 10px; align-items: center; padding: 5px 0; font-size: 11px; }
+.chain-preflight-row span { color: var(--muted); }
+.chain-preflight-row b { color: var(--ink); font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chain-address-link { display: inline-flex; align-items: center; gap: 5px; color: var(--teal-dark); font-weight: 600; text-decoration: none; }
+.chain-address-link:hover { text-decoration: underline; }
+
 .metric-strip { display: grid; grid-template-columns: repeat(4, 1fr); margin-bottom: 14px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); overflow: hidden; }
 .metric-strip > div { min-width: 0; padding: 13px 15px; border-right: 1px solid var(--line); }
 .metric-strip > div:last-child { border-right: 0; }

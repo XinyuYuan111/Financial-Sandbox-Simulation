@@ -26,6 +26,7 @@ export const api = {
   observations: <T>(branchId: string, agentId: string, cursor?: number) => request<T>(`/api/v1/branches/${branchId}/agents/${agentId}/observations${cursor === undefined ? '' : `?cursor=${cursor}`}`),
   providers: <T>() => request<T>('/api/v1/providers'),
   chains: <T>() => request<T>('/api/v1/chains'),
+  chainPreflight: <T>(chainId: string, targetToken = '') => request<T>(`/api/v1/chains/${chainId}/preflight?target_token=${encodeURIComponent(targetToken)}`),
   providerPreflight: <T>(name: string) => request<T>(`/api/v1/providers/${name}/preflight`, { method: 'POST' }),
   agentArchetypes: <T>() => request<T>('/api/v1/agent-archetypes'),
   interpretAgentConfiguration: <T>(userIntent: string, provider = 'openai') => request<T>('/api/v1/agent-configurations/interpret', { method: 'POST', headers: jsonHeaders, body: JSON.stringify({ user_intent: userIntent, provider }) }),

@@ -348,6 +348,12 @@ class RunManager:
     async def provider_preflight(self, provider_name: str) -> dict[str, object]:
         return await self.initializer.llm_gateway.preflight(provider_name)
 
+    async def chain_preflight(self, chain_id: str, target_token: str) -> dict[str, object]:
+        provider = self.initializer.holder_providers.get(chain_id)
+        if provider is None:
+            return {"ok": False, "chain_id": chain_id, "message": f"chain '{chain_id}' has no configured holder data source"}
+        return await provider.preflight(chain_id, target_token)
+
     @staticmethod
     def agent_archetypes() -> list[dict[str, object]]:
         return archetype_catalog()
