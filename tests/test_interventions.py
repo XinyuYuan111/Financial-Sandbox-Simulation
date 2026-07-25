@@ -91,6 +91,7 @@ class TypedDirectorAdapter:
             stages=[{
                 "stage_id": "stage-ai",
                 "effective_sim_time_us": request.requested_effective_time_us,
+                "background_order_flow_impact_milli": -700,
                 "effects": [{
                     "effect_id": "effect-ai-halt",
                     "effect_type": "set_market_status",
@@ -335,6 +336,7 @@ class InterventionTests(unittest.TestCase):
         self.assertEqual(created["status"], "draft")
         self.assertEqual(created["plan"]["director_record"]["director_kind"], "openai.v0.1")
         self.assertEqual(created["plan"]["director_record"]["call_ids"], ["llm-director-test"])
+        self.assertEqual(created["plan"]["stages"][0]["background_order_flow_impact_milli"], -700)
         self.assertEqual(adapter.request.private_context, {})
         self.assertNotIn("base_persona", str(adapter.request.world_context))
         self.assertNotIn("memory_entries", str(adapter.request.world_context))

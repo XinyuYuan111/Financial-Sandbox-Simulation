@@ -100,6 +100,18 @@ function effectLabel(effect: InterventionEffect) {
   return labels[effect.effect_type] ?? effect.effect_type
 }
 
+function marketImpactText(value: number | undefined): string {
+  const impact = value ?? 0
+  const degree = Math.abs(impact) >= 700 ? '强烈' : Math.abs(impact) >= 350 ? '明显' : Math.abs(impact) > 0 ? '轻微' : ''
+  if (impact > 0) return `${degree}利多，未来背景订单流将更偏向买入`
+  if (impact < 0) return `${degree}利空，未来背景订单流将更偏向卖出`
+  return '中性，不改变未来背景订单流'
+}
+
+function stageStatusText(status: InterventionPlan['stages'][number]['status']): string {
+  return { pending: '待生效', applied: '已生效', failed: '应用失败', canceled: '已取消' }[status]
+}
+
 export function InterventionWorkspace({ branchId, branchStatus, simTimeUs, provider, onChanged }: {
   branchId: string
   branchStatus: string
@@ -140,7 +152,14 @@ export function InterventionWorkspace({ branchId, branchStatus, simTimeUs, provi
         user_intent: intent,
         access_scope: { private_grants: [] },
         private_read_refs: [],
-        stages: [{ stage_id: `stage_${crypto.randomUUID()}`, effective_sim_time_us: Number(effectiveTime), effects, status: 'pending', failure_reason: null }],
+        stages: [{
+          stage_id: `stage_${crypto.randomUUID()}`,
+          effective_sim_time_us: Number(effectiveTime),
+          background_order_flow_impact_milli: 0,
+          effects,
+          status: 'pending',
+          failure_reason: null,
+        }],
       })
       setIntent(''); setEffects([])
       await loadPlans()
@@ -198,11 +217,12 @@ export function InterventionWorkspace({ branchId, branchStatus, simTimeUs, provi
       <div className="draft-actions"><button className="secondary-button" type="button" onClick={() => void interpret()} disabled={!paused || busy || !intent.trim() || !provider}><Sparkles size={15} />AI 生成</button><button className="primary-button" type="submit" disabled={!paused || busy || !intent.trim() || !effects.length}>生成 Draft</button></div>
     </form>
     <section className="workspace-panel intervention-plans">
-      <div className="panel-heading"><div><h2>干预计划</h2><p>{plans.length} plans</p></div><Check size={18} /></div>
+      <div className="panel-heading"><div><h2>干预计划</h2><p>{plans.length} 个计划</p></div><Check size={18} /></div>
       {!plans.length ? <EmptyState title="暂无干预计划" /> : <div className="plan-list">{[...plans].reverse().map(plan => <article key={plan.plan_id}>
-        <header><div><strong>{plan.director_record.submitted_intent}</strong><small>{shortId(plan.plan_id)} · world r{plan.base_world_revision}</small></div><StatusBadge status={plan.status} /></header>
-        <div className="plan-stage-line">{plan.stages.map(stage => <span key={stage.stage_id}>{stage.effective_sim_time_us} · {stage.status} · {stage.effects.length} effects</span>)}</div>
-        {plan.preview.map(item => <p key={item.effect_id}>{item.summary}</p>)}
+        <header><div><strong>{plan.director_record.submitted_intent}</strong><small>{shortId(plan.plan_id)} · 世界版本 {plan.base_world_revision}</small></div><StatusBadge status={plan.status} /></header>
+        <div className="plan-stage-line">{plan.stages.map(stage => <span key={stage.stage_id}>模拟时间 {stage.effective_sim_time_us} · {stageStatusText(stage.status)} · {stage.effects.length} 项效果</span>)}</div>
+        {plan.stages.map(stage => <p className="market-impact-summary" key={`${stage.stage_id}-market-impact`}>对未来订单流：{marketImpactText(stage.background_order_flow_impact_milli)}</p>)}
+        {plan.preview.filter(item => item.effect_type !== 'background_order_flow_impact').map(item => <p key={item.effect_id}>{item.summary}</p>)}
         {plan.status === 'draft' ? <footer><button className="secondary-button" onClick={() => void decide(plan.plan_id, 'reject')} disabled={!paused || busy}><Ban size={14} />拒绝</button><button className="primary-button" onClick={() => void decide(plan.plan_id, 'confirm')} disabled={!paused || busy}><Check size={14} />确认</button></footer> : null}
       </article>)}</div>}
     </section>

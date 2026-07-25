@@ -113,6 +113,7 @@ export type InterventionEffect = {
 export type InterventionStage = {
   stage_id: string
   effective_sim_time_us: number
+  background_order_flow_impact_milli: number
   effects: InterventionEffect[]
   status: 'pending' | 'applied' | 'failed' | 'canceled'
   failure_reason?: string | null

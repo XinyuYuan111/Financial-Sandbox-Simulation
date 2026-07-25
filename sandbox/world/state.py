@@ -27,6 +27,7 @@ from sandbox.core.errors import MissingCausalStateError, ValidationError
 from sandbox.core.ids import deterministic_id, new_id
 from sandbox.core.numeric import ceil_basis_points, require_int
 from sandbox.core.rng import NamedRandomStreams
+from sandbox.core.time import SIMULATION_PLAN_HORIZON_US
 from sandbox.world.information import publish_information
 from sandbox.world.ledger import Ledger
 from sandbox.world.market.clob import CLOB
@@ -470,6 +471,40 @@ class SimulationWorld:
         events: list[EventDraft] = []
         affected_agents: set[str] = set()
         triggers_by_agent: dict[str, list[DecisionTrigger]] = {}
+        if stage.background_order_flow_impact_milli != 0:
+            impact_id = deterministic_id("background-order-flow-impact", plan_id, stage.stage_id)
+            active_impacts = [
+                dict(item)
+                for item in world.background_market_sector.get("active_intervention_impacts", [])
+                if isinstance(item, dict) and int(item.get("expires_sim_time_us", 0)) > world.sim_time_us
+            ]
+            active_impacts.append({
+                "impact_id": impact_id,
+                "intervention_plan_id": plan_id,
+                "intervention_stage_id": stage.stage_id,
+                "impact_milli": stage.background_order_flow_impact_milli,
+                "applied_sim_time_us": world.sim_time_us,
+                "expires_sim_time_us": world.sim_time_us + SIMULATION_PLAN_HORIZON_US,
+            })
+            world.background_market_sector["active_intervention_impacts"] = active_impacts
+            direction = "bullish" if stage.background_order_flow_impact_milli > 0 else "bearish"
+            events.append(world._intervention_event(
+                plan_id,
+                stage.stage_id,
+                impact_id,
+                "BackgroundOrderFlowImpactApplied",
+                {
+                    "impact_id": impact_id,
+                    "direction": direction,
+                    "strength_milli": abs(stage.background_order_flow_impact_milli),
+                    "signed_impact_milli": stage.background_order_flow_impact_milli,
+                    "applied_sim_time_us": world.sim_time_us,
+                    "expires_sim_time_us": world.sim_time_us + SIMULATION_PLAN_HORIZON_US,
+                },
+                priority=35,
+                visibility="analyst_only",
+                phase="background-order-flow-impact",
+            ))
         state_effects = [effect for effect in stage.effects if not isinstance(effect, PublishInformationEffect)]
         information_effects = [effect for effect in stage.effects if isinstance(effect, PublishInformationEffect)]
         for effect in state_effects:

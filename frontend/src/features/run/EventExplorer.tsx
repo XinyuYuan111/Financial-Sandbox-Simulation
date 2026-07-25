@@ -27,7 +27,7 @@ const eventLabels: Record<string, string> = {
   ObservationCreated: '形成一次局部观察', AgentDecisionRecorded: 'Agent 作出决策', AgentDecisionOutcomeRecorded: '决策完成校验',
   MemoryWritten: '形成一条记忆', BeliefUpdated: '更新一条信念',
   PlanningRequestStateChanged: '规划请求更新', StrategyPlanActivated: '新计划开始生效', PlanningResultRecorded: '规划结果已保存',
-  BackgroundOrderFlowSampled: '背景订单流完成采样', AgentNoOpFallbackSampled: '演示活动策略完成采样',
+  BackgroundOrderFlowImpactApplied: '外部事件开始影响背景订单流', BackgroundOrderFlowSampled: '背景订单流完成采样', AgentNoOpFallbackSampled: '演示活动策略完成采样',
   InterventionStageApplied: '外部干预阶段已应用', ControlInterventionApplied: '外部干预已生效',
 }
 
@@ -72,10 +72,48 @@ function eventSummary(event: EventEnvelope): string {
   if (event.event_type === 'ActionRejected') return `动作未通过执行边界，原因是 ${reasonText(payload.reason_code ?? payload.reason)}。`
   if (event.event_type === 'PlanningRequestStateChanged') return `Agent 的策略规划从${stateText(payload.from)}进入${stateText(payload.to)}。`
   if (event.event_type === 'AgentDecisionOutcomeRecorded') return `决策完成校验，产生 ${String(payload.accepted_actions ?? 0)} 个可进入世界执行的动作。`
+  if (event.event_type === 'BackgroundOrderFlowImpactApplied') {
+    const impact = numericValue(payload.signed_impact_milli)
+    if (impact === 0) return '本阶段对背景订单流的影响为中性，未来买卖采样倾向保持不变。'
+    const action = impact > 0 ? '提高背景买入概率' : '降低背景买入概率并增加卖出倾向'
+    return `外部事件开始产生${marketImpactText(impact)}影响，未来采样将${action}。`
+  }
+  if (event.event_type === 'BackgroundOrderFlowSampled') {
+    const baseProbability = optionalNumericValue(payload.base_buy_probability_milli)
+    const effectiveProbability = optionalNumericValue(payload.effective_buy_probability_milli)
+    const impact = numericValue(payload.net_impact_milli)
+    const sampledSide = payload.side === 'buy' ? '买入' : payload.side === 'sell' ? '卖出' : '方向未知'
+    if (baseProbability === null || effectiveProbability === null) {
+      return `背景订单流本次采样方向为${sampledSide}；这条历史记录没有保存冲击前后的买入概率。`
+    }
+    return `背景订单流原本有 ${probabilityText(baseProbability)} 的买入概率；受到${marketImpactText(impact)}影响后，实际买入概率为 ${probabilityText(effectiveProbability)}，本次采样方向为${sampledSide}。`
+  }
   if (event.event_type === 'CheckpointCreated') return `分支在完整事件边界建立了可回看、可分叉的保存点。`
   if (payload.message) return String(payload.message)
   if (payload.reason || payload.reason_code) return `系统记录的原因是 ${reasonText(payload.reason ?? payload.reason_code)}。`
   return '系统已把这次变化写入不可变事件历史，详细字段可通过审计数据查询。'
+}
+
+function numericValue(value: unknown): number {
+  return optionalNumericValue(value) ?? 0
+}
+
+function optionalNumericValue(value: unknown): number | null {
+  if (value === null || value === undefined || value === '') return null
+  const parsed = typeof value === 'number' ? value : Number(value)
+  return Number.isFinite(parsed) ? parsed : null
+}
+
+function probabilityText(value: number): string {
+  const percentage = Math.max(0, Math.min(100, value / 10))
+  return `${Number.isInteger(percentage) ? percentage.toFixed(0) : percentage.toFixed(1)}%`
+}
+
+function marketImpactText(value: number): string {
+  const degree = Math.abs(value) >= 700 ? '强烈' : Math.abs(value) >= 350 ? '明显' : Math.abs(value) > 0 ? '轻微' : ''
+  if (value > 0) return `${degree}利多`
+  if (value < 0) return `${degree}利空`
+  return '中性'
 }
 
 function directionText(value: unknown): string {

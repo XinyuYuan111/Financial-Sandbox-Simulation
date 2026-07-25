@@ -144,6 +144,15 @@ InterventionEffect = Annotated[
 class InterventionStage(StrictFrozenModel):
     stage_id: str = Field(min_length=1, max_length=256)
     effective_sim_time_us: int = Field(ge=0)
+    background_order_flow_impact_milli: int = Field(
+        default=0,
+        ge=-1_000,
+        le=1_000,
+        description=(
+            "Signed impact on future background order flow: negative is bearish sell pressure, "
+            "positive is bullish buy pressure, and zero is neutral."
+        ),
+    )
     effects: list[InterventionEffect] = Field(min_length=1, max_length=64)
     status: Literal["pending", "applied", "failed", "canceled"] = "pending"
     failure_reason: str | None = Field(default=None, max_length=500)
@@ -213,6 +222,15 @@ class DirectorPlanCandidate(StrictFrozenModel):
     stages: list[InterventionStage] = Field(min_length=1, max_length=32)
     rationale: str = Field(default="", max_length=1_000)
     schema_version: Literal["director-plan-candidate.v0.1"] = "director-plan-candidate.v0.1"
+
+    @model_validator(mode="after")
+    def require_explicit_order_flow_assessment(self) -> "DirectorPlanCandidate":
+        if any(
+            "background_order_flow_impact_milli" not in stage.model_fields_set
+            for stage in self.stages
+        ):
+            raise ValueError("every Director stage must explicitly assess background order-flow impact")
+        return self
 
 
 class InterventionPlan(StrictFrozenModel):

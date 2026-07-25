@@ -11,6 +11,7 @@ from sandbox.contracts.intervention import (
     EffectPreview,
     InterventionPlan,
     InterventionPlanDraftInput,
+    InterventionStage,
     PrivateStateRef,
     PublishInformationEffect,
     SetAccountFreezeEffect,
@@ -69,6 +70,7 @@ class ScenarioDirector:
             )
             working = result.world
             previews.extend(self._preview_effect(effect) for effect in stage.effects)
+            previews.append(self._preview_order_flow_impact(stage))
         plan_id = deterministic_id("intervention-plan", branch_id, created_command_id)
         return InterventionPlan(
             plan_id=plan_id,
@@ -191,6 +193,25 @@ class ScenarioDirector:
                     if item.get("visibility") == "agent_private" and agent_id in item.get("target_ids", [])
                 ]
         return world_context, private_context
+
+    @staticmethod
+    def _preview_order_flow_impact(stage: InterventionStage) -> EffectPreview:
+        impact = stage.background_order_flow_impact_milli
+        if impact > 0:
+            direction = "利多"
+            consequence = "背景买入压力会增强"
+        elif impact < 0:
+            direction = "利空"
+            consequence = "背景卖出压力会增强"
+        else:
+            direction = "中性"
+            consequence = "背景订单流保持原有随机分布"
+        return EffectPreview(
+            effect_id=f"{stage.stage_id}:background-order-flow-impact",
+            effect_type="background_order_flow_impact",
+            target_refs=["background_order_flow"],
+            summary=f"市场影响判断：{direction}，强度 {abs(impact)} / 1000；{consequence}，并在未来 30 个模拟分钟内逐步消退。",
+        )
 
     @staticmethod
     def _preview_effect(effect: object) -> EffectPreview:

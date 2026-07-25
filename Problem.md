@@ -234,7 +234,7 @@ Acceptance:
 ### P-013 - Product intervention catalog is incomplete
 
 Status: **PARTIAL / 部分解决**  
-Implemented: paused command-scoped Director, draft/confirm, typed state and information effects, atomic current stages, future stages, causal-state checks, audit records, a versioned seven-entry template catalog, and manual UI fields for entity/relationship effects.  
+Implemented: paused command-scoped Director, draft/confirm, typed state and information effects, atomic current stages, future stages, causal-state checks, audit records, a versioned seven-entry template catalog, manual UI fields for entity/relationship effects, and an AI-inferred signed market-impact degree that drives bounded, decaying Background Order Flow after confirmation.
 Missing: executable compound template bodies and per-template archive/fork/replay acceptance coverage.
 
 Required resolution:

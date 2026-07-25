@@ -1184,11 +1184,21 @@ class RunManager:
             activity_milli = min(999, int(activity_value * 1_000))
             side_milli = min(999, int(side_value * 1_000))
             size_milli = min(999, int(size_value * 1_000))
-            taker_probability = int(world.background_market_sector.get("taker_probability_milli", 300))
-            limit_probability = int(world.background_market_sector.get("directional_limit_probability_milli", 250))
-            side = "buy" if side_milli < 500 else "sell"
+            base_taker_probability = int(world.background_market_sector.get("taker_probability_milli", 300))
+            base_limit_probability = int(world.background_market_sector.get("directional_limit_probability_milli", 250))
+            impact_milli, active_impacts = self._background_order_flow_impact(world)
+            impact_strength = abs(impact_milli)
+            buy_probability_milli = max(100, min(900, 500 + impact_milli * 400 // 1_000))
+            activity_headroom = max(0, 1_000 - base_taker_probability - base_limit_probability)
+            activity_boost = activity_headroom * impact_strength // 1_000
+            taker_boost = activity_boost * 2 // 3
+            taker_probability = base_taker_probability + taker_boost
+            limit_probability = base_limit_probability + activity_boost - taker_boost
+            side = "buy" if side_milli < buy_probability_milli else "sell"
             selected_kind = "quote_maintenance"
-            target_quantity = max(1, quote_size * (250 + size_milli * 750 // 1_000) // 1_000)
+            base_target_quantity = max(1, quote_size * (250 + size_milli * 750 // 1_000) // 1_000)
+            size_multiplier_milli = 1_000 + impact_strength
+            target_quantity = max(1, base_target_quantity * size_multiplier_milli // 1_000)
             flow_orders = [
                 order for order in world.clob.orders.values()
                 if order.agent_id == flow_account_id
@@ -1268,6 +1278,16 @@ class RunManager:
                 "size_draw_index": size_index,
                 "taker_probability_milli": taker_probability,
                 "directional_limit_probability_milli": limit_probability,
+                "base_taker_probability_milli": base_taker_probability,
+                "base_directional_limit_probability_milli": base_limit_probability,
+                "net_impact_milli": impact_milli,
+                "impact_direction": (
+                    "bullish" if impact_milli > 0 else "bearish" if impact_milli < 0 else "neutral"
+                ),
+                "active_impact_sources": active_impacts,
+                "base_buy_probability_milli": 500,
+                "effective_buy_probability_milli": buy_probability_milli,
+                "quantity_multiplier_milli": size_multiplier_milli,
                 "selected_kind": selected_kind,
                 "actor_id": actor_id,
                 "side": side,
@@ -1317,6 +1337,33 @@ class RunManager:
             parent_observation_id=None,
             client_command_id=f"background-policy:{sequence}:{actor_id}",
         )
+
+    @staticmethod
+    def _background_order_flow_impact(
+        world: SimulationWorld,
+    ) -> tuple[int, list[dict[str, object]]]:
+        active: list[dict[str, object]] = []
+        total = 0
+        for raw in world.background_market_sector.get("active_intervention_impacts", []):
+            if not isinstance(raw, dict):
+                continue
+            applied = int(raw.get("applied_sim_time_us", world.sim_time_us))
+            expires = int(raw.get("expires_sim_time_us", applied))
+            remaining = expires - world.sim_time_us
+            if remaining <= 0:
+                continue
+            duration = max(1, expires - applied)
+            initial = int(raw.get("impact_milli", 0))
+            decayed = (abs(initial) * min(remaining, duration) // duration) * (1 if initial >= 0 else -1)
+            item = dict(raw)
+            item["current_impact_milli"] = decayed
+            active.append(item)
+            total += decayed
+        world.background_market_sector["active_intervention_impacts"] = [
+            {key: value for key, value in item.items() if key != "current_impact_milli"}
+            for item in active
+        ]
+        return max(-1_000, min(1_000, total)), active
 
     def _next_background_event_time_us(self, branch_id: str, world: SimulationWorld) -> int | None:
         sequence = int(world.background_market_sector.get("policy_sequence", 0))

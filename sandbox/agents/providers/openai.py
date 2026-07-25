@@ -46,6 +46,10 @@ Do not force an Agent to take an action. Wallet access changes access facts only
 Do not invent past state, exposures, balances, relationships, or unsupported causal facts.
 State changes and dependent information at one time belong in the same InterventionStage.
 Use requested_effective_time_us unless the intent clearly requires later ordered stages.
+For every stage, infer background_order_flow_impact_milli from the event's likely market effect:
+-1000 is extremely bearish sell pressure, 0 is neutral, and +1000 is extremely bullish buy pressure.
+Judge direction and strength from the user's event; do not merely copy bullish or bearish words.
+This field changes bounded background orders for the next 30 simulation minutes and never changes price directly.
 The host will independently validate, preview, and require user confirmation."""
 
 AGENT_CONFIGURATION_INSTRUCTIONS = """Role: You are a constrained Agent configuration interpreter.
