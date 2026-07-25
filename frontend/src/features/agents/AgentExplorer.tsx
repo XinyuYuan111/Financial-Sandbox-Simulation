@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { BrainCircuit, ChevronRight, CircleDot, ClipboardList, Eye, MemoryStick, ReceiptText, Target, Users } from 'lucide-react'
 import { api } from '../../api'
-import type { AgentAudit, AgentDetail, AgentProjection } from '../../types'
+import type { AgentAudit, AgentDetail, AgentProjection, PortfolioPerformance } from '../../types'
 import { EmptyState, ErrorBanner, formatInteger, formatTime, JsonBlock, shortId, StatusBadge } from '../../components/ui'
 import {
   asArray,
@@ -100,8 +100,54 @@ function Overview({ detail, audit }: { detail: AgentDetail; audit: AgentAudit })
   const persona = asRecord(definition.base_persona)
   return <div className="agent-overview">
     <section className="fact-grid agent-facts"><div><span>主要角色</span><strong>{roleText(detail.role_tags?.[0])}</strong></div><div><span>当前计划</span><strong>{detail.active_strategy_revision ? `第 ${detail.active_strategy_revision} 版` : '尚未形成'}</strong></div><div><span>未完成订单</span><strong>{detail.portfolio.open_orders.length}</strong></div><div><span>已记录决策</span><strong>{audit.decisions.length}</strong></div></section>
-    <div className="overview-grid"><section><h3>账户</h3><table><thead><tr><th>资产</th><th>可用</th><th>锁定</th></tr></thead><tbody>{Object.entries(balances).map(([asset, balance]) => <tr key={asset}><td><strong>{asset}</strong></td><td>{formatInteger(balance.free)}</td><td>{formatInteger(balance.locked)}</td></tr>)}</tbody></table></section><section><h3>身份与行为边界</h3><dl className="detail-list"><div><dt>公开身份</dt><dd>{String(definition.public_identity ?? '-')}</dd></div><div><dt>风险承受度</dt><dd>{String(persona.risk_tolerance_milli ?? '-')} / 1000</dd></div><div><dt>时间偏好</dt><dd>{timeHorizonText(String(persona.time_horizon ?? ''))}</dd></div><div><dt>可以执行</dt><dd>{detail.capabilities?.map(capabilityText).join('、') || '-'}</dd></div><div><dt>角色</dt><dd>{detail.role_tags?.map(roleText).join('、') || '-'}</dd></div></dl></section></div>
+    <div className="overview-grid"><section><h3>账户</h3><table><thead><tr><th>资产</th><th>可用</th><th>锁定</th></tr></thead><tbody>{Object.entries(balances).map(([asset, balance]) => <tr key={asset}><td><strong>{asset}</strong></td><td>{formatInteger(balance.free)}</td><td>{formatInteger(balance.locked)}</td></tr>)}</tbody></table><PerformanceSummary performance={detail.portfolio_performance} /></section><section><h3>身份与行为边界</h3><dl className="detail-list"><div><dt>公开身份</dt><dd>{String(definition.public_identity ?? '-')}</dd></div><div><dt>风险承受度</dt><dd>{String(persona.risk_tolerance_milli ?? '-')} / 1000</dd></div><div><dt>时间偏好</dt><dd>{timeHorizonText(String(persona.time_horizon ?? ''))}</dd></div><div><dt>可以执行</dt><dd>{detail.capabilities?.map(capabilityText).join('、') || '-'}</dd></div><div><dt>角色</dt><dd>{detail.role_tags?.map(roleText).join('、') || '-'}</dd></div></dl></section></div>
   </div>
+}
+
+function PerformanceSummary({ performance }: { performance: PortfolioPerformance }) {
+  const returnBps = performance.return_bps
+  const tone = returnBps === null || returnBps === 0 ? 'neutral' : returnBps > 0 ? 'positive' : 'negative'
+  const rate = returnBps === null
+    ? '暂不可计算'
+    : `${returnBps > 0 ? '+' : ''}${(returnBps / 100).toFixed(2)}%`
+  const comparison = returnBps === null
+    ? '初始账户价值为零，因此暂时无法计算相对收益率'
+    : returnBps > 0
+      ? `较运行初始价值上涨 ${(returnBps / 100).toFixed(2)}%`
+      : returnBps < 0
+        ? `较运行初始价值下跌 ${(Math.abs(returnBps) / 100).toFixed(2)}%`
+        : '与运行初始价值持平'
+  return <div className={`account-performance ${tone}`}>
+    <div><span>账户总资产收益率</span><strong>{rate}</strong></div>
+    <p>按{valuationSourceText(performance.valuation_price_source)} {formatMilli(performance.valuation_price_milli)} {performance.quote_asset} / {performance.base_asset} 估值，账户当前总价值为 {formatMilliQuote(performance.current_value_milli_quote)} {performance.quote_asset}；{comparison}。</p>
+    <small>{formatTime(performance.valued_at_sim_time_us)}；统计包含可用与挂单锁定资产，也包含外部资产转入转出。</small>
+  </div>
+}
+
+const decimalFormatter = new Intl.NumberFormat('zh-CN', { maximumFractionDigits: 3 })
+const wholeFormatter = new Intl.NumberFormat('zh-CN')
+
+function formatMilli(value: number): string {
+  return decimalFormatter.format(value / 1_000)
+}
+
+function formatMilliQuote(rawValue: string): string {
+  const value = BigInt(rawValue)
+  const negative = value < 0n
+  const absolute = negative ? -value : value
+  const whole = absolute / 1_000n
+  const fraction = (absolute % 1_000n).toString().padStart(3, '0').replace(/0+$/, '')
+  return `${negative ? '-' : ''}${wholeFormatter.format(whole)}${fraction ? `.${fraction}` : ''}`
+}
+
+function valuationSourceText(source: PortfolioPerformance['valuation_price_source']): string {
+  return ({
+    midpoint: '当前买一与卖一的中间价',
+    last_trade: '最近成交价',
+    best_bid_only: '当前仅有的买方报价',
+    best_ask_only: '当前仅有的卖方报价',
+    initial_price: '运行初始参考价',
+  } as const)[source]
 }
 
 function Observations({ observations }: { observations: Array<Record<string, unknown>> }) {

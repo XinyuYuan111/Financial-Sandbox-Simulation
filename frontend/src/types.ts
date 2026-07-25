@@ -20,6 +20,22 @@ export type Run = {
 
 export type Balance = { free: number; locked: number }
 
+export type PortfolioPerformance = {
+  base_asset: string
+  quote_asset: string
+  valuation_price_milli: number
+  valuation_price_source: 'midpoint' | 'last_trade' | 'best_bid_only' | 'best_ask_only' | 'initial_price'
+  best_bid: number | null
+  best_ask: number | null
+  initial_value_milli_quote: string
+  current_value_milli_quote: string
+  change_value_milli_quote: string
+  return_bps: number | null
+  valued_at_sim_time_us: number
+  baseline_scope: 'run_initial'
+  includes_external_flows: boolean
+}
+
 export type Order = {
   order_id: string
   agent_id: string
@@ -52,9 +68,11 @@ export type AgentProjection = {
   active_strategy_revision?: number
   planning_request_id?: string | null
   portfolio: { balances: Record<string, Balance>; open_orders: Order[] }
+  portfolio_performance?: PortfolioPerformance
 }
 
 export type AgentDetail = AgentProjection & {
+  portfolio_performance: PortfolioPerformance
   capabilities: string[]
   definition: Record<string, unknown> | null
   runtime_state: {

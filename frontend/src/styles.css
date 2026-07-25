@@ -253,6 +253,15 @@ td small { display: block; margin-top: 2px; font-size: 9px; }
 .overview-grid, .memory-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
 .overview-grid > section, .memory-grid > section { min-width: 0; border: 1px solid var(--line); border-radius: 5px; overflow: hidden; }
 .overview-grid h3, .memory-grid h3 { padding: 9px 11px; border-bottom: 1px solid var(--line); background: var(--surface-alt); }
+.account-performance { padding: 10px 11px; border-top: 1px solid var(--line); background: var(--surface-alt); }
+.account-performance > div { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+.account-performance span { color: var(--muted); font-size: 10px; font-weight: 700; }
+.account-performance strong { font-size: 17px; }
+.account-performance p { margin-top: 6px; font-size: 10px; line-height: 1.55; overflow-wrap: anywhere; }
+.account-performance small { display: block; margin-top: 4px; font-size: 9px; line-height: 1.45; }
+.account-performance.positive strong { color: var(--green); }
+.account-performance.negative strong { color: var(--red); }
+.account-performance.neutral strong { color: var(--ink); }
 .memory-grid h3 span { float: right; color: var(--muted); }
 .memory-grid h3.memory-subheading { border-top: 1px solid var(--line); }
 .detail-list { margin: 0; }

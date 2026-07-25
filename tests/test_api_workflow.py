@@ -99,6 +99,21 @@ class ApiWorkflowTests(unittest.TestCase):
         )
         self.assertEqual(agents.status_code, 200)
         self.assertEqual(len(agents.json()["agents"]), 3)
+        historical_agents = agents.json()["agents"]
+        historical_detail = self.client.get(
+            f"/api/v1/branches/{branch_id}/agents/rule_alpha",
+            params={"cursor": historical_cursor},
+        )
+        self.assertEqual(historical_detail.status_code, 200)
+        historical_alpha = historical_detail.json()
+        list_alpha = next(item for item in historical_agents if item["agent_id"] == "rule_alpha")
+        self.assertEqual(historical_alpha["portfolio_performance"], list_alpha["portfolio_performance"])
+        self.assertEqual(
+            historical_alpha["portfolio_performance"]["valued_at_sim_time_us"],
+            historical["sim_time_us"],
+        )
+        self.assertEqual(historical_alpha["portfolio_performance"]["return_bps"], 0)
+        self.assertEqual(historical_alpha["historical_cursor"], historical_cursor)
         decisions = self.client.get(
             f"/api/v1/branches/{branch_id}/agents/rule_alpha/decisions",
             params={"cursor": historical_cursor},

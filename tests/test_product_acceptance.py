@@ -90,6 +90,17 @@ class ProductAcceptanceTests(unittest.TestCase):
         first_observation_seq = min(event.branch_seq for event in events if event.event_type == "ObservationCreated")
         self.assertLess(last_opening_seq, first_observation_seq)
 
+        detail = self.manager.agent_detail(branch_id, "rule_alpha")
+        performance = detail["portfolio_performance"]
+        self.assertEqual(performance["valuation_price_source"], "midpoint")
+        self.assertEqual(performance["valuation_price_milli"], mid * 1_000)
+        self.assertEqual(performance["return_bps"], 0)
+        self.assertEqual(performance["valued_at_sim_time_us"], 0)
+        self.assertEqual(performance["baseline_scope"], "run_initial")
+        self.assertTrue(performance["includes_external_flows"])
+        listed = next(item for item in self.manager.agents(branch_id) if item["agent_id"] == "rule_alpha")
+        self.assertEqual(listed["portfolio_performance"], performance)
+
     def test_background_assets_are_the_dynamic_residual_of_visible_agents(self) -> None:
         scenario = self.manager.create_scenario(ScenarioDraft())
         resolved = asyncio.run(self.manager.resolve_scenario(str(scenario["scenario_id"])))

@@ -444,18 +444,155 @@ class RunManager:
     def agents(self, branch_id: str, *, cursor: int | None = None) -> list[dict[str, object]]:
         with self.store.locked():
             world = self._world(branch_id)
+            baselines = self._agent_valuation_baselines(branch_id)
             if cursor is None:
-                return [self._agent_summary(world, agent_id) for agent_id in sorted(world.agents)]
-            return [self._historical_agent_summary(branch_id, world, agent_id, cursor) for agent_id in sorted(world.agents)]
+                market_view = world.market_projection()
+                return [
+                    self._agent_summary(
+                        world,
+                        agent_id,
+                        baseline=baselines[agent_id],
+                        market_view=market_view,
+                    )
+                    for agent_id in sorted(world.agents)
+                ]
+            return [
+                self._historical_agent_summary(
+                    branch_id,
+                    world,
+                    agent_id,
+                    cursor,
+                    baseline=baselines[agent_id],
+                )
+                for agent_id in sorted(world.agents)
+            ]
 
     def agent_detail(self, branch_id: str, agent_id: str, *, cursor: int | None = None) -> dict[str, object]:
         with self.store.locked():
             world = self._world(branch_id)
             if agent_id not in world.agents:
                 raise NotFoundError("agent", agent_id)
+            baseline = self._agent_valuation_baselines(branch_id)[agent_id]
             if cursor is not None:
-                return self._historical_agent_summary(branch_id, world, agent_id, cursor, include_private=True)
-            return self._agent_summary(world, agent_id, include_private=True)
+                return self._historical_agent_summary(
+                    branch_id,
+                    world,
+                    agent_id,
+                    cursor,
+                    baseline=baseline,
+                    include_private=True,
+                )
+            return self._agent_summary(world, agent_id, baseline=baseline, include_private=True)
+
+    def _agent_valuation_baselines(self, branch_id: str) -> dict[str, dict[str, object]]:
+        branch = self._branch(branch_id)
+        row = self.store.connection.execute(
+            "SELECT resolved_state_json FROM runs WHERE run_id=?",
+            (branch["run_id"],),
+        ).fetchone()
+        if row is None:
+            raise NotFoundError("run", str(branch["run_id"]))
+        resolved = ResolvedInitialState.model_validate(json.loads(row["resolved_state_json"]))
+        return {
+            agent.agent_id: {
+                "base_asset": resolved.market.base_asset,
+                "quote_asset": resolved.market.quote_asset,
+                "initial_base_amount": agent.token_balance,
+                "initial_quote_amount": agent.usdx_balance,
+                "initial_mid_price": resolved.market.initial_mid_price,
+            }
+            for agent in resolved.agents
+        }
+
+    @staticmethod
+    def _portfolio_performance(
+        portfolio: dict[str, object],
+        market_view: dict[str, object],
+        baseline: dict[str, object],
+        *,
+        sim_time_us: int,
+    ) -> dict[str, object]:
+        base_asset = str(baseline["base_asset"])
+        quote_asset = str(baseline["quote_asset"])
+        initial_mid_price = int(baseline["initial_mid_price"])
+
+        def prices(raw_orders: object) -> list[int]:
+            if not isinstance(raw_orders, list):
+                return []
+            return [
+                int(order["price"])
+                for order in raw_orders
+                if isinstance(order, dict) and order.get("price") is not None
+            ]
+
+        bids = prices(market_view.get("bids"))
+        asks = prices(market_view.get("asks"))
+        best_bid = max(bids) if bids else None
+        best_ask = min(asks) if asks else None
+        last_trade = market_view.get("last_trade")
+        last_trade_price = (
+            int(last_trade["price"])
+            if isinstance(last_trade, dict) and last_trade.get("price") is not None
+            else None
+        )
+        if best_bid is not None and best_ask is not None and best_bid < best_ask:
+            valuation_price_milli = (best_bid + best_ask) * 500
+            valuation_price_source = "midpoint"
+        elif last_trade_price is not None:
+            valuation_price_milli = last_trade_price * 1_000
+            valuation_price_source = "last_trade"
+        elif best_bid is not None and best_ask is None:
+            valuation_price_milli = best_bid * 1_000
+            valuation_price_source = "best_bid_only"
+        elif best_ask is not None and best_bid is None:
+            valuation_price_milli = best_ask * 1_000
+            valuation_price_source = "best_ask_only"
+        else:
+            valuation_price_milli = initial_mid_price * 1_000
+            valuation_price_source = "initial_price"
+
+        balances = portfolio.get("balances")
+        balance_map = balances if isinstance(balances, dict) else {}
+
+        def total_balance(asset: str) -> int:
+            raw = balance_map.get(asset, {})
+            if not isinstance(raw, dict):
+                return 0
+            return int(raw.get("free", 0)) + int(raw.get("locked", 0))
+
+        current_base_amount = total_balance(base_asset)
+        current_quote_amount = total_balance(quote_asset)
+        initial_base_amount = int(baseline["initial_base_amount"])
+        initial_quote_amount = int(baseline["initial_quote_amount"])
+        current_value_milli_quote = (
+            current_quote_amount * 1_000
+            + current_base_amount * valuation_price_milli
+        )
+        initial_value_milli_quote = (
+            initial_quote_amount * 1_000
+            + initial_base_amount * initial_mid_price * 1_000
+        )
+        change_value_milli_quote = current_value_milli_quote - initial_value_milli_quote
+        return_bps = None
+        if initial_value_milli_quote > 0:
+            magnitude = abs(change_value_milli_quote) * 10_000 // initial_value_milli_quote
+            return_bps = magnitude if change_value_milli_quote >= 0 else -magnitude
+
+        return {
+            "base_asset": base_asset,
+            "quote_asset": quote_asset,
+            "valuation_price_milli": valuation_price_milli,
+            "valuation_price_source": valuation_price_source,
+            "best_bid": best_bid,
+            "best_ask": best_ask,
+            "initial_value_milli_quote": str(initial_value_milli_quote),
+            "current_value_milli_quote": str(current_value_milli_quote),
+            "change_value_milli_quote": str(change_value_milli_quote),
+            "return_bps": return_bps,
+            "valued_at_sim_time_us": sim_time_us,
+            "baseline_scope": "run_initial",
+            "includes_external_flows": True,
+        }
 
     def agent_decisions(self, branch_id: str, agent_id: str, *, cursor: int | None = None, limit: int = 200) -> list[dict[str, object]]:
         with self.store.locked():
@@ -512,6 +649,7 @@ class RunManager:
         agent_id: str,
         cursor: int,
         *,
+        baseline: dict[str, object],
         include_private: bool = False,
     ) -> dict[str, object]:
         row = self.store.connection.execute(
@@ -528,8 +666,15 @@ class RunManager:
         )
         if observation is None:
             raise ValidationError(f"no saved Agent observation exists at or before cursor {cursor}")
-        summary = self._agent_summary(world, agent_id, include_private=include_private)
-        summary["portfolio"] = observation["portfolio_view"]
+        summary = self._agent_summary(
+            world,
+            agent_id,
+            baseline=baseline,
+            portfolio=observation["portfolio_view"],
+            market_view=observation["market_view"],
+            sim_time_us=int(observation["sim_time_us"]),
+            include_private=include_private,
+        )
         summary["planning_request_id"] = None
         decisions = self.agent_decisions(branch_id, agent_id, cursor=cursor, limit=1)
         summary["agent_revision"] = int(decisions[0]["outcome"]["resulting_agent_revision"]) if decisions else 0
@@ -849,11 +994,28 @@ class RunManager:
                 )
                 return record["persisted_result"]
 
-    @staticmethod
-    def _agent_summary(world: SimulationWorld, agent_id: str, *, include_private: bool = False) -> dict[str, object]:
+    def _agent_summary(
+        self,
+        world: SimulationWorld,
+        agent_id: str,
+        *,
+        baseline: dict[str, object],
+        portfolio: dict[str, object] | None = None,
+        market_view: dict[str, object] | None = None,
+        sim_time_us: int | None = None,
+        include_private: bool = False,
+    ) -> dict[str, object]:
         state = world.agent_runtime_states.get(agent_id)
         definition = world.agent_definitions.get(agent_id)
         summary = world.agent_projection(agent_id)
+        if portfolio is not None:
+            summary["portfolio"] = portfolio
+        summary["portfolio_performance"] = self._portfolio_performance(
+            summary["portfolio"],
+            market_view if market_view is not None else world.market_projection(),
+            baseline,
+            sim_time_us=world.sim_time_us if sim_time_us is None else sim_time_us,
+        )
         if include_private:
             summary["definition"] = definition.model_dump(mode="json") if definition else None
             summary["runtime_state"] = state.model_dump(mode="json") if state else None
