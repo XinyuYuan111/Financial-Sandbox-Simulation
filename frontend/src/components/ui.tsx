@@ -22,17 +22,19 @@ export function IconButton({ title, onClick, disabled, children, className = '' 
 }
 
 export function StatusBadge({ status }: { status: string }) {
-  const tone = ['Running', 'executed', 'accepted', 'Ready', 'ok'].includes(status)
+  const tone = ['Running', 'executed', 'accepted', 'Ready', 'ok', 'completed', 'applied'].includes(status)
     ? 'positive'
     : ['rejected', 'failed', 'error'].includes(status)
       ? 'negative'
-      : ['Queued', 'Running planning', 'Paused'].includes(status)
+      : ['Queued', 'Running planning', 'Paused', 'draft', 'pending', 'Historical', 'Checkpointed', 'Quiescing'].includes(status)
         ? 'warning'
         : 'neutral'
   const labels: Record<string, string> = {
     Running: '运行中', Ready: '就绪', Queued: '排队中', Paused: '已暂停', Stopped: '已停止',
     accepted: '已接受', rejected: '已拒绝', executed: '已执行', failed: '失败', expired: '已过期',
     canceled: '已取消', active: '可访问', inactive: '未生效', forgotten: '已遗忘', ok: '正常',
+    Historical: '历史投影', Checkpointed: '已保存', Quiescing: '等待边界', Completed: '已完成', Faulted: '故障',
+    draft: '待确认', pending: '待生效', completed: '已完成', applied: '已生效',
     analyst_only: '仅分析端', participants: '参与者可见', agent_private: 'Agent 私有', public: '公开',
   }
   return <span className={`status-badge ${tone}`}><span />{labels[status] ?? status}</span>
