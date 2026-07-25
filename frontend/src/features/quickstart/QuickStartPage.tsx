@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Check, CheckCircle2, Database, KeyRound, LoaderCircle, Play, Plus, RefreshCw, RotateCcw, ShieldAlert, Trash2, Users, X } from 'lucide-react'
+import { Check, CheckCircle2, Database, KeyRound, Link2, LoaderCircle, Play, Plus, RefreshCw, RotateCcw, ShieldAlert, Trash2, Users, X, Zap } from 'lucide-react'
 import { api } from '../../api'
 import type {
   AgentConfigurationDraft,
   ChainOption,
+  ChainPreflight,
   ParticipantArchetype,
   ProviderProfile,
   ResolvedPreview,
@@ -86,6 +87,8 @@ export function QuickStartPage({ onRun, embedded = false }: { onRun: (run: Run) 
   const [agentDrafts, setAgentDrafts] = useState<AgentConfigurationDraft[]>([])
   const [preflight, setPreflight] = useState<Record<string, unknown> | null>(null)
   const [preview, setPreview] = useState<ResolvedPreview | null>(null)
+  const [chainPreflight, setChainPreflight] = useState<ChainPreflight | null>(null)
+  const [chainPreflightLoading, setChainPreflightLoading] = useState(false)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -113,13 +116,39 @@ export function QuickStartPage({ onRun, embedded = false }: { onRun: (run: Run) 
     && !interpretedDraft.declined_suggestion_ids.includes(item.suggestion_id)
   )) ?? []
 
-  const invalidate = () => setPreview(null)
+  const invalidate = () => {
+    setPreview(null)
+    setChainPreflight(null)
+  }
   const switchMode = (next: Mode) => {
     setMode(next)
     if (next === 'live_llm_smoke') setAgentCount(current => Math.min(current, 4))
     setPreview(null)
     setPreflight(null)
+    setChainPreflight(null)
   }
+
+  const explorerUrl = (chainId: string, tokenAddress: string | undefined) => {
+    if (!tokenAddress) return undefined
+    if (chainId === 'injective') return `https://testnet.explorer.injective.network/contract/${tokenAddress}`
+    if (chainId === 'ethereum') return `https://etherscan.io/address/${tokenAddress}`
+    if (chainId === 'solana') return `https://explorer.solana.com/address/${tokenAddress}`
+    return undefined
+  }
+
+  useEffect(() => {
+    if (mode !== 'live' || !selectedChain.holder_source_configured) {
+      setChainPreflight(null)
+      return
+    }
+    let cancelled = false
+    setChainPreflightLoading(true)
+    api.chainPreflight<ChainPreflight>(selectedChain.chain_id, token.trim().toUpperCase())
+      .then(report => { if (!cancelled) setChainPreflight(report) })
+      .catch(() => { if (!cancelled) setChainPreflight({ ok: false, chain_id: selectedChain.chain_id, message: '链上数据源检查失败' }) })
+      .finally(() => { if (!cancelled) setChainPreflightLoading(false) })
+    return () => { cancelled = true }
+  }, [mode, selectedChain.chain_id, selectedChain.holder_source_configured, token])
 
   const switchInputMode = (next: InputMode) => {
     setInputMode(next)
@@ -270,9 +299,17 @@ export function QuickStartPage({ onRun, embedded = false }: { onRun: (run: Run) 
       <div><span className="eyebrow">Financial Sandbox</span><h1>Agent 市场实验</h1></div>
       <StatusBadge status={preview ? 'Ready' : 'Draft'} />
     </header>
+    {mode === 'live' && selectedChain.holder_source_configured ? <div className="chain-status-bar">
+      <span className="chain-badge"><Zap size={15} />Powered by {selectedChain.label}</span>
+      {chainPreflight?.ok === true ? <>
+        <span>代币: <b>{chainPreflight.token_symbol ?? token.trim().toUpperCase()}</b></span>
+        <span>最新区块: <b>#{formatInteger(chainPreflight.latest_block ?? 0)}</b></span>
+        <span>总供应量: <b>{formatInteger(chainPreflight.total_supply ?? 0)}</b></span>
+      </> : <span className="chain-status-loading">{chainPreflightLoading ? <LoaderCircle className="spin" size={13} /> : null}读取链上数据源…</span>}
+    </div> : null}
     {error ? <ErrorBanner message={error} onClose={() => setError(null)} /> : null}
-    <div className="quickstart-grid">
-      <section className="setup-panel">
+    <div className="quickstart-grid anim-fade-in-up">
+      <section className="setup-panel glass-card">
         <div className="section-title"><div><h2>运行配置</h2><p>framework-alpha · agent-definition.v0.2</p></div><Database size={19} /></div>
         <label>实验名称<input value={name} maxLength={128} onChange={event => { setName(event.target.value); invalidate() }} /></label>
         <div className="field-group"><span>运行模式</span><div className="segmented three">
@@ -322,12 +359,31 @@ export function QuickStartPage({ onRun, embedded = false }: { onRun: (run: Run) 
           <div className="provider-line"><span><KeyRound size={16} />服务端密钥</span><StatusBadge status={selectedProvider?.key_present ? 'ok' : 'missing'} /><button className="secondary-button" onClick={checkProvider} disabled={busy}><RefreshCw size={15} />检查</button></div>
           {preflight?.ok === true ? <div className="success-line"><CheckCircle2 size={16} />{String(preflight.provider)} · {String(preflight.model ?? 'default')} 可用</div> : null}
           {mode === 'live' && !selectedChain.holder_source_configured ? <div className="warning-line">{selectedChain.label} 已在固定链目录中，但当前进程没有配置该链的 finalized holder snapshot。</div> : null}
+          {mode === 'live' && selectedChain.holder_source_configured ? <div className="chain-preflight-card">
+            <div className="chain-preflight-header">
+              <Database size={16} />
+              <strong>{selectedChain.label} 链上数据源</strong>
+              {chainPreflight?.ok === true ? <StatusBadge status="ok" /> : chainPreflightLoading ? <StatusBadge status="Pending" /> : <StatusBadge status="error" />}
+            </div>
+            {chainPreflight?.ok === true ? <div className="chain-preflight-body">
+              <div className="chain-preflight-row"><span>Provider</span><b>{String(chainPreflight.provider)}</b></div>
+              <div className="chain-preflight-row"><span>代币符号</span><b>{chainPreflight.token_symbol ?? '-'}</b></div>
+              <div className="chain-preflight-row"><span>合约地址</span>
+                {chainPreflight.token_address ? <a href={explorerUrl(selectedChain.chain_id, chainPreflight.token_address)} target="_blank" rel="noreferrer" className="chain-address-link"><Link2 size={12} />{chainPreflight.token_address.slice(0, 8)}…{chainPreflight.token_address.slice(-6)}</a> : <b>-</b>}
+              </div>
+              <div className="chain-preflight-row"><span>Decimals</span><b>{chainPreflight.decimals ?? '-'}</b></div>
+              <div className="chain-preflight-row"><span>总供应量</span><b>{formatInteger(chainPreflight.total_supply ?? 0)}</b></div>
+              <div className="chain-preflight-row"><span>最新区块</span><b>#{formatInteger(chainPreflight.latest_block ?? 0)}</b></div>
+            </div> : <div className="chain-preflight-body">
+              <div className="warning-line">{chainPreflightLoading ? '正在连接链上数据源…' : chainPreflight?.message ?? '链上数据源预检失败'}</div>
+            </div>}
+          </div> : null}
           {mode !== 'test_fixture' ? <div className="cost-warning"><ShieldAlert size={17} /><span>{mode === 'live_llm_smoke' ? '使用 seed 合成 Token、USDx 与背景余量，不需要 holder snapshot；最多 4 个 Agent。' : 'Live 模式会使用真实 Provider 和 holder snapshot。'}</span></div> : null}
         </> : <div className="fixture-note"><CheckCircle2 size={17} /><span>确定性本地链路，不调用外部 Provider。</span></div>}
         <button className="primary-button wide" onClick={resolve} disabled={resolveDisabled}>{busy ? <LoaderCircle className="spin" size={17} /> : <RefreshCw size={17} />}解析初始状态</button>
       </section>
 
-      <section className="preview-panel">
+      <section className="preview-panel glass-card">
         <div className="section-title"><div><h2>已加入 Agent</h2><p>{mode === 'live_llm_smoke' ? `${agentDrafts.length} / 4` : `${agentDrafts.length} 个已配置`}</p></div><Users size={19} /></div>
         {agentDrafts.length ? <div className="agent-draft-list">{visibleDrafts.map((draft, index) => {
           const horizon = draft.base_persona.time_horizon

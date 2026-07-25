@@ -26,6 +26,7 @@ export const api = {
   observations: <T>(branchId: string, agentId: string, cursor?: number) => request<T>(`/api/v1/branches/${branchId}/agents/${agentId}/observations${cursor === undefined ? '' : `?cursor=${cursor}`}`),
   providers: <T>() => request<T>('/api/v1/providers'),
   chains: <T>() => request<T>('/api/v1/chains'),
+  chainPreflight: <T>(chainId: string, targetToken = '') => request<T>(`/api/v1/chains/${chainId}/preflight?target_token=${encodeURIComponent(targetToken)}`),
   providerPreflight: <T>(name: string) => request<T>(`/api/v1/providers/${name}/preflight`, { method: 'POST' }),
   agentArchetypes: <T>() => request<T>('/api/v1/agent-archetypes'),
   interpretAgentConfiguration: <T>(userIntent: string, provider = 'openai') => request<T>('/api/v1/agent-configurations/interpret', { method: 'POST', headers: jsonHeaders, body: JSON.stringify({ user_intent: userIntent, provider }) }),
@@ -50,4 +51,8 @@ export const api = {
     form.append('archive', file)
     return request<T>('/api/v1/archives/import', { method: 'POST', body: form })
   },
+  listCheckpoints: <T>(runId?: string) => request<T>(runId ? `/api/v1/checkpoints?run_id=${encodeURIComponent(runId)}` : '/api/v1/checkpoints'),
+  resumeFromCheckpoint: <T>(checkpointId: string, verifyChain = true) => request<T>(`/api/v1/checkpoints/${encodeURIComponent(checkpointId)}/resume`, { method: 'POST', headers: jsonHeaders, body: JSON.stringify({ client_command_id: crypto.randomUUID(), verify_chain: verifyChain }) }),
+  listAttestedRuns: <T>() => request<T>('/api/v1/runs-attested'),
+  attestRun: <T>(runId: string) => request<T>(`/api/v1/runs/${encodeURIComponent(runId)}/attest`, { method: 'POST', headers: jsonHeaders, body: JSON.stringify({ client_command_id: crypto.randomUUID() }) }),
 }

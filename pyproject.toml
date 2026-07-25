@@ -13,6 +13,7 @@ dependencies = [
   "pydantic>=2.11,<3",
   "python-multipart>=0.0.20,<1",
   "uvicorn[standard]>=0.35,<1",
+  "web3>=7,<8",
 ]
 
 [project.optional-dependencies]

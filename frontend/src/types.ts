@@ -174,6 +174,19 @@ export type ChainOption = {
   holder_source_configured: boolean
 }
 
+export type ChainPreflight = {
+  ok: boolean
+  chain_id: string
+  provider?: string
+  target_token?: string
+  token_symbol?: string
+  token_address?: string
+  decimals?: number
+  total_supply?: number
+  latest_block?: number
+  message?: string
+}
+
 export type ConfigurationProvenance = {
   source: 'default' | 'archetype' | 'random' | 'user' | 'llm_interpreted'
   source_ref: string | null
@@ -287,4 +300,51 @@ export type AgentAudit = {
   decisions: Array<{ decision: Record<string, unknown>; outcome: Record<string, unknown> }>
   plans: Array<{ plan: Record<string, unknown>; active: boolean }>
   receipts: Array<Record<string, unknown>>
+}
+
+export type CheckpointAttestationStatus =
+  | 'not_submitted'
+  | 'pending'
+  | 'confirmed'
+  | 'failed'
+
+export type RunAttestationInfo = {
+  status: CheckpointAttestationStatus
+  world_state_hash: string | null
+  tx_hash: string | null
+  block_number: number | null
+  error_message: string | null
+  attested_at: string | null
+}
+
+export type AttestedRun = {
+  run_id: string
+  name: string
+  status: string
+  scenario_id: string
+  created_at: string | null
+  branch_count: number
+  max_cursor: number
+  total_sim_time_us: number
+  attestation: RunAttestationInfo
+}
+
+export type CheckpointAttestationInfo = {
+  status: CheckpointAttestationStatus
+  tx_hash: string | null
+  block_number: number | null
+  error_message: string | null
+  attested_at: string | null
+}
+
+export type AttestedCheckpoint = {
+  checkpoint_id: string
+  run_id: string
+  branch_id: string
+  branch_seq: number
+  event_hash: string
+  sim_time_us: number
+  runtime_version: string
+  agent_count: number
+  attestation: CheckpointAttestationInfo
 }

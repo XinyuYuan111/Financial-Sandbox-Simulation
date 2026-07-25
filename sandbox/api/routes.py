@@ -14,6 +14,7 @@ from sandbox.api.models import (
     InterpretAgentConfigurationRequest,
     InterpretInterventionPlanRequest,
     InterventionPlanCommandRequest,
+    ResumeFromCheckpointRequest,
 )
 from sandbox.contracts.scenario import ScenarioDraft
 from sandbox.core.ids import new_id
@@ -44,6 +45,11 @@ def providers(request: Request) -> list[dict[str, object]]:
 @router.get("/chains")
 def chains(request: Request) -> list[dict[str, object]]:
     return manager(request).chain_catalog()
+
+
+@router.get("/chains/{chain_id}/preflight")
+async def chain_preflight(chain_id: str, request: Request, target_token: str = Query(default="")) -> dict[str, object]:
+    return await manager(request).chain_preflight(chain_id, target_token)
 
 
 @router.post("/providers/{provider_name}/preflight")
@@ -228,3 +234,34 @@ async def import_archive(request: Request, archive: UploadFile = File(...)) -> d
         return manager(request).import_archive(target)
     finally:
         target.unlink(missing_ok=True)
+
+
+@router.get("/checkpoints")
+def list_checkpoints(
+    request: Request,
+    run_id: str | None = Query(default=None),
+) -> list[dict[str, object]]:
+    return manager(request).list_attested_checkpoints(run_id=run_id)
+
+
+@router.post("/checkpoints/{checkpoint_id}/resume")
+def resume_from_checkpoint(
+    checkpoint_id: str,
+    body: ResumeFromCheckpointRequest,
+    request: Request,
+) -> dict[str, object]:
+    return manager(request).resume_from_checkpoint(
+        checkpoint_id,
+        body.client_command_id,
+        verify_chain=body.verify_chain,
+    )
+
+
+@router.get("/runs-attested")
+def list_attested_runs(request: Request) -> list[dict[str, object]]:
+    return manager(request).list_attested_runs()
+
+
+@router.post("/runs/{run_id}/attest", status_code=202)
+def attest_run_now(run_id: str, request: Request) -> dict[str, object]:
+    return manager(request).attest_run(run_id)

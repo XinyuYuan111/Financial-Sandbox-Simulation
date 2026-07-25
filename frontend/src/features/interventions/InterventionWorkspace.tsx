@@ -206,7 +206,7 @@ export function InterventionWorkspace({ branchId, branchStatus, simTimeUs, provi
   }
 
   const paused = branchStatus === 'Paused'
-  return <div className="intervention-workspace">
+  return <div className="intervention-workspace glass-card">
     <form className="workspace-panel intervention-builder" onSubmit={submit}>
       <div className="panel-heading"><div><h2>情景干预</h2><p><StatusBadge status={branchStatus} /> · t={simTimeUs}</p></div><Send size={18} /></div>
       {error ? <div className="inline-error"><CircleAlert size={15} />{error}</div> : null}

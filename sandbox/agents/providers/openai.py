@@ -3,7 +3,9 @@ from __future__ import annotations
 import json
 import time
 from datetime import datetime, timezone
-from typing import Callable
+from typing import Callable, TypeVar
+
+from pydantic import BaseModel
 
 from sandbox.contracts.planning import (
     LLMRecord,
@@ -59,6 +61,9 @@ Mark verbatim/explicit values as user and qualitative mappings as llm_interprete
 Archetypes, role tags, and capabilities may appear only as suggestions with reason, confidence, and ambiguity.
 Never output chain, token identity, asset source, wallet control, final balances, executable code, strategies, or unregistered fields.
 The host compiler will apply defaults, validate suggestions, allocate assets, show a preview, and require confirmation."""
+
+
+TModel = TypeVar("TModel", bound=BaseModel)
 
 
 class OpenAIProviderAdapter:
@@ -126,6 +131,59 @@ class OpenAIProviderAdapter:
             return response
         return str(response)[:20_000]
 
+    def _system_content(
+        self,
+        instructions: str,
+        output_type: type[BaseModel],
+        validation_feedback: str | None = None,
+    ) -> str:
+        schema = json.dumps(
+            output_type.model_json_schema(),
+            ensure_ascii=False,
+            separators=(",", ":"),
+        )
+        system = (
+            f"{instructions}\nReturn only one valid JSON object without Markdown. "
+            "Keep optional arrays empty unless they are necessary and keep rationale fields concise. "
+            f"It must match this JSON Schema exactly: {schema}"
+        )
+        if validation_feedback:
+            system += (
+                "\nThe previous attempt was invalid. Correct the stated problem and return a complete "
+                f"replacement JSON object. Validation feedback: {validation_feedback}"
+            )
+        return system
+
+    @staticmethod
+    def _parsed_content(response: object, output_type: type[TModel]) -> TModel:
+        choices = getattr(response, "choices", None)
+        if not choices:
+            raise ValueError("OpenAI response does not contain a completion choice")
+        choice = choices[0]
+        message = getattr(choice, "message", None)
+        content = getattr(message, "content", None) if message is not None else None
+        if not isinstance(content, str):
+            raise ValueError("OpenAI response does not contain string message content")
+        content = content.strip()
+        if content.startswith("```"):
+            lines = content.splitlines()
+            content = "\n".join(lines[1:-1]).strip()
+        decoded = json.loads(content)
+        return output_type.model_validate(decoded)
+
+    @staticmethod
+    def _usage(response: object) -> dict[str, int]:
+        usage = getattr(response, "usage", None)
+        if usage is None:
+            return {}
+        if hasattr(usage, "model_dump"):
+            raw = usage.model_dump()
+        elif isinstance(usage, dict):
+            raw = usage
+        else:
+            return {}
+        return {str(key): int(value) for key, value in raw.items() if isinstance(value, int) and not isinstance(value, bool)}
+
     async def preflight(self) -> dict[str, object]:
         checked_at = datetime.now(timezone.utc).isoformat()
         if not self._api_key:
@@ -141,10 +199,10 @@ class OpenAIProviderAdapter:
         started = time.perf_counter()
         try:
             client = self._client_or_create()
-            response = await client.responses.parse(
+            response = await client.chat.completions.create(
                 model=self.profile.model,
-                input=[
-                    {"role": "developer", "content": PLANNER_INSTRUCTIONS},
+                messages=[
+                    {"role": "system", "content": self._system_content(PLANNER_INSTRUCTIONS, PlanningResultCandidate)},
                     {
                         "role": "user",
                         "content": (
@@ -154,12 +212,12 @@ class OpenAIProviderAdapter:
                         ),
                     },
                 ],
-                text_format=PlanningResultCandidate,
-                max_output_tokens=self.profile.max_output_tokens,
-                store=False,
+                response_format={"type": "json_object"},
+                max_tokens=self.profile.max_output_tokens,
+                temperature=0,
+                stream=False,
             )
-            parsed = getattr(response, "output_parsed", None)
-            PlanningResultCandidate.model_validate(parsed)
+            self._parsed_content(response, PlanningResultCandidate)
             return ProviderReport(
                 ok=True,
                 provider="openai",
@@ -180,13 +238,96 @@ class OpenAIProviderAdapter:
                 message=self._safe_error(error),
             ).model_dump(mode="json")
 
+    async def _create_typed(
+        self,
+        *,
+        request_id: str,
+        agent_id: str,
+        context_hash: str,
+        instructions: str,
+        payload: dict[str, object],
+        output_type: type[TModel],
+        operation: str,
+        redacted_request: dict[str, object],
+        record_raw: Callable[[LLMRecord], None] | None,
+    ) -> TModel:
+        client = self._client_or_create()
+        last_error: Exception | None = None
+        for attempt in range(1, self.profile.max_retries + 2):
+            started = time.perf_counter()
+            response: object | None = None
+            try:
+                response = await client.chat.completions.create(
+                    model=self.profile.model,
+                    messages=[
+                        {"role": "system", "content": self._system_content(
+                            instructions, output_type,
+                            validation_feedback=self._safe_error(last_error) if last_error is not None else None,
+                        )},
+                        {"role": "user", "content": json.dumps(payload, ensure_ascii=False, separators=(",", ":"))},
+                    ],
+                    response_format={"type": "json_object"},
+                    max_tokens=self.profile.max_output_tokens,
+                    temperature=0,
+                    stream=False,
+                )
+                candidate = self._parsed_content(response, output_type)
+                record = LLMRecord(
+                    call_id=new_id("llm"),
+                    request_id=request_id,
+                    agent_id=agent_id,
+                    attempt=attempt,
+                    provider="openai",
+                    model=self.profile.model,
+                    context_hash=context_hash,
+                    redacted_request=redacted_request,
+                    raw_response=self._raw_response(response),
+                    usage=self._usage(response),
+                    latency_ms=int((time.perf_counter() - started) * 1_000),
+                    status="succeeded",
+                )
+                if record_raw is not None:
+                    record_raw(record)
+                return candidate
+            except Exception as error:
+                last_error = error
+                if record_raw is not None:
+                    diagnostic: dict[str, object] = {"error": self._safe_error(error)}
+                    if response is not None:
+                        choices = getattr(response, "choices", None)
+                        if choices:
+                            choice = choices[0]
+                            diagnostic["finish_reason"] = getattr(choice, "finish_reason", None)
+                            message = getattr(choice, "message", None)
+                            if message is not None:
+                                content = getattr(message, "content", None)
+                                if isinstance(content, str):
+                                    diagnostic["content_length"] = len(content)
+                                    diagnostic["content_excerpt"] = content[:1_000]
+                    record_raw(LLMRecord(
+                        call_id=new_id("llm"),
+                        request_id=request_id,
+                        agent_id=agent_id,
+                        attempt=attempt,
+                        provider="openai",
+                        model=self.profile.model,
+                        context_hash=context_hash,
+                        redacted_request=redacted_request,
+                        latency_ms=int((time.perf_counter() - started) * 1_000),
+                        status="failed",
+                        error_code="provider_or_schema_error",
+                        raw_response=diagnostic,
+                    ))
+        raise ValidationError(
+            f"OpenAI {operation} failed: {self._safe_error(last_error or RuntimeError('unknown error'))}"
+        )
+
     async def create_plan(
         self,
         request: PlanningProviderRequest,
         *,
         record_raw: Callable[[LLMRecord], None] | None = None,
     ) -> PlanningResultCandidate:
-        client = self._client_or_create()
         payload = {
             "based_on_strategy_revision": request.based_on_strategy_revision,
             "capabilities": request.capabilities,
@@ -199,57 +340,21 @@ class OpenAIProviderAdapter:
             "current_strategy": request.current_strategy,
             "task": request.planner_instructions,
         }
-        last_error: Exception | None = None
-        for attempt in range(1, self.profile.max_retries + 2):
-            started = time.perf_counter()
-            try:
-                response = await client.responses.parse(
-                    model=self.profile.model,
-                    input=[
-                        {"role": "developer", "content": PLANNER_INSTRUCTIONS},
-                        {"role": "user", "content": json.dumps(payload, ensure_ascii=False, separators=(",", ":"))},
-                    ],
-                    text_format=PlanningResultCandidate,
-                    max_output_tokens=self.profile.max_output_tokens,
-                    store=False,
-                )
-                record = LLMRecord(
-                    call_id=new_id("llm"),
-                    request_id=request.request_id,
-                    agent_id=request.agent_id,
-                    attempt=attempt,
-                    provider="openai",
-                    model=self.profile.model,
-                    context_hash=request.context_hash,
-                    redacted_request={"request_id": request.request_id, "agent_id": request.agent_id, "context_hash": request.context_hash},
-                    raw_response=self._raw_response(response),
-                    usage=self._usage(response),
-                    latency_ms=int((time.perf_counter() - started) * 1_000),
-                    status="succeeded",
-                )
-                if record_raw is not None:
-                    record_raw(record)
-                parsed = getattr(response, "output_parsed", None)
-                return PlanningResultCandidate.model_validate(parsed)
-            except Exception as error:
-                last_error = error
-                failed_record = LLMRecord(
-                    call_id=new_id("llm"),
-                    request_id=request.request_id,
-                    agent_id=request.agent_id,
-                    attempt=attempt,
-                    provider="openai",
-                    model=self.profile.model,
-                    context_hash=request.context_hash,
-                    redacted_request={"request_id": request.request_id, "agent_id": request.agent_id, "context_hash": request.context_hash},
-                    latency_ms=int((time.perf_counter() - started) * 1_000),
-                    status="failed",
-                    error_code="provider_or_schema_error",
-                    raw_response={"error": self._safe_error(error)},
-                )
-                if record_raw is not None:
-                    record_raw(failed_record)
-        raise ValidationError(f"OpenAI planning failed: {self._safe_error(last_error or RuntimeError('unknown error'))}")
+        return await self._create_typed(
+            request_id=request.request_id,
+            agent_id=request.agent_id,
+            context_hash=request.context_hash,
+            instructions=PLANNER_INSTRUCTIONS,
+            payload=payload,
+            output_type=PlanningResultCandidate,
+            operation="planning",
+            redacted_request={
+                "request_id": request.request_id,
+                "agent_id": request.agent_id,
+                "context_hash": request.context_hash,
+            },
+            record_raw=record_raw,
+        )
 
     async def create_intervention_plan(
         self,
@@ -257,72 +362,28 @@ class OpenAIProviderAdapter:
         *,
         record_raw: Callable[[LLMRecord], None] | None = None,
     ) -> DirectorPlanCandidate:
-        client = self._client_or_create()
-        payload = {
-            "user_intent": request.user_intent,
-            "current_sim_time_us": request.current_sim_time_us,
-            "requested_effective_time_us": request.requested_effective_time_us,
-            "allowed_effect_types": request.allowed_effect_types,
-            "world_context": request.world_context,
-            "explicitly_authorized_private_context": request.private_context,
-        }
-        last_error: Exception | None = None
-        for attempt in range(1, self.profile.max_retries + 2):
-            started = time.perf_counter()
-            try:
-                response = await client.responses.parse(
-                    model=self.profile.model,
-                    input=[
-                        {"role": "developer", "content": DIRECTOR_INSTRUCTIONS},
-                        {"role": "user", "content": json.dumps(payload, ensure_ascii=False, separators=(",", ":"))},
-                    ],
-                    text_format=DirectorPlanCandidate,
-                    max_output_tokens=self.profile.max_output_tokens,
-                    store=False,
-                )
-                record = LLMRecord(
-                    call_id=new_id("llm"),
-                    request_id=request.request_id,
-                    agent_id="scenario_director",
-                    attempt=attempt,
-                    provider="openai",
-                    model=self.profile.model,
-                    context_hash=request.context_hash,
-                    redacted_request={
-                        "request_id": request.request_id,
-                        "branch_id": request.branch_id,
-                        "context_hash": request.context_hash,
-                    },
-                    raw_response=self._raw_response(response),
-                    usage=self._usage(response),
-                    latency_ms=int((time.perf_counter() - started) * 1_000),
-                    status="succeeded",
-                )
-                if record_raw is not None:
-                    record_raw(record)
-                return DirectorPlanCandidate.model_validate(getattr(response, "output_parsed", None))
-            except Exception as error:
-                last_error = error
-                if record_raw is not None:
-                    record_raw(LLMRecord(
-                        call_id=new_id("llm"),
-                        request_id=request.request_id,
-                        agent_id="scenario_director",
-                        attempt=attempt,
-                        provider="openai",
-                        model=self.profile.model,
-                        context_hash=request.context_hash,
-                        redacted_request={
-                            "request_id": request.request_id,
-                            "branch_id": request.branch_id,
-                            "context_hash": request.context_hash,
-                        },
-                        latency_ms=int((time.perf_counter() - started) * 1_000),
-                        status="failed",
-                        error_code="provider_or_schema_error",
-                        raw_response={"error": self._safe_error(error)},
-                    ))
-        raise ValidationError(f"OpenAI Scenario Director failed: {self._safe_error(last_error or RuntimeError('unknown error'))}")
+        return await self._create_typed(
+            request_id=request.request_id,
+            agent_id="scenario_director",
+            context_hash=request.context_hash,
+            instructions=DIRECTOR_INSTRUCTIONS,
+            payload={
+                "user_intent": request.user_intent,
+                "current_sim_time_us": request.current_sim_time_us,
+                "requested_effective_time_us": request.requested_effective_time_us,
+                "allowed_effect_types": request.allowed_effect_types,
+                "world_context": request.world_context,
+                "explicitly_authorized_private_context": request.private_context,
+            },
+            output_type=DirectorPlanCandidate,
+            operation="Scenario Director",
+            redacted_request={
+                "request_id": request.request_id,
+                "branch_id": request.branch_id,
+                "context_hash": request.context_hash,
+            },
+            record_raw=record_raw,
+        )
 
     async def interpret_agent_configuration(
         self,
@@ -330,74 +391,22 @@ class OpenAIProviderAdapter:
         *,
         record_raw: Callable[[LLMRecord], None] | None = None,
     ) -> AgentConfigurationInterpretationCandidate:
-        client = self._client_or_create()
-        payload = {
-            "user_intent": request.user_intent,
-            "allowed_archetypes": request.allowed_archetypes,
-            "allowed_capabilities": request.allowed_capabilities,
-            "allowed_persona_fields": request.allowed_persona_fields,
-        }
-        last_error: Exception | None = None
-        for attempt in range(1, self.profile.max_retries + 2):
-            started = time.perf_counter()
-            try:
-                response = await client.responses.parse(
-                    model=self.profile.model,
-                    input=[
-                        {"role": "developer", "content": AGENT_CONFIGURATION_INSTRUCTIONS},
-                        {"role": "user", "content": json.dumps(payload, ensure_ascii=False, separators=(",", ":"))},
-                    ],
-                    text_format=AgentConfigurationInterpretationCandidate,
-                    max_output_tokens=self.profile.max_output_tokens,
-                    store=False,
-                )
-                record = LLMRecord(
-                    call_id=new_id("llm"),
-                    request_id=request.request_id,
-                    agent_id="agent_configuration_interpreter",
-                    attempt=attempt,
-                    provider="openai",
-                    model=self.profile.model,
-                    context_hash=request.context_hash,
-                    redacted_request={"request_id": request.request_id, "context_hash": request.context_hash},
-                    raw_response=self._raw_response(response),
-                    usage=self._usage(response),
-                    latency_ms=int((time.perf_counter() - started) * 1_000),
-                    status="succeeded",
-                )
-                if record_raw is not None:
-                    record_raw(record)
-                return AgentConfigurationInterpretationCandidate.model_validate(
-                    getattr(response, "output_parsed", None)
-                )
-            except Exception as error:
-                last_error = error
-                if record_raw is not None:
-                    record_raw(LLMRecord(
-                        call_id=new_id("llm"),
-                        request_id=request.request_id,
-                        agent_id="agent_configuration_interpreter",
-                        attempt=attempt,
-                        provider="openai",
-                        model=self.profile.model,
-                        context_hash=request.context_hash,
-                        redacted_request={"request_id": request.request_id, "context_hash": request.context_hash},
-                        latency_ms=int((time.perf_counter() - started) * 1_000),
-                        status="failed",
-                        error_code="provider_or_schema_error",
-                        raw_response={"error": self._safe_error(error)},
-                    ))
-        raise ValidationError(f"OpenAI Agent configuration interpretation failed: {self._safe_error(last_error or RuntimeError('unknown error'))}")
-
-    @staticmethod
-    def _usage(response: object) -> dict[str, int]:
-        usage = getattr(response, "usage", None)
-        if usage is None:
-            return {}
-        if hasattr(usage, "model_dump"):
-            raw = usage.model_dump()
-        elif isinstance(usage, dict):
-            raw = usage
-        else:
-            return {}
-        return {str(key): int(value) for key, value in raw.items() if isinstance(value, int) and not isinstance(value, bool)}
+        return await self._create_typed(
+            request_id=request.request_id,
+            agent_id="agent_configuration_interpreter",
+            context_hash=request.context_hash,
+            instructions=AGENT_CONFIGURATION_INSTRUCTIONS,
+            payload={
+                "user_intent": request.user_intent,
+                "allowed_archetypes": request.allowed_archetypes,
+                "allowed_capabilities": request.allowed_capabilities,
+                "allowed_persona_fields": request.allowed_persona_fields,
+            },
+            output_type=AgentConfigurationInterpretationCandidate,
+            operation="Agent configuration interpretation",
+            redacted_request={
+                "request_id": request.request_id,
+                "context_hash": request.context_hash,
+            },
+            record_raw=record_raw,
+        )

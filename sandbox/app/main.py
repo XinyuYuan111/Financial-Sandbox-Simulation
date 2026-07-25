@@ -14,7 +14,7 @@ from sandbox.agents.providers.deepseek import DeepSeekProviderAdapter
 from sandbox.agents.providers.openai import OpenAIProviderAdapter
 from sandbox.api.routes import router
 from sandbox.app.settings import Settings
-from sandbox.control.initialization import FinalizedSnapshotFileProvider, Initializer
+from sandbox.control.initialization import FinalizedSnapshotFileProvider, Initializer, InjectiveHolderDataProvider
 from sandbox.control.run_manager import RunManager
 from sandbox.core.errors import ConflictError, SandboxError
 from sandbox.store.archive import ArchiveService
@@ -57,12 +57,44 @@ async def lifespan(app: FastAPI):
             path=settings.holder_snapshot_path,
             chain_id=settings.holder_snapshot_chain_id,
         )
+    if settings.injective_token_address is not None:
+        holder_providers["injective"] = InjectiveHolderDataProvider(
+            chain_id="injective",
+            token_address=settings.injective_token_address,
+            rpc_url=settings.injective_rpc_url,
+            start_block=settings.injective_holder_start_block,
+        )
     initializer = Initializer(holder_providers=holder_providers, llm_gateway=gateway)
     app.state.settings = settings
     app.state.store = store
     app.state.llm_gateway = gateway
     app.state.manager = RunManager(store, initializer, archive_service, settings.runtime_version)
     app.state.manager.recover_interrupted_branches()
+    if settings.attestation_enabled and settings.attestation_contract_address and settings.attestation_private_key:
+        import logging
+        from sandbox.attester import InjectiveAttestationWriter
+        attestation_logger = logging.getLogger(__name__)
+        try:
+            writer = InjectiveAttestationWriter(
+                rpc_url=settings.injective_rpc_url,
+                contract_address=settings.attestation_contract_address,
+                private_key=settings.attestation_private_key,
+            )
+            preflight = writer.preflight()
+            if preflight.get("ok"):
+                app.state.manager.attestation_writer = writer
+                app.state.manager._start_attestation_worker()
+                attestation_logger.info(
+                    "Attestation writer initialized: chain_id=%s contract=%s wallet=%s",
+                    preflight.get("chain_id"), preflight.get("contract_address"),
+                    preflight.get("wallet_address"),
+                )
+            else:
+                attestation_logger.warning(
+                    "Attestation writer preflight failed: %s", preflight.get("message")
+                )
+        except Exception as exc:
+            attestation_logger.warning("Attestation writer init failed: %s", exc)
     app.state.session_token = secrets.token_urlsafe(32)
     yield
     app.state.manager.close()
@@ -81,7 +113,11 @@ async def local_session(request: Request, call_next):
     if origin and request.method not in {"GET", "HEAD", "OPTIONS"}:
         parsed_origin = urlsplit(origin)
         expected_origin = f"{request.url.scheme}://{request.headers.get('host', '')}"
-        if parsed_origin.scheme not in {"http", "https"} or origin.rstrip("/") != expected_origin.rstrip("/"):
+        normalized_origin = origin.rstrip("/")
+        allowed_origins = getattr(request.app.state, "settings", settings).cors_allowed_origins
+        same_origin = normalized_origin == expected_origin.rstrip("/")
+        explicitly_allowed = normalized_origin in allowed_origins
+        if parsed_origin.scheme not in {"http", "https"} or (not same_origin and not explicitly_allowed):
             return JSONResponse(status_code=403, content={"error_code": "CROSS_ORIGIN_REJECTED", "message": "state-changing requests must be same-origin", "field_path": None, "retryable": False, "command_id": None})
     token = getattr(request.app.state, "session_token", None)
     supplied = request.cookies.get("sandbox_session")

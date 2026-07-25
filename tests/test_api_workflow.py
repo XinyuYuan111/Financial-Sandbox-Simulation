@@ -249,5 +249,57 @@ class ApiWorkflowTests(unittest.TestCase):
         self.assertEqual(confirmed.status_code, 201)
 
 
+    def test_post_from_allowed_origin_is_not_rejected(self) -> None:
+        """POST with Origin matching cors_allowed_origins must not receive CROSS_ORIGIN_REJECTED."""
+        app_main.settings = Settings(
+            data_dir=Path(self.temp.name),
+            database_path=Path(self.temp.name) / "sandbox.db",
+            frontend_dist=Path(__file__).resolve().parents[1] / "frontend" / "dist",
+            archive_dir=Path(self.temp.name) / "archives",
+            cors_allowed_origins=frozenset({"http://localhost:5173"}),
+        )
+        # Recreate client with updated settings
+        self.client_context.__exit__(None, None, None)
+        self.client_context = TestClient(app_main.app)
+        self.client = self.client_context.__enter__()
+
+        response = self.client.post(
+            "/api/v1/scenarios",
+            json={},
+            headers={"Origin": "http://localhost:5173"},
+        )
+        self.assertNotEqual(
+            response.json().get("error_code"),
+            "CROSS_ORIGIN_REJECTED",
+            "Allowed origin must not be rejected",
+        )
+
+    def test_post_from_unknown_origin_is_rejected(self) -> None:
+        """POST with Origin not in cors_allowed_origins must receive CROSS_ORIGIN_REJECTED."""
+        response = self.client.post(
+            "/api/v1/scenarios",
+            json={},
+            headers={"Origin": "http://evil.example.com"},
+        )
+        self.assertEqual(response.status_code, 403)
+        self.assertEqual(response.json()["error_code"], "CROSS_ORIGIN_REJECTED")
+
+    def test_post_without_origin_header_is_allowed(self) -> None:
+        """POST without Origin header (same-origin browser request) must not be rejected."""
+        response = self.client.post("/api/v1/scenarios", json={})
+        self.assertNotEqual(
+            response.json().get("error_code"),
+            "CROSS_ORIGIN_REJECTED",
+        )
+
+    def test_get_request_with_foreign_origin_is_not_checked(self) -> None:
+        """GET requests are exempt from the same-origin check regardless of Origin header."""
+        response = self.client.get(
+            "/api/v1/status",
+            headers={"Origin": "http://evil.example.com"},
+        )
+        self.assertEqual(response.status_code, 200)
+
+
 if __name__ == "__main__":
     unittest.main()

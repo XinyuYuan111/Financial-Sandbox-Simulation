@@ -180,10 +180,45 @@ CREATE INDEX IF NOT EXISTS idx_planning_results_pending
 """
 
 
+ATTESTATION_V0_1_MIGRATION = """
+CREATE TABLE IF NOT EXISTS attestations (
+  run_id TEXT PRIMARY KEY,
+  branch_id TEXT NOT NULL,
+  world_state_hash TEXT NOT NULL,
+  tx_hash TEXT,
+  block_number INTEGER,
+  status TEXT DEFAULT 'pending',
+  error_message TEXT,
+  created_at TEXT DEFAULT CURRENT_TIMESTAMP
+);
+"""
+
+
+CHECKPOINT_ATTESTATION_V0_1_MIGRATION = """
+CREATE TABLE IF NOT EXISTS checkpoint_attestations (
+  checkpoint_id TEXT PRIMARY KEY REFERENCES snapshots(checkpoint_id),
+  run_id TEXT NOT NULL,
+  branch_id TEXT NOT NULL,
+  checkpoint_hash TEXT NOT NULL,
+  archive_hash TEXT,
+  archive_path TEXT,
+  tx_hash TEXT,
+  block_number INTEGER,
+  status TEXT DEFAULT 'pending',
+  error_message TEXT,
+  created_at TEXT DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_ckpt_attestations_run ON checkpoint_attestations(run_id);
+CREATE INDEX IF NOT EXISTS idx_ckpt_attestations_status ON checkpoint_attestations(status);
+"""
+
+
 MIGRATIONS = (
     ("0001_agent_v0_1", AGENT_V0_1_MIGRATION),
     ("0002_intervention_v0_1", INTERVENTION_V0_1_MIGRATION),
     ("0003_deferred_planning_result", DEFERRED_PLANNING_RESULT_MIGRATION),
+    ("0004_attestation_v0_1", ATTESTATION_V0_1_MIGRATION),
+    ("0005_checkpoint_attestation_v0_1", CHECKPOINT_ATTESTATION_V0_1_MIGRATION),
 )
 
 

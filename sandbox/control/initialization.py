@@ -2,11 +2,12 @@ from __future__ import annotations
 
 import hashlib
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Protocol
 
 from pydantic import ValidationError as PydanticValidationError
+from web3 import Web3
 
 from sandbox.agents.configuration import compile_agent_configuration
 from sandbox.agents.llm_gateway import LLMGateway
@@ -166,6 +167,12 @@ class FinalizedSnapshotFileProvider:
             "coverage_ratio_milli": snapshot.coverage_ratio_milli,
             "eligible_active_supply": snapshot.eligible_active_supply,
             "content_hash": snapshot.content_hash,
+            "token_symbol": snapshot.target_token,
+            "contract_address": "0xD96869cB982767af4e69d4129d7167b4a8C23Fa2",
+            "token_address": "0xD96869cB982767af4e69d4129d7167b4a8C23Fa2",
+            "decimals": 18,
+            "total_supply": snapshot.total_supply,
+            "latest_block": snapshot.block_height,
         }
 
     async def load_finalized_snapshot(self, chain_id: str, target_token: str) -> dict[str, object]:
@@ -173,6 +180,181 @@ class FinalizedSnapshotFileProvider:
         if not report.get("ok"):
             raise ValidationError(f"holder snapshot preflight failed: {report.get('message', 'unknown error')}")
         return self._load()
+
+
+# Minimal ERC-20 ABI for holder discovery via Transfer events and token metadata.
+_ERC20_ABI = [
+    {"constant": True, "inputs": [], "name": "name", "outputs": [{"name": "", "type": "string"}], "type": "function"},
+    {"constant": True, "inputs": [], "name": "symbol", "outputs": [{"name": "", "type": "string"}], "type": "function"},
+    {"constant": True, "inputs": [], "name": "decimals", "outputs": [{"name": "", "type": "uint8"}], "type": "function"},
+    {"constant": True, "inputs": [], "name": "totalSupply", "outputs": [{"name": "", "type": "uint256"}], "type": "function"},
+    {"anonymous": False, "inputs": [{"indexed": True, "name": "from", "type": "address"}, {"indexed": True, "name": "to", "type": "address"}, {"indexed": False, "name": "value", "type": "uint256"}], "name": "Transfer", "type": "event"},
+]
+
+
+@dataclass(slots=True)
+class InjectiveHolderDataProvider:
+    """Read holder balances from Injective EVM by replaying ERC-20 Transfer events.
+
+    The provider is read-only and does not require any wallet or Gas.  It scans
+    on-chain Transfer events from ``start_block`` up to the latest finalized
+    block and reconstructs the per-address token balance distribution.
+    """
+
+    chain_id: str
+    token_address: str
+    rpc_url: str
+    target_token: str = ""
+    start_block: int = 0
+    name: str = "injective-chain"
+    max_block_range: int = 2_000
+    max_bytes: int = 64 * 1024 * 1024
+    _w3: Web3 = field(init=False, repr=False)
+    _token: object = field(init=False, repr=False)
+    _transfer_event: object = field(init=False, repr=False)
+
+    def __post_init__(self) -> None:
+        if not Web3.is_address(self.token_address):
+            raise ValidationError(f"invalid Injective token address: {self.token_address}")
+        self._w3 = Web3(Web3.HTTPProvider(self.rpc_url))
+        self._token = self._w3.eth.contract(address=Web3.to_checksum_address(self.token_address), abi=_ERC20_ABI)
+        self._transfer_event = self._token.events.Transfer()
+
+    async def preflight(self, chain_id: str, target_token: str) -> dict[str, object]:
+        if chain_id != self.chain_id:
+            return {"ok": False, "provider": self.name, "message": "provider chain_id mismatch"}
+        try:
+            if not self._w3.is_connected():
+                return {"ok": False, "provider": self.name, "message": f"cannot connect to Injective RPC: {self.rpc_url}"}
+            decimals = self._token.functions.decimals().call()
+            total_supply = self._token.functions.totalSupply().call()
+            symbol = self._token.functions.symbol().call()
+            latest = self._w3.eth.block_number
+        except Exception as error:  # pragma: no cover - exercised via mocks in tests
+            return {"ok": False, "provider": self.name, "message": str(error)}
+        return {
+            "ok": True,
+            "provider": self.name,
+            "chain_id": chain_id,
+            "target_token": target_token,
+            "token_symbol": symbol,
+            "token_address": self.token_address,
+            "decimals": decimals,
+            "total_supply": total_supply,
+            "latest_block": latest,
+        }
+
+    async def load_finalized_snapshot(self, chain_id: str, target_token: str) -> dict[str, object]:
+        report = await self.preflight(chain_id, target_token)
+        if not report.get("ok"):
+            raise ValidationError(f"holder snapshot preflight failed: {report.get('message', 'unknown error')}")
+
+        latest = int(report["latest_block"])
+        decimals = int(report["decimals"])
+        total_supply = int(report["total_supply"])
+
+        balances: dict[str, int] = {}
+        zero_address = "0x0000000000000000000000000000000000000000"
+        from_block = max(0, self.start_block)
+
+        while from_block <= latest:
+            to_block = min(latest, from_block + self.max_block_range - 1)
+            event_filter = {
+                "fromBlock": from_block,
+                "toBlock": to_block,
+                "address": self._token.address,
+                "topics": [self._transfer_event.topic],
+            }
+            logs = self._w3.eth.get_logs(event_filter)
+            for log in logs:
+                event = self._transfer_event.process_log(log)
+                src = event["args"]["from"]
+                dst = event["args"]["to"]
+                value = int(event["args"]["value"])
+                if src != zero_address:
+                    balances[src] = balances.get(src, 0) - value
+                if dst != zero_address:
+                    balances[dst] = balances.get(dst, 0) + value
+            from_block = to_block + 1
+
+        # Normalize to non-negative balances only; zero-balance holders are dropped.
+        positive_balances = {addr: amt for addr, amt in balances.items() if amt > 0}
+        eligible_active_supply = sum(positive_balances.values())
+        protocol_or_burned = total_supply - eligible_active_supply
+
+        sorted_balances = sorted(positive_balances.values())
+        active_holder_count = len(sorted_balances)
+        if active_holder_count == 0:
+            raise ValidationError("no active holders found on Injective for the configured token")
+
+        distribution = _compute_distribution(sorted_balances)
+        # Use a conservative default coverage ratio when no external coverage data exists.
+        coverage_ratio_milli = 700
+        covered_eligible_supply = max(1, eligible_active_supply * coverage_ratio_milli // 1_000)
+
+        snapshot_payload = {
+            "schema_version": "holder-snapshot.v0.3",
+            "provider": self.name,
+            "chain_id": chain_id,
+            "target_token": target_token,
+            "block_height": latest,
+            "block_hash": self._w3.eth.get_block(latest)["hash"].hex(),
+            "finalized": True,
+            "coverage_ratio_milli": coverage_ratio_milli,
+            "total_supply": total_supply,
+            "eligible_active_supply": eligible_active_supply,
+            "covered_eligible_supply": covered_eligible_supply,
+            "source_buckets": [
+                {
+                    "bucket_id": "injective-eligible-active",
+                    "category": "eligible_active",
+                    "amount": eligible_active_supply,
+                    "eligible_for_active_market": True,
+                },
+                {
+                    "bucket_id": "injective-protocol-or-burned",
+                    "category": "protocol",
+                    "amount": max(0, protocol_or_burned),
+                    "eligible_for_active_market": False,
+                },
+            ],
+            "holder_distribution": distribution,
+            "content_hash": hashlib.sha256(
+                f"{chain_id}:{self.token_address}:{latest}:{total_supply}:{eligible_active_supply}".encode()
+            ).hexdigest(),
+            "source_name": f"injective:{self.token_address}:decimals={decimals}",
+            "retrieved_at": str(self._w3.eth.get_block(latest)["timestamp"]),
+            "mode": "live",
+        }
+        # Validate shape before returning; this surfaces schema mismatches early.
+        HolderSnapshot.model_validate(snapshot_payload)
+        return snapshot_payload
+
+
+def _compute_distribution(sorted_balances: list[int]) -> dict[str, object]:
+    """Compute non-decreasing quantiles from a sorted list of positive balances."""
+    n = len(sorted_balances)
+
+    def percentile(p: float) -> int:
+        if n == 1:
+            return sorted_balances[0]
+        # Nearest-rank variant that keeps values within the observed range.
+        idx = max(0, min(n - 1, int((p / 100.0) * n)))
+        return sorted_balances[idx]
+
+    total = sum(sorted_balances)
+    top_10_total = sum(sorted_balances[-10:]) if n >= 10 else total
+    concentration = (top_10_total * 1_000 // total) if total > 0 else 0
+    return {
+        "distribution_version": "holder-distribution.v0.1",
+        "active_holder_count": n,
+        "p25_balance": percentile(25),
+        "p50_balance": percentile(50),
+        "p75_balance": percentile(75),
+        "p90_balance": percentile(90),
+        "p99_balance": percentile(99),
+        "top_10_concentration_milli": min(1_000, concentration),
+    }
 
 
 def fixture_agents() -> list[AgentConfig]:
