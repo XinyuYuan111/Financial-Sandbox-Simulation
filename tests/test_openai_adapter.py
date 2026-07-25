@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import unittest
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -17,25 +18,55 @@ from sandbox.contracts.intervention import DirectorPlanCandidate, DirectorProvid
 from sandbox.contracts.planning import PlanningProviderRequest, PlanningResultCandidate
 
 
-class FakeResponse:
+class _FakeMessage:
+    def __init__(self, content: str) -> None:
+        self.content = content
+        self.role = "assistant"
+
+
+class _FakeChoice:
+    def __init__(self, content: str) -> None:
+        self.message = _FakeMessage(content)
+        self.finish_reason = "stop"
+
+
+class _FakeUsage:
+    def __init__(self) -> None:
+        self.prompt_tokens = 10
+        self.completion_tokens = 5
+        self.total_tokens = 15
+
+    def model_dump(self) -> dict[str, int]:
+        return {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15}
+
+
+class FakeCompletion:
     def __init__(self, parsed: object, response_id: str = "resp_test") -> None:
-        self.output_parsed = parsed
+        self._parsed = parsed
         self.id = response_id
-        self.usage = {"input_tokens": 10, "output_tokens": 5}
+        content = parsed.model_dump_json()
+        self.choices = [_FakeChoice(content)]
+        self.usage = _FakeUsage()
 
     def model_dump(self, mode: str = "python") -> dict[str, object]:
-        return {"id": self.id, "output": "structured"}
+        return {"id": self.id, "choices": [{"message": {"content": self._parsed.model_dump_json()}}]}
 
 
-class FakeResponses:
+class FakeChatCompletions:
     def __init__(self) -> None:
         self.calls: list[dict[str, object]] = []
 
-    async def parse(self, **kwargs: object) -> FakeResponse:
+    async def create(self, **kwargs: object) -> FakeCompletion:
         self.calls.append(kwargs)
-        text_format = kwargs["text_format"]
-        if getattr(text_format, "__name__", "") == "DirectorPlanCandidate":
-            return FakeResponse(DirectorPlanCandidate(
+        # Inspect system message to decide which type to return
+        messages = kwargs.get("messages", [])
+        system_content = ""
+        for msg in messages:
+            if isinstance(msg, dict) and msg.get("role") == "system":
+                system_content = str(msg.get("content", ""))
+                break
+        if "Scenario Director" in system_content or "command-scoped" in system_content:
+            return FakeCompletion(DirectorPlanCandidate(
                 stages=[{
                     "stage_id": "stage-director",
                     "effective_sim_time_us": 0,
@@ -49,7 +80,7 @@ class FakeResponses:
                 }],
                 rationale="Typed venue halt.",
             ))
-        return FakeResponse(
+        return FakeCompletion(
             PlanningResultCandidate(
                 based_on_strategy_revision=0,
                 valid_for_us=1_000_000,
@@ -67,14 +98,19 @@ class FakeResponses:
         )
 
 
+class FakeChat:
+    def __init__(self) -> None:
+        self.completions = FakeChatCompletions()
+
+
 class OpenAIAdapterTests(unittest.IsolatedAsyncioTestCase):
-    async def test_preflight_and_plan_use_structured_responses_without_storing(self) -> None:
-        responses = FakeResponses()
+    async def test_preflight_and_plan_use_chat_completions_with_json_object(self) -> None:
+        chat = FakeChat()
         adapter = OpenAIProviderAdapter(
             api_key="secret-key-value",
             model="test-model",
             max_retries=0,
-            client=SimpleNamespace(responses=responses),
+            client=SimpleNamespace(chat=chat),
         )
         report = await adapter.preflight()
         self.assertTrue(report["ok"])
@@ -96,7 +132,9 @@ class OpenAIAdapterTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(records), 1)
         self.assertNotIn("secret-key-value", str(records[0].model_dump()))
         self.assertNotIn("untrusted", str(records[0].redacted_request))
-        self.assertTrue(all(call["store"] is False for call in responses.calls))
+        self.assertTrue(
+            all(call.get("response_format", {}).get("type") == "json_object" for call in chat.completions.calls)
+        )
 
     async def test_missing_key_is_reported_without_exposing_a_secret(self) -> None:
         adapter = OpenAIProviderAdapter(api_key=None, model="test-model")
@@ -135,12 +173,12 @@ class OpenAIAdapterTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(settings.openai_base_url, "https://v1.codx.qzz.io")
 
     async def test_scenario_director_returns_only_a_typed_candidate_and_redacts_context(self) -> None:
-        responses = FakeResponses()
+        chat = FakeChat()
         adapter = OpenAIProviderAdapter(
             api_key="secret-key-value",
             model="test-model",
             max_retries=0,
-            client=SimpleNamespace(responses=responses),
+            client=SimpleNamespace(chat=chat),
         )
         records = []
         candidate = await adapter.create_intervention_plan(
@@ -161,7 +199,6 @@ class OpenAIAdapterTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(records[0].agent_id, "scenario_director")
         self.assertNotIn("Halt the market", str(records[0].redacted_request))
         self.assertNotIn("secret-key-value", str(records[0].model_dump()))
-        self.assertTrue(responses.calls[-1]["store"] is False)
 
 
 if __name__ == "__main__":

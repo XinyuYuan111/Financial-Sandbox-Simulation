@@ -88,7 +88,11 @@ async def local_session(request: Request, call_next):
     if origin and request.method not in {"GET", "HEAD", "OPTIONS"}:
         parsed_origin = urlsplit(origin)
         expected_origin = f"{request.url.scheme}://{request.headers.get('host', '')}"
-        if parsed_origin.scheme not in {"http", "https"} or origin.rstrip("/") != expected_origin.rstrip("/"):
+        normalized_origin = origin.rstrip("/")
+        allowed_origins = getattr(request.app.state, "settings", settings).cors_allowed_origins
+        same_origin = normalized_origin == expected_origin.rstrip("/")
+        explicitly_allowed = normalized_origin in allowed_origins
+        if parsed_origin.scheme not in {"http", "https"} or (not same_origin and not explicitly_allowed):
             return JSONResponse(status_code=403, content={"error_code": "CROSS_ORIGIN_REJECTED", "message": "state-changing requests must be same-origin", "field_path": None, "retryable": False, "command_id": None})
     token = getattr(request.app.state, "session_token", None)
     supplied = request.cookies.get("sandbox_session")

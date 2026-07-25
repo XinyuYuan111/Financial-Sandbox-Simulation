@@ -235,8 +235,8 @@ export function QuickStartPage({ onRun, embedded = false }: { onRun: (run: Run) 
       </> : <span className="chain-status-loading">{chainPreflightLoading ? <LoaderCircle className="spin" size={13} /> : null}读取链上数据源…</span>}
     </div> : null}
     {error ? <ErrorBanner message={error} onClose={() => setError(null)} /> : null}
-    <div className="quickstart-grid">
-      <section className="setup-panel">
+    <div className="quickstart-grid anim-fade-in-up">
+      <section className="setup-panel glass-card">
         <div className="section-title"><div><h2>运行配置</h2><p>framework-alpha · agent-definition.v0.2</p></div><Database size={19} /></div>
         <label>实验名称<input value={name} maxLength={128} onChange={event => { setName(event.target.value); invalidate() }} /></label>
         <div className="field-group"><span>运行模式</span><div className="segmented three">
@@ -308,7 +308,7 @@ export function QuickStartPage({ onRun, embedded = false }: { onRun: (run: Run) 
         <button className="primary-button wide" onClick={resolve} disabled={resolveDisabled}>{busy ? <LoaderCircle className="spin" size={17} /> : <RefreshCw size={17} />}解析初始状态</button>
       </section>
 
-      <section className="preview-panel">
+      <section className="preview-panel glass-card">
         <div className="section-title"><div><h2>解析预览</h2><p>{preview?.preset_version ?? '等待配置确认'}</p></div>{preview ? <CheckCircle2 size={19} /> : <Database size={19} />}</div>
         {preview ? <>
           <div className="fact-grid"><div><span>显式 Agent</span><strong>{preview.agent_definitions.length}</strong></div><div><span>Eligible Active</span><strong>{formatInteger(preview.chain_snapshot.eligible_active_supply)}</strong></div><div><span>Token 总量</span><strong>{formatInteger(preview.total_supply[preview.market.base_asset])}</strong></div><div><span>Active USDx</span><strong>{formatInteger(preview.total_supply[preview.market.quote_asset])}</strong></div></div>
