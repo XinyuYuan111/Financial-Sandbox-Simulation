@@ -14,7 +14,7 @@ from sandbox.agents.providers.deepseek import DeepSeekProviderAdapter
 from sandbox.agents.providers.openai import OpenAIProviderAdapter
 from sandbox.api.routes import router
 from sandbox.app.settings import Settings
-from sandbox.control.initialization import FinalizedSnapshotFileProvider, Initializer
+from sandbox.control.initialization import FinalizedSnapshotFileProvider, Initializer, InjectiveHolderDataProvider
 from sandbox.control.run_manager import RunManager
 from sandbox.core.errors import ConflictError, SandboxError
 from sandbox.store.archive import ArchiveService
@@ -56,6 +56,13 @@ async def lifespan(app: FastAPI):
         holder_providers[settings.holder_snapshot_chain_id] = FinalizedSnapshotFileProvider(
             path=settings.holder_snapshot_path,
             chain_id=settings.holder_snapshot_chain_id,
+        )
+    if settings.injective_token_address is not None:
+        holder_providers["injective"] = InjectiveHolderDataProvider(
+            chain_id="injective",
+            token_address=settings.injective_token_address,
+            rpc_url=settings.injective_rpc_url,
+            start_block=settings.injective_holder_start_block,
         )
     initializer = Initializer(holder_providers=holder_providers, llm_gateway=gateway)
     app.state.settings = settings

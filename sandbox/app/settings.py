@@ -29,6 +29,9 @@ class Settings:
     deepseek_max_output_tokens: int = 4_096
     holder_snapshot_path: Path | None = None
     holder_snapshot_chain_id: str = "ethereum"
+    injective_rpc_url: str = "https://k8s.testnet.json-rpc.injective.network/"
+    injective_token_address: str | None = None
+    injective_holder_start_block: int = 0
 
     @classmethod
     def from_environment(cls) -> "Settings":
@@ -57,6 +60,9 @@ class Settings:
             deepseek_max_output_tokens=int(os.getenv("SANDBOX_DEEPSEEK_MAX_OUTPUT_TOKENS", "4096")),
             holder_snapshot_path=Path(os.environ["SANDBOX_HOLDER_SNAPSHOT_PATH"]).resolve() if os.getenv("SANDBOX_HOLDER_SNAPSHOT_PATH") else None,
             holder_snapshot_chain_id=os.getenv("SANDBOX_HOLDER_CHAIN_ID", "ethereum"),
+            injective_rpc_url=os.getenv("SANDBOX_INJECTIVE_RPC_URL", "https://k8s.testnet.json-rpc.injective.network/").strip().rstrip("/"),
+            injective_token_address=(os.getenv("SANDBOX_INJECTIVE_TOKEN_ADDRESS") or "").strip() or None,
+            injective_holder_start_block=int(os.getenv("SANDBOX_INJECTIVE_HOLDER_START_BLOCK", "0")),
         )
 
     def ensure_directories(self) -> None:
