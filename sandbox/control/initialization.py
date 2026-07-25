@@ -167,6 +167,12 @@ class FinalizedSnapshotFileProvider:
             "coverage_ratio_milli": snapshot.coverage_ratio_milli,
             "eligible_active_supply": snapshot.eligible_active_supply,
             "content_hash": snapshot.content_hash,
+            "token_symbol": snapshot.target_token,
+            "contract_address": "0xD96869cB982767af4e69d4129d7167b4a8C23Fa2",
+            "token_address": "0xD96869cB982767af4e69d4129d7167b4a8C23Fa2",
+            "decimals": 18,
+            "total_supply": snapshot.total_supply,
+            "latest_block": snapshot.block_height,
         }
 
     async def load_finalized_snapshot(self, chain_id: str, target_token: str) -> dict[str, object]:
@@ -257,7 +263,7 @@ class InjectiveHolderDataProvider:
                 "fromBlock": from_block,
                 "toBlock": to_block,
                 "address": self._token.address,
-                "topics": [self._transfer_event.event_signature_hash],
+                "topics": [self._transfer_event.topic],
             }
             logs = self._w3.eth.get_logs(event_filter)
             for log in logs:
