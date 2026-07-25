@@ -139,8 +139,31 @@ class SimulationWorld:
             "created_sim_time_us": 0,
         }
         world.ledger.open_account(background.sector_id, [base_asset, quote_asset], reason="initial_background_account")
-        world.ledger.transfer_free(genesis_account, background.sector_id, base_asset, background.token_balance, reason="initial_allocation")
-        world.ledger.transfer_free(genesis_account, background.sector_id, quote_asset, background.usdx_balance, reason="initial_allocation")
+        world.ledger.open_account(background.flow_account_id, [base_asset, quote_asset], reason="initial_background_flow_account")
+        flow_token = background.token_balance * background.flow_inventory_fraction_ppm // 1_000_000
+        flow_usdx = background.usdx_balance * background.flow_inventory_fraction_ppm // 1_000_000
+        world.ledger.transfer_free(
+            genesis_account,
+            background.sector_id,
+            base_asset,
+            background.token_balance - flow_token,
+            reason="initial_allocation",
+        )
+        world.ledger.transfer_free(
+            genesis_account,
+            background.sector_id,
+            quote_asset,
+            background.usdx_balance - flow_usdx,
+            reason="initial_allocation",
+        )
+        world.ledger.transfer_free(genesis_account, background.flow_account_id, base_asset, flow_token, reason="initial_allocation")
+        world.ledger.transfer_free(genesis_account, background.flow_account_id, quote_asset, flow_usdx, reason="initial_allocation")
+        world.world_entities[background.flow_account_id] = {
+            "entity_id": background.flow_account_id,
+            "entity_type": "background_order_flow",
+            "display_name": background.flow_account_id,
+            "created_sim_time_us": 0,
+        }
         for account in resolved.other_explicit_accounts:
             world.ledger.open_account(account.account_id, [base_asset, quote_asset], reason="initial_explicit_account")
             world.ledger.transfer_free(genesis_account, account.account_id, base_asset, account.token_amount, reason="initial_allocation")
@@ -208,7 +231,11 @@ class SimulationWorld:
             raise ValidationError("branch_id is required")
         agent = world.agents.get(action.agent_id)
         background_id = str(world.background_market_sector.get("sector_id", "background"))
-        if agent is None and action.agent_id != background_id:
+        background_actor_ids = {
+            background_id,
+            str(world.background_market_sector.get("flow_account_id", "background_order_flow")),
+        }
+        if agent is None and action.agent_id not in background_actor_ids:
             raise ValidationError("unknown agent")
         capabilities = agent.capabilities if agent is not None else ["market.trade", "information.read"]
         if action.expected_execution_time_us < action.submitted_sim_time_us:
@@ -725,6 +752,8 @@ class SimulationWorld:
             channel=str(action.payload.get("channel", "PublicFeed")),
             content=str(action.payload.get("content", "")),
             target_ids=list(action.payload.get("target_ids", [])),
+            signal_direction=action.payload.get("signal_direction"),
+            signal_confidence_milli=action.payload.get("signal_confidence_milli"),
             derived_from_info_id=str(derived_from) if derived_from is not None else None,
             information_id=deterministic_id("information", action.action_id),
             action_id=action.action_id,
@@ -744,6 +773,8 @@ class SimulationWorld:
         content: str,
         target_ids: list[str],
         information_id: str,
+        signal_direction: object = None,
+        signal_confidence_milli: object = None,
         derived_from_info_id: str | None = None,
         action_id: str | None = None,
         correlation_id: str | None = None,
@@ -755,6 +786,8 @@ class SimulationWorld:
             content=content,
             sim_time_us=self.sim_time_us,
             target_ids=target_ids,
+            signal_direction=signal_direction,
+            signal_confidence_milli=signal_confidence_milli,
             derived_from_info_id=derived_from_info_id,
             information_id=information_id,
         )
@@ -880,7 +913,16 @@ class SimulationWorld:
         bids = sorted([item for item in orders if item["side"] == "buy" and item["status"] in {"open", "partially_filled"}], key=lambda item: (-int(item["price"] or 0), int(item["submitted_seq"])))
         asks = sorted([item for item in orders if item["side"] == "sell" and item["status"] in {"open", "partially_filled"}], key=lambda item: (int(item["price"] or 0), int(item["submitted_seq"])))
         last_trade = self.clob.to_json()["trades"][-1] if self.clob.trades else None
-        return {"market_id": self.market["market_id"], "bids": bids[:20], "asks": asks[:20], "last_trade": last_trade, "trades": self.clob.to_json()["trades"][-100:]}
+        return {
+            "market_id": self.market["market_id"],
+            "base_asset": self.market["base_asset"],
+            "quote_asset": self.market["quote_asset"],
+            "price_tick": self.market["price_tick"],
+            "bids": bids[:20],
+            "asks": asks[:20],
+            "last_trade": last_trade,
+            "trades": self.clob.to_json()["trades"][-100:],
+        }
 
     def agent_projection(self, agent_id: str) -> dict[str, object]:
         agent = self.agents[agent_id]

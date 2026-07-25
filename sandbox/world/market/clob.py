@@ -94,6 +94,8 @@ class CLOB:
         for maker in self._book(opposite):
             if order.remaining <= 0:
                 break
+            if maker.agent_id == agent_id:
+                continue
             if maker.price is None:
                 continue
             if order.order_type == "limit":

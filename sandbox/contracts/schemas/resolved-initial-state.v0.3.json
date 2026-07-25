@@ -328,6 +328,11 @@
           "title": "Sector Id",
           "type": "string"
         },
+        "flow_account_id": {
+          "default": "background_order_flow",
+          "title": "Flow Account Id",
+          "type": "string"
+        },
         "token_balance": {
           "default": 0,
           "minimum": 0,
@@ -351,7 +356,7 @@
           "type": "boolean"
         },
         "participation_policy_id": {
-          "default": "background.seeded.v0.1",
+          "default": "background.seeded.v0.2",
           "title": "Participation Policy Id",
           "type": "string"
         },
@@ -387,6 +392,27 @@
           "maximum": 1000000,
           "minimum": 1,
           "title": "Quote Size Fraction Ppm",
+          "type": "integer"
+        },
+        "flow_inventory_fraction_ppm": {
+          "default": 200000,
+          "maximum": 500000,
+          "minimum": 1,
+          "title": "Flow Inventory Fraction Ppm",
+          "type": "integer"
+        },
+        "taker_probability_milli": {
+          "default": 300,
+          "maximum": 1000,
+          "minimum": 0,
+          "title": "Taker Probability Milli",
+          "type": "integer"
+        },
+        "directional_limit_probability_milli": {
+          "default": 250,
+          "maximum": 1000,
+          "minimum": 0,
+          "title": "Directional Limit Probability Milli",
           "type": "integer"
         },
         "schema_version": {

@@ -435,6 +435,7 @@ class Initializer:
         }
         reserved_account_ids = {
             background.sector_id,
+            background.flow_account_id,
             "fee_account",
             "genesis_asset_pool",
             *source_account_ids,

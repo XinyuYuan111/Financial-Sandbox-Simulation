@@ -196,6 +196,38 @@ class ProductAcceptanceTests(unittest.TestCase):
         self.assertEqual(current.ledger.total(current.market["quote_asset"]), quote_total)
         self.assertTrue(self.manager.events.verify_chain(branch_id))
 
+    def test_background_order_flow_moves_price_without_external_agent_orders(self) -> None:
+        _, branch_id = self.create_fixture()
+        initial = self.manager.branch_projection(branch_id)
+        initial_trade_count = len(initial["market"]["trades"])
+        token_total = self.manager._world(branch_id).ledger.total("TOKEN")
+        quote_total = self.manager._world(branch_id).ledger.total("USDX")
+
+        self.manager.command(branch_id, "background-flow-start", "start")
+        self.manager._runner_cancel[branch_id].set()
+        for _ in range(24):
+            self.assertTrue(self.manager._advance_background_once(branch_id))
+
+        current = self.manager.branch_projection(branch_id)
+        background_trades = [
+            trade for trade in current["market"]["trades"]
+            if {trade["buyer_id"], trade["seller_id"]} == {"background", "background_order_flow"}
+        ]
+        self.assertGreater(len(background_trades), 0)
+        self.assertGreater(len(current["market"]["trades"]), initial_trade_count)
+        self.assertGreater(len({trade["price"] for trade in background_trades}), 1)
+        samples = [
+            event for event in self.manager.events.list_events(branch_id, limit=10_000)
+            if event.event_type == "BackgroundOrderFlowSampled"
+        ]
+        self.assertTrue(samples)
+        self.assertIn("take", {event.payload["selected_kind"] for event in samples})
+        self.assertIn("directional_limit", {event.payload["selected_kind"] for event in samples})
+        world = self.manager._world(branch_id)
+        self.assertEqual(world.ledger.total("TOKEN"), token_total)
+        self.assertEqual(world.ledger.total("USDX"), quote_total)
+        self.assertTrue(self.manager.events.verify_chain(branch_id))
+
     def test_running_advances_and_pause_freezes_a_complete_boundary(self) -> None:
         _, branch_id = self.create_fixture()
         initial = self.manager.branch_projection(branch_id)

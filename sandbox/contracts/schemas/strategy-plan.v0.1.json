@@ -234,6 +234,37 @@
           "title": "Target Ids",
           "type": "array"
         },
+        "signal_direction": {
+          "anyOf": [
+            {
+              "enum": [
+                "bullish",
+                "bearish",
+                "neutral"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Signal Direction"
+        },
+        "signal_confidence_milli": {
+          "anyOf": [
+            {
+              "maximum": 1000,
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Signal Confidence Milli"
+        },
         "guard": {
           "anyOf": [
             {

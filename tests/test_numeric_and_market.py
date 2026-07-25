@@ -41,7 +41,44 @@ class NumericAndMarketTests(unittest.TestCase):
         self.assertEqual(ledger.total("USDX"), quote_before)
         self.assertEqual(ledger.balance("fee_account", "USDX"), 10)
 
+    def test_agent_cannot_match_against_its_own_resting_order(self) -> None:
+        ledger = Ledger()
+        ledger.credit("agent", "TOKEN", 100, reason="mint")
+        ledger.credit("agent", "USDX", 50_000, reason="mint")
+        ledger.credit("fee_account", "TOKEN", 0, reason="open")
+        ledger.credit("fee_account", "USDX", 0, reason="open")
+        book = CLOB()
+
+        resting, _ = book.submit(
+            agent_id="agent",
+            side="sell",
+            quantity=50,
+            order_type="limit",
+            price=100,
+            worst_price=None,
+            ledger=ledger,
+            maker_fee_bps=5,
+            taker_fee_bps=10,
+        )
+        incoming, trades = book.submit(
+            agent_id="agent",
+            side="buy",
+            quantity=50,
+            order_type="protected_market",
+            price=None,
+            worst_price=100,
+            ledger=ledger,
+            maker_fee_bps=5,
+            taker_fee_bps=10,
+        )
+
+        self.assertFalse(trades)
+        self.assertEqual(resting.status, "open")
+        self.assertEqual(resting.remaining, 50)
+        self.assertEqual(incoming.status, "cancelled")
+        self.assertEqual(ledger.balances["agent"]["TOKEN"].locked, 50)
+        self.assertEqual(ledger.balances["agent"]["USDX"].locked, 0)
+
 
 if __name__ == "__main__":
     unittest.main()
-

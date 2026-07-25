@@ -115,6 +115,8 @@ class CommunicationDirective(StrictFrozenModel):
     channel: Literal["PublicFeed", "OfficialAnnouncement", "TradingTerminal", "PrivateChannel"]
     message_payload: str = Field(min_length=1, max_length=4_000)
     target_ids: list[str] = Field(default_factory=list, max_length=64)
+    signal_direction: Literal["bullish", "bearish", "neutral"] | None = None
+    signal_confidence_milli: int | None = Field(default=None, ge=0, le=1_000)
     guard: ConditionExpr | None = None
     emission: EmissionPolicy
 
@@ -124,6 +126,8 @@ class CommunicationDirective(StrictFrozenModel):
             raise ValueError("private communication requires target_ids")
         if self.channel != "PrivateChannel" and self.target_ids:
             raise ValueError("public communication channels cannot declare target_ids")
+        if (self.signal_direction is None) != (self.signal_confidence_milli is None):
+            raise ValueError("communication signal direction and confidence must be supplied together")
         return self
 
 
@@ -257,6 +261,9 @@ class PlanningProviderRequest(StrictFrozenModel):
     context_hash: str
     based_on_strategy_revision: int = Field(default=0, ge=0)
     planner_instructions: str = Field(min_length=1, max_length=10_000)
+    capabilities: list[str] = Field(default_factory=list, max_length=32)
+    role_tags: list[str] = Field(default_factory=list, max_length=16)
+    public_identity: str = Field(default="", max_length=500)
     persona: dict[str, object]
     observation: dict[str, object]
     cognition: dict[str, object]

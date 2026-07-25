@@ -10,7 +10,14 @@ from typing import Any
 
 from sandbox.agents.strategies import FixtureStrategies
 from sandbox.agents.configuration import archetype_catalog, draft_from_interpretation
-from sandbox.agents.planning import PlanningCoordinator, fixture_candidate
+from sandbox.agents.planning import (
+    DEMO_ACTIVITY_POLICY_ID,
+    DEMO_NOOP_FALLBACK_PROBABILITY_MILLI,
+    PlanningCoordinator,
+    RulePlanner,
+    fixture_candidate,
+    sample_noop_fallback,
+)
 from sandbox.agents.runtime import AgentRuntime
 from sandbox.contracts.action import ActionContract
 from sandbox.contracts.agent import ActionReceipt, DecisionRationale, DecisionTrigger
@@ -34,6 +41,7 @@ from sandbox.control.branch_runner import BranchRunner
 from sandbox.control.scenario_director import ScenarioDirector
 from sandbox.core.errors import ConflictError, NotFoundError, SandboxError, ValidationError
 from sandbox.core.ids import deterministic_id, new_id
+from sandbox.core.numeric import ceil_basis_points
 from sandbox.core.time import SIMULATION_PLAN_HORIZON_US, SIMULATION_WALL_SECONDS_PER_MINUTE
 from sandbox.store.archive import ArchiveService
 from sandbox.store.event_store import EventStore, canonical_json, utc_now
@@ -1055,6 +1063,8 @@ class RunManager:
         sequence: int,
     ) -> ActionContract | None:
         background_id = str(world.background_market_sector.get("sector_id", "background"))
+        flow_account_id = str(world.background_market_sector.get("flow_account_id", "background_order_flow"))
+        actor_id = background_id
         grid = self._background_quote_grid(world)
         quote_size = int(world.background_market_sector.get("opening_quote_size", 0)) or self._background_quote_size(world, grid)
         if quote_size <= 0:
@@ -1088,8 +1098,9 @@ class RunManager:
         else:
             payload = {}
 
-        # Participate as a taker only when the actual top of book belongs to an
-        # explicit Agent. This prevents background self-trading.
+        # The maker account still consumes external top-of-book liquidity on a
+        # fixed cadence. The separate flow account below supplies exogenous
+        # probabilistic demand without permitting self-trades.
         if not payload and sequence % 11 == 10:
             best_bid = world.clob._book("buy")[:1]
             best_ask = world.clob._book("sell")[:1]
@@ -1109,6 +1120,130 @@ class RunManager:
                 }
             else:
                 payload = {}
+
+        if not payload and sequence % 8 != 0:
+            levels = max(1, int(world.background_market_sector.get("quote_levels", 5)))
+            for missing_side in ("buy", "sell"):
+                same_side = [order for order in open_orders if order.side == missing_side]
+                existing_prices = {int(order.price or 0) for order in same_side}
+                missing = next(
+                    (
+                        (level, price)
+                        for grid_side, level, price in grid
+                        if grid_side == missing_side and price not in existing_prices
+                    ),
+                    None,
+                )
+                if missing is not None:
+                    _, price = missing
+                    if len(same_side) >= levels:
+                        target = sorted(
+                            same_side,
+                            key=lambda order: int(order.price or 0),
+                            reverse=missing_side == "buy",
+                        )[-1]
+                        action_type = "ReplaceOrder"
+                        payload = {"order_id": target.order_id, "quantity": quote_size, "price": price}
+                    else:
+                        payload = {"side": missing_side, "quantity": quote_size, "price": price}
+                break
+
+        if not payload and world.ledger.has_owner(flow_account_id):
+            activity_value, activity_index = world.rng.random("background-order-flow.activity")
+            side_value, side_index = world.rng.random("background-order-flow.side")
+            size_value, size_index = world.rng.random("background-order-flow.size")
+            activity_milli = min(999, int(activity_value * 1_000))
+            side_milli = min(999, int(side_value * 1_000))
+            size_milli = min(999, int(size_value * 1_000))
+            taker_probability = int(world.background_market_sector.get("taker_probability_milli", 300))
+            limit_probability = int(world.background_market_sector.get("directional_limit_probability_milli", 250))
+            side = "buy" if side_milli < 500 else "sell"
+            selected_kind = "quote_maintenance"
+            target_quantity = max(1, quote_size * (250 + size_milli * 750 // 1_000) // 1_000)
+            flow_orders = [
+                order for order in world.clob.orders.values()
+                if order.agent_id == flow_account_id
+                and order.status in {"open", "partially_filled"}
+                and order.remaining > 0
+            ]
+            visible_opposite_book = [
+                order for order in world.clob._book("sell" if side == "buy" else "buy")
+                if order.agent_id != flow_account_id
+            ]
+            opposite_book = (
+                visible_opposite_book
+                if visible_opposite_book and visible_opposite_book[0].agent_id == background_id
+                else []
+            )
+
+            if activity_milli < taker_probability and opposite_book:
+                target = opposite_book[0]
+                assert target.price is not None
+                if side == "buy":
+                    free_quote = world.ledger.balance(flow_account_id, str(world.market["quote_asset"]))
+                    fee_bps = int(world.market["taker_fee_bps"])
+                    capacity = free_quote * 10_000 // max(1, target.price * (10_000 + fee_bps))
+                    while capacity > 0 and target.price * capacity + ceil_basis_points(target.price * capacity, fee_bps) > free_quote:
+                        capacity -= 1
+                else:
+                    capacity = world.ledger.balance(flow_account_id, str(world.market["base_asset"]))
+                quantity = min(target_quantity, target.remaining, capacity)
+                if quantity > 0:
+                    actor_id = flow_account_id
+                    action_type = "SubmitProtectedMarketOrder"
+                    payload = {"side": side, "quantity": quantity, "worst_price": target.price}
+                    selected_kind = "take"
+            elif activity_milli < taker_probability + limit_probability:
+                tick = int(world.market["price_tick"])
+                maker_bids = [order for order in world.clob._book("buy") if order.agent_id != flow_account_id]
+                maker_asks = [order for order in world.clob._book("sell") if order.agent_id != flow_account_id]
+                if maker_bids and maker_asks:
+                    best_bid = int(maker_bids[0].price or tick)
+                    best_ask = int(maker_asks[0].price or best_bid + tick)
+                    price = (
+                        min(best_bid + tick, best_ask - tick)
+                        if side == "buy"
+                        else max(best_ask - tick, best_bid + tick)
+                    )
+                    target = next((order for order in flow_orders if order.side == side), None)
+                    if side == "buy":
+                        free_quote = world.ledger.balance(flow_account_id, str(world.market["quote_asset"]))
+                        if target is not None:
+                            free_quote += target.locked_amount
+                        fee_bps = int(world.market["taker_fee_bps"])
+                        capacity = free_quote * 10_000 // max(1, price * (10_000 + fee_bps))
+                        while capacity > 0 and price * capacity + ceil_basis_points(price * capacity, fee_bps) > free_quote:
+                            capacity -= 1
+                    else:
+                        capacity = world.ledger.balance(flow_account_id, str(world.market["base_asset"]))
+                        if target is not None:
+                            capacity += target.locked_amount
+                    quantity = min(target_quantity, capacity)
+                    if quantity > 0:
+                        actor_id = flow_account_id
+                        if target is None:
+                            action_type = "SubmitLimitOrder"
+                            payload = {"side": side, "quantity": quantity, "price": price}
+                        else:
+                            action_type = "ReplaceOrder"
+                            payload = {"order_id": target.order_id, "quantity": quantity, "price": price}
+                        selected_kind = "directional_limit"
+
+            world.background_market_sector["pending_order_flow_sample"] = {
+                "sequence": sequence,
+                "activity_sample_milli": activity_milli,
+                "side_sample_milli": side_milli,
+                "size_sample_milli": size_milli,
+                "activity_draw_index": activity_index,
+                "side_draw_index": side_index,
+                "size_draw_index": size_index,
+                "taker_probability_milli": taker_probability,
+                "directional_limit_probability_milli": limit_probability,
+                "selected_kind": selected_kind,
+                "actor_id": actor_id,
+                "side": side,
+                "action_type": action_type if payload else None,
+            }
 
         if not payload and sequence % 8 == 0 and open_orders:
             side = "buy" if (sequence // 8) % 2 == 0 else "sell"
@@ -1142,7 +1277,7 @@ class RunManager:
         interval = int(world.background_market_sector.get("quote_refresh_interval_us", 1_000_000))
         return ActionContract(
             action_id=deterministic_id("action", world.rng.root_seed, branch_id, "background", sequence),
-            agent_id=background_id,
+            agent_id=actor_id,
             branch_id=branch_id,
             submitted_sim_time_us=world.sim_time_us,
             action_type=action_type,
@@ -1150,7 +1285,7 @@ class RunManager:
             expected_execution_time_us=world.sim_time_us + interval,
             validity_window_us=interval * 2,
             parent_observation_id=None,
-            client_command_id=f"background-policy:{sequence}",
+            client_command_id=f"background-policy:{sequence}:{actor_id}",
         )
 
     def _next_background_event_time_us(self, branch_id: str, world: SimulationWorld) -> int | None:
@@ -1244,6 +1379,7 @@ class RunManager:
             else:
                 working.background_market_sector["policy_step_limit"] = policy_limit
             action = self._next_background_action(working, branch_id, sequence)
+            sample = working.background_market_sector.pop("pending_order_flow_sample", None)
             if action is None:
                 working.background_market_sector["policy_exhausted"] = True
                 self.events.append_batch(
@@ -1263,6 +1399,17 @@ class RunManager:
                 action,
                 working,
                 int(branch["state_version"]),
+                extra_events=(
+                    [self._system_event(
+                        "BackgroundOrderFlowSampled",
+                        str(sample.get("actor_id", background_id)),
+                        dict(sample),
+                        sim_time_us=working.sim_time_us,
+                        tie=f"02-background-order-flow:{sequence}",
+                    )]
+                    if isinstance(sample, dict)
+                    else []
+                ),
             )["accepted"])
 
     def _deliver_pending_information(
@@ -1670,7 +1817,18 @@ class RunManager:
         max_requests: int,
         due_only: bool = False,
     ) -> dict[str, object]:
-        prepared: list[tuple[Any, str, PlanningProviderRequest]] = []
+        with self.store.locked():
+            initial_branch = self._branch(branch_id)
+            run_row = self.store.connection.execute(
+                "SELECT resolved_state_json FROM runs WHERE run_id=?",
+                (initial_branch["run_id"],),
+            ).fetchone()
+            scenario_mode = (
+                str(json.loads(run_row["resolved_state_json"]).get("mode", "test_fixture"))
+                if run_row is not None
+                else "test_fixture"
+            )
+        prepared: list[tuple[Any, str, PlanningProviderRequest, Any, Any, ObservationPacket, int]] = []
         selected_ids: set[str] = set()
         while len(prepared) < max_requests:
             with self.store.locked():
@@ -1728,6 +1886,9 @@ class RunManager:
                 provider_name = definition.planner_profile_id.split(".", 1)[0]
                 context = {
                     "based_on_strategy_revision": request.based_on_strategy_revision,
+                    "capabilities": definition.capability_set,
+                    "role_tags": definition.role_tags,
+                    "public_identity": definition.public_identity,
                     "persona": definition.base_persona.model_dump(mode="json"),
                     "observation": observation.model_dump(mode="json"),
                     "cognition": {
@@ -1749,12 +1910,28 @@ class RunManager:
                         f"Set based_on_strategy_revision to exactly {request.based_on_strategy_revision}. "
                         "The host stores sim_time_us in microseconds, while the UI displays each 1000000us "
                         "simulation tick as one simulation minute; use microseconds for interval and timing fields. "
-                        "Use registered trade, quote, cancel, and communication directives only when evidence, "
-                        "capabilities, and all required directive fields support them."
+                        "Map capabilities strictly: trade/cancel require market.trade; quote requires both "
+                        "market.quote and market.trade; communication requires information.publish. "
+                        "Use current free balances to keep every quantity feasible. "
+                        + (
+                            "This is an activity-focused LLM smoke run: prefer at least one bounded directive "
+                            "when a legal capability-safe action exists. An empty directive list is reserved "
+                            "for cases where no supplied capability and resource combination can act."
+                            if scenario_mode == "live_llm_smoke"
+                            else "A no-action plan remains valid when the supplied evidence or resources do not support action."
+                        )
                     ),
                     **context,
                 )
-                prepared.append((request, provider_name, provider_request))
+                prepared.append((
+                    request,
+                    provider_name,
+                    provider_request,
+                    definition,
+                    state,
+                    observation,
+                    world.rng.root_seed,
+                ))
 
         def persist_raw(record: Any) -> None:
             with self.store.locked():
@@ -1767,10 +1944,19 @@ class RunManager:
                     expected_branch_version=int(current["state_version"]),
                 )
 
-        async def execute(item: tuple[Any, str, PlanningProviderRequest]) -> tuple[PlanningResultCandidate | None, Exception | None]:
-            request, provider_name, provider_request = item
+        async def execute(
+            item: tuple[Any, str, PlanningProviderRequest, Any, Any, ObservationPacket, int],
+        ) -> tuple[PlanningResultCandidate | None, Exception | None]:
+            request, provider_name, provider_request, definition, state, observation, seed = item
             try:
-                if provider_name in {"rule", "replay"}:
+                if provider_name == "rule":
+                    candidate = await RulePlanner(seed=seed).plan(
+                        definition=definition,
+                        observation=observation,
+                        state=state,
+                        request=request,
+                    )
+                elif provider_name == "replay":
                     candidate = PlanningResultCandidate(
                         based_on_strategy_revision=request.based_on_strategy_revision,
                         valid_for_us=SIMULATION_PLAN_HORIZON_US,
@@ -1796,10 +1982,68 @@ class RunManager:
                 return None, error
 
         results = await asyncio.gather(*(execute(item) for item in prepared)) if prepared else []
+        effective_results: list[tuple[PlanningResultCandidate | None, Exception | None, dict[str, object] | None]] = []
+        for item, (candidate, provider_error) in zip(prepared, results):
+            request, provider_name, _, definition, _, observation, seed = item
+            fallback_meta = None
+            if (
+                scenario_mode == "live_llm_smoke"
+                and provider_name not in {"rule", "replay"}
+                and provider_error is None
+                and candidate is not None
+                and not candidate.directives
+            ):
+                fallback_candidate, sample_milli = sample_noop_fallback(
+                    definition=definition,
+                    observation=observation,
+                    request=request,
+                    seed=seed,
+                )
+                fallback_meta = {
+                    "policy_id": DEMO_ACTIVITY_POLICY_ID,
+                    "probability_milli": DEMO_NOOP_FALLBACK_PROBABILITY_MILLI,
+                    "sample_milli": sample_milli,
+                    "sampled": sample_milli < DEMO_NOOP_FALLBACK_PROBABILITY_MILLI,
+                    "selected": fallback_candidate is not None,
+                    "forced_activity_floor": False,
+                }
+                if fallback_candidate is not None:
+                    candidate = fallback_candidate
+            effective_results.append((candidate, provider_error, fallback_meta))
+
+        if scenario_mode == "live_llm_smoke" and effective_results and not any(
+            candidate is not None and candidate.directives and provider_error is None
+            for candidate, provider_error, _ in effective_results
+        ):
+            for index, (item, effective) in enumerate(zip(prepared, effective_results)):
+                candidate, provider_error, fallback_meta = effective
+                request, provider_name, _, definition, _, observation, seed = item
+                if provider_name in {"rule", "replay"} or provider_error is not None or candidate is None or candidate.directives:
+                    continue
+                fallback_candidate, sample_milli = sample_noop_fallback(
+                    definition=definition,
+                    observation=observation,
+                    request=request,
+                    seed=seed,
+                    force=True,
+                )
+                if fallback_candidate is None:
+                    continue
+                effective_results[index] = (fallback_candidate, None, {
+                    "policy_id": DEMO_ACTIVITY_POLICY_ID,
+                    "probability_milli": DEMO_NOOP_FALLBACK_PROBABILITY_MILLI,
+                    "sample_milli": sample_milli,
+                    "sampled": sample_milli < DEMO_NOOP_FALLBACK_PROBABILITY_MILLI,
+                    "selected": True,
+                    "forced_activity_floor": True,
+                })
+                break
+
         applied = 0
         failed = 0
         deferred = 0
-        for (request, _, _), (candidate, provider_error) in zip(prepared, results):
+        for item, (candidate, provider_error, fallback_meta) in zip(prepared, effective_results):
+            request, _, _, _, _, _, _ = item
             try:
                 if provider_error is not None:
                     raise provider_error
@@ -1807,8 +2051,25 @@ class RunManager:
                     raise RuntimeError("planning provider returned no candidate")
                 with self.store.locked():
                     current = self._branch(branch_id)
+                    current_world = self._world(branch_id)
+                    fallback_events = []
+                    if fallback_meta is not None:
+                        fallback_events.append(EventDraft(
+                            sim_time_us=current_world.sim_time_us,
+                            priority=57,
+                            tie_break_key=f"planning:{request.request_id}:no-op-fallback",
+                            event_type="AgentNoOpFallbackSampled",
+                            source_id=request.agent_id,
+                            target_ids=[request.agent_id],
+                            payload={
+                                **fallback_meta,
+                                "request_id": request.request_id,
+                                "effective_directive_types": [directive.type for directive in candidate.directives],
+                            },
+                            visibility="participants",
+                        ))
                     self.events.append_batch(
-                        str(current["run_id"]), branch_id, [],
+                        str(current["run_id"]), branch_id, fallback_events,
                         planning_results=[{
                             "request_id": request.request_id,
                             "result_status": "ready",

@@ -296,7 +296,7 @@ def generate_population(
         usdx_balance=available_usdx - sum(usdx_values),
         enabled=True,
         two_sided_ready=(available_token - sum(token_values) > 0 and available_usdx - sum(usdx_values) > 0),
-        participation_policy_id="background.seeded.v0.1",
+        participation_policy_id="background.seeded.v0.2",
     )
     if not background.two_sided_ready:
         raise ValidationError("background market requires positive residual Token and USDx balances")

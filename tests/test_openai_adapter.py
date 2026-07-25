@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import unittest
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -79,6 +80,9 @@ class OpenAIAdapterTests(unittest.IsolatedAsyncioTestCase):
                 agent_id="agent-1",
                 context_hash="sha256:context",
                 planner_instructions="Create a bounded plan.",
+                capabilities=["market.trade", "information.read"],
+                role_tags=["capital_holder"],
+                public_identity="Long-horizon capital holder",
                 persona={"notes": "untrusted"},
                 observation={"observation_id": "observation-1"},
                 cognition={"memory_ids": []},
@@ -91,6 +95,10 @@ class OpenAIAdapterTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("secret-key-value", str(records[0].model_dump()))
         self.assertNotIn("untrusted", str(records[0].redacted_request))
         self.assertTrue(all(call["store"] is False for call in responses.calls))
+        payload = json.loads(responses.calls[-1]["input"][1]["content"])
+        self.assertEqual(payload["capabilities"], ["market.trade", "information.read"])
+        self.assertEqual(payload["role_tags"], ["capital_holder"])
+        self.assertEqual(payload["public_identity"], "Long-horizon capital holder")
 
     async def test_missing_key_is_reported_without_exposing_a_secret(self) -> None:
         adapter = OpenAIProviderAdapter(api_key=None, model="test-model")

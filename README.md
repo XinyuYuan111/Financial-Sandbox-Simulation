@@ -149,6 +149,12 @@ Stop-Process -Id $sandboxProcessId
 9. 恢复运行，观察市场、信息流和各 Agent 的独立反应。
 10. 点击停止按钮结束当前分支。
 
+Fixture 中的本地 rule Agent 会依据角色、能力、Persona、可用余额和场景 seed 生成确定性的演示计划：市场参与者交易，流动性提供者挂双边报价，信息参与者发布公开信息。所有动作仍经过正常的能力校验、风控、资产预留、延迟队列、撮合和回执链。修改代码后应新建运行；已有运行中保存的空计划不会被追溯改写。
+
+Agent 之间的公开信息通过 `InformationDelivered`、`InformationViewed` 和 observation 链路传播，不会直接写入其他 Agent 的私有状态。演示信息可带有结构化的 bullish/bearish 信号和置信度；交易型 Agent 会按自身 skepticism 折扣信号，写入 belief，并在收到新信息后重新规划。只有有结构化信号的消息会直接影响 rule planner 的买卖方向，普通文本仍作为待判断证据交给 Agent/LLM。
+
+背景市场不再只有静态做市：原背景资产会拆分为 maker 与 `background_order_flow` 两个运行账户。maker 维护多档双边深度，order flow 按可复现的概率主动吃 maker 的最优单或在盘口内挂方向单；概率、抽样值和动作类型记录为 `BackgroundOrderFlowSampled`。两者不能自成交，资产总量仍按原背景预算守恒。
+
 运行数据默认保存在：
 
 ```text
@@ -158,6 +164,10 @@ data\sandbox.db
 ## 八、可选：配置 LLM Agent 规划
 
 Fixture 模式完全在本地运行。`LLM 烟测` 和 `Live` 可以选择 `openai` 或 `deepseek` Provider，并会产生对应服务的实际 API 费用。
+
+`LLM 烟测` 是活动导向的演示模式。若 Provider 返回合法但无 directive 的计划，系统会按场景 seed 确定性采样 50% 的能力安全 fallback；若同一批仍全部无动作，会强制选取第一个合法 fallback，确保烟测能展示市场或信息流。原始 Provider 记录不会改写，宿主选择会单独记录为 `AgentNoOpFallbackSampled` 事件。`Live` 不使用该机制，Agent 在 Live 中仍可合法选择不行动。
+
+运行顶部会分别显示 `active plans`（当前有效计划）和 `pending`（仍在等待 Provider 的规划请求）；`0 pending` 只表示没有等待中的请求，不表示从未产生计划。
 
 ### LLM 烟测的虚拟资产
 
@@ -339,7 +349,7 @@ Pop-Location
 - `Live` 还需要有效的 `SANDBOX_HOLDER_SNAPSHOT_PATH`。
 - Live 页面选择的链和 Token 必须与 snapshot 文件匹配。
 - 修改环境变量后必须重启 Uvicorn；只刷新浏览器不会更新后端配置。
-- OpenAI 中转站的 `502`、连接错误或超时属于上游请求失败；查看运行顶部的 `failed` 计数和 SQLite 中的 `llm_records`，不要把 `0 planning` 误读为从未创建规划请求。
+- OpenAI 中转站的 `502`、连接错误或超时属于上游请求失败；查看运行顶部的 `failed`、`active plans`、`pending` 计数和 SQLite 中的 `llm_records`，不要把 `0 pending` 误读为从未创建规划请求。
 - API 能访问不等于规划可执行：返回内容还必须是完整 JSON，并通过 directive 必填字段、能力和 `based_on_strategy_revision` 校验。失败记录会保存具体的安全裁剪错误；DeepSeek 的第二次尝试会带上第一次的校验反馈。
 - `MAX_OUTPUT_TOKENS` 同时要容纳模型的推理 token 和最终 JSON；默认值为 `4096`。若手动保留了旧的 `1800` 环境变量，可能出现空内容或 `Unterminated string`，应修改后重启。
 - Provider 检查失败时，系统不会自动改用另一家 Provider，也不会把 Live 静默退回 Fixture 或烟测模式。

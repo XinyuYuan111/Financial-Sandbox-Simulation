@@ -289,6 +289,9 @@ class DeepSeekProviderAdapter:
     ) -> PlanningResultCandidate:
         payload = {
             "based_on_strategy_revision": request.based_on_strategy_revision,
+            "capabilities": request.capabilities,
+            "role_tags": request.role_tags,
+            "public_identity": request.public_identity,
             "persona": request.persona,
             "observation": request.observation,
             "cognition": request.cognition,

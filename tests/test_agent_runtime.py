@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import tempfile
 import time
 import unittest
@@ -8,11 +9,13 @@ import zipfile
 from pathlib import Path
 
 from sandbox.agents.llm_gateway import LLMGateway
+from sandbox.agents.planning import RulePlanner
 from sandbox.agents.strategies import StrategyDecision
 from sandbox.contracts.agent import DecisionRationale
 from sandbox.contracts.action import ActionContract
 from sandbox.contracts.scenario import ScenarioDraft
 from sandbox.contracts.planning import LLMRecord, PlanningResultCandidate, ProviderProfile
+from sandbox.contracts.observation import ObservationPacket, ObservedInformation
 from sandbox.control.initialization import Initializer
 from sandbox.control.run_manager import RunManager
 from sandbox.core.ids import new_id
@@ -175,7 +178,13 @@ class AgentRuntimeTests(unittest.TestCase):
             branch_id=branch_id,
             submitted_sim_time_us=0,
             action_type="PublishInformation",
-            payload={"channel": "PrivateChannel", "content": "private", "target_ids": ["rule_alpha"]},
+            payload={
+                "channel": "PrivateChannel",
+                "content": "private: buying pressure is strengthening",
+                "target_ids": ["rule_alpha"],
+                "signal_direction": "bullish",
+                "signal_confidence_milli": 900,
+            },
             expected_execution_time_us=1,
             validity_window_us=10,
             parent_observation_id=None,
@@ -208,6 +217,47 @@ class AgentRuntimeTests(unittest.TestCase):
             ),
             1,
         )
+        state = self.manager._world(branch_id).agent_runtime_states["rule_alpha"]
+        self.assertTrue(any(
+            belief.predicate == "market_signal" and belief.value == "bullish"
+            for belief in state.beliefs
+        ))
+
+    def test_structured_information_signal_changes_rule_planner_direction(self) -> None:
+        _, branch_id = self.create_running()
+        world = self.manager._world(branch_id)
+        definition = world.agent_definitions["rule_alpha"]
+        state = world.agent_runtime_states["rule_alpha"]
+        request = next(iter(world.planning_requests.values()))
+        observation = ObservationPacket.model_validate(self.manager.observations(branch_id, "rule_alpha")[-1])
+        observation = observation.model_copy(update={
+            "information_items": [ObservedInformation(
+                information_id="signal-bullish",
+                source_id="news_agent",
+                channel="PublicFeed",
+                rendered_content="buying pressure is strengthening",
+                sim_time_us=observation.sim_time_us,
+                delivered_sim_time_us=observation.sim_time_us,
+                viewed_sim_time_us=observation.sim_time_us,
+                expires_sim_time_us=observation.sim_time_us + 1_000_000,
+                visibility="public",
+                signal_direction="bullish",
+                signal_confidence_milli=1_000,
+            )],
+            "provenance": ["signal-bullish"],
+        })
+
+        candidate = asyncio.run(RulePlanner(seed=world.rng.root_seed).plan(
+            definition=definition,
+            observation=observation,
+            state=state,
+            request=request,
+        ))
+
+        trade = next(directive for directive in candidate.directives if directive.type == "trade")
+        self.assertEqual(trade.side, "buy")
+        self.assertIn("signal-bullish", candidate.rationale.evidence_ids)
+        self.assertTrue(candidate.replan_conditions)
 
     def test_rejected_agent_action_keeps_the_full_audit_chain(self) -> None:
         _, branch_id = self.create_running()
@@ -223,7 +273,7 @@ class AgentRuntimeTests(unittest.TestCase):
             agent_id="rule_alpha",
             strategy=StrategyDecision(
                 "SubmitLimitOrder",
-                {"side": "buy", "quantity": 10_000_000, "price": 102},
+                {"side": "buy", "quantity": 100_000_000, "price": 102},
             ),
             client_command_id="rejected-agent-action",
             command_key="rejected-agent-action-command",
@@ -262,6 +312,17 @@ class AgentRuntimeTests(unittest.TestCase):
             self.store.connection.execute("SELECT COUNT(*) count FROM llm_records").fetchone()["count"],
             1,
         )
+        fallback = next(
+            event for event in self.manager.events.list_events(branch_id, limit=10_000)
+            if event.event_type == "AgentNoOpFallbackSampled"
+        )
+        self.assertTrue(fallback.payload["selected"])
+        self.assertTrue(fallback.payload["sampled"] or fallback.payload["forced_activity_floor"])
+        active_plan = self.store.connection.execute(
+            "SELECT plan_json FROM strategy_plans WHERE branch_id=? AND active=1",
+            (branch_id,),
+        ).fetchone()
+        self.assertTrue(json.loads(active_plan["plan_json"])["directives"])
         self.manager.command(branch_id, "live-save", "save")
         archive_path = Path(self.temp.name) / "live-agent.sandbox"
         self.manager.export_archive(str(run["run_id"]), archive_path)
@@ -302,6 +363,96 @@ class AgentRuntimeTests(unittest.TestCase):
         self.assertEqual(len(adapter.requests), 4)
         self.assertLess(elapsed, 0.65)
         self.assertTrue(all(request.based_on_strategy_revision == 0 for request in adapter.requests))
+        self.assertTrue(all(request.capabilities for request in adapter.requests))
+        self.assertTrue(all(request.role_tags for request in adapter.requests))
+        fallback_events = [
+            event for event in self.manager.events.list_events(branch_id, limit=10_000)
+            if event.event_type == "AgentNoOpFallbackSampled"
+        ]
+        self.assertEqual(len(fallback_events), 4)
+        self.assertTrue(any(event.payload["selected"] for event in fallback_events))
+
+    def test_demo_rule_agents_trade_quote_and_publish_through_the_runtime(self) -> None:
+        scenario = self.manager.create_scenario(ScenarioDraft(
+            population={"preset": "smoke", "agent_count": 4},
+            agent_configuration_drafts=[
+                {
+                    "draft_id": "active-trader",
+                    "input_mode": "detailed",
+                    "archetype_ids": ["ordinary_participant"],
+                    "base_persona": {"risk_tolerance_milli": 1_000, "trend_bias_milli": 1_000},
+                    "latency_profile": {"planning_latency_us": 0, "action_latency_us": 0},
+                },
+                {
+                    "draft_id": "capital-trader",
+                    "input_mode": "detailed",
+                    "archetype_ids": ["capital_holder"],
+                    "base_persona": {"risk_tolerance_milli": 1_000, "trend_bias_milli": 0},
+                    "latency_profile": {"planning_latency_us": 0, "action_latency_us": 0},
+                },
+                {
+                    "draft_id": "liquidity-provider",
+                    "input_mode": "detailed",
+                    "archetype_ids": ["liquidity_provider"],
+                    "base_persona": {"risk_tolerance_milli": 1_000},
+                    "latency_profile": {"planning_latency_us": 0, "action_latency_us": 0},
+                },
+                {
+                    "draft_id": "information-participant",
+                    "input_mode": "detailed",
+                    "archetype_ids": ["information_participant"],
+                    "base_persona": {"communication_propensity_milli": 1_000},
+                    "latency_profile": {"planning_latency_us": 0, "action_latency_us": 0},
+                },
+            ],
+        ))
+        resolved = asyncio.run(self.manager.resolve_scenario(str(scenario["scenario_id"])))
+        run = self.manager.create_run(str(scenario["scenario_id"]), resolved.resolution_hash)
+        branch_id = str(run["branches"][0]["branch_id"])
+        self.manager.command(branch_id, "demo-start", "start")
+        self.manager._runner_cancel[branch_id].set()
+        self.manager._planning_cancel[branch_id].set()
+
+        result = self.manager.command(branch_id, "demo-plan", "run_for", {"max_requests": 4})
+
+        self.assertEqual(result["applied_requests"], 4)
+        plans = self.store.connection.execute(
+            "SELECT plan_json FROM strategy_plans WHERE branch_id=? AND active=1",
+            (branch_id,),
+        ).fetchall()
+        directive_types = {
+            directive["type"]
+            for row in plans
+            for directive in json.loads(row["plan_json"])["directives"]
+        }
+        trade_styles = {
+            directive["style"]
+            for row in plans
+            for directive in json.loads(row["plan_json"])["directives"]
+            if directive["type"] == "trade"
+        }
+        self.assertEqual(len(plans), 4)
+        self.assertTrue({"trade", "quote", "communication"}.issubset(directive_types))
+        self.assertEqual(trade_styles, {"passive", "protected_market"})
+
+        for _ in range(40):
+            world = self.manager._world(branch_id)
+            if not world.pending_actions and not world.pending_deliveries:
+                break
+            self.assertTrue(self.manager._advance_background_once(branch_id))
+        else:
+            self.fail("demo Agent actions and information deliveries did not settle")
+
+        events = self.manager.events.list_events(branch_id, limit=10_000)
+        agent_ids = {definition.agent_id for definition in resolved.agent_definitions}
+        self.assertTrue(any(event.event_type == "TradeMatched" and event.source_id in agent_ids for event in events))
+        self.assertTrue(any(event.event_type == "InformationPublished" and event.source_id in agent_ids for event in events))
+        self.assertTrue(any(event.event_type == "InformationViewed" for event in events))
+        self.assertFalse(any(
+            event.event_type == "ActionAdmissionRejected" and event.source_id in agent_ids
+            for event in events
+        ))
+        self.assertTrue(any(self.manager.agent_receipts(branch_id, agent_id) for agent_id in agent_ids))
 
     def test_autonomous_clock_advances_while_llm_is_still_pending(self) -> None:
         adapter = SlowPlanningAdapter(2.0)
