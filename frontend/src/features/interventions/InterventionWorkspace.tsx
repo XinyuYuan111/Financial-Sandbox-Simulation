@@ -104,7 +104,7 @@ export function InterventionWorkspace({ branchId, branchStatus, simTimeUs, provi
   branchId: string
   branchStatus: string
   simTimeUs: number
-  provider: string
+  provider: 'openai' | 'deepseek' | null
   onChanged: () => Promise<void>
 }) {
   const [plans, setPlans] = useState<InterventionPlan[]>([])
@@ -149,7 +149,7 @@ export function InterventionWorkspace({ branchId, branchStatus, simTimeUs, provi
   }
 
   const interpret = async () => {
-    if (!intent.trim()) return
+    if (!intent.trim() || !provider) return
     setBusy(true); setError(null)
     try {
       await api.interpretInterventionPlan(branchId, intent, Number(effectiveTime), provider)
@@ -195,7 +195,7 @@ export function InterventionWorkspace({ branchId, branchStatus, simTimeUs, provi
         <button className="secondary-button add-effect" type="button" onClick={addEffect} disabled={!paused || busy}><Plus size={15} />添加效果</button>
       </div>
       <div className="effect-queue">{effects.map(effect => <div key={effect.effect_id}><span>{effectLabel(effect)}</span><code>{shortId(effect.effect_id)}</code><button type="button" title="移除效果" aria-label="移除效果" onClick={() => setEffects(current => current.filter(item => item.effect_id !== effect.effect_id))}><Trash2 size={14} /></button></div>)}</div>
-      <div className="draft-actions"><button className="secondary-button" type="button" onClick={() => void interpret()} disabled={!paused || busy || !intent.trim()}><Sparkles size={15} />AI 生成</button><button className="primary-button" type="submit" disabled={!paused || busy || !intent.trim() || !effects.length}>生成 Draft</button></div>
+      <div className="draft-actions"><button className="secondary-button" type="button" onClick={() => void interpret()} disabled={!paused || busy || !intent.trim() || !provider}><Sparkles size={15} />AI 生成</button><button className="primary-button" type="submit" disabled={!paused || busy || !intent.trim() || !effects.length}>生成 Draft</button></div>
     </form>
     <section className="workspace-panel intervention-plans">
       <div className="panel-heading"><div><h2>干预计划</h2><p>{plans.length} plans</p></div><Check size={18} /></div>

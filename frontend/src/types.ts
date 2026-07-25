@@ -90,6 +90,7 @@ export type Projection = {
     active_plans: number
     last_failure_code: string | null
     last_failure_message: string | null
+    provider: 'openai' | 'deepseek' | null
   }
   market: {
     market_id: string

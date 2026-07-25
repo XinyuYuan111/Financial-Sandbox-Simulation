@@ -272,6 +272,26 @@ class RunManager:
         with self.store.locked():
             return self._branch_projection_locked(branch_id, cursor)
 
+    def _scenario_llm_provider_locked(self, branch_id: str) -> str | None:
+        """Return the LLM provider resolved for the run owning this branch.
+
+        The provider is part of the immutable scenario resolution.  Callers must
+        not be able to switch a live run to another provider by changing a
+        request-body field after the run was created.
+        """
+        branch = self._branch(branch_id)
+        row = self.store.connection.execute(
+            "SELECT resolved_state_json FROM runs WHERE run_id=?",
+            (branch["run_id"],),
+        ).fetchone()
+        if row is None or row["resolved_state_json"] is None:
+            return None
+        resolved = json.loads(row["resolved_state_json"])
+        provider_report = resolved.get("provider_report", {})
+        llm_report = provider_report.get("llm", {}) if isinstance(provider_report, dict) else {}
+        provider = llm_report.get("provider") if isinstance(llm_report, dict) else None
+        return provider if provider in {"openai", "deepseek"} else None
+
     def _branch_projection_locked(self, branch_id: str, cursor: int | None = None) -> dict[str, object]:
         branch = self._branch(branch_id)
         if cursor is not None and cursor < int(branch["state_version"]):
@@ -307,6 +327,7 @@ class RunManager:
         if isinstance(planning, dict):
             failure_payload = json.loads(latest_failure["payload_json"]) if latest_failure is not None else {}
             planning["last_failure_message"] = failure_payload.get("message")
+            planning["provider"] = self._scenario_llm_provider_locked(branch_id)
         projection["parent_branch_id"] = branch["parent_branch_id"]
         projection["fork_checkpoint_id"] = branch["fork_checkpoint_id"]
         return projection
@@ -580,7 +601,7 @@ class RunManager:
         *,
         user_intent: str,
         requested_effective_time_us: int,
-        provider_name: str,
+        provider_name: str | None,
         access_scope: DirectorAccessScope,
         private_read_refs: list[PrivateStateRef],
     ) -> dict[str, object]:
@@ -595,6 +616,13 @@ class RunManager:
                 raise ConflictError(
                     "Scenario Director only accepts commands on a Paused branch",
                     error_code="BRANCH_NOT_PAUSED",
+                )
+            configured_provider = self._scenario_llm_provider_locked(branch_id)
+            if configured_provider is not None:
+                provider_name = configured_provider
+            elif provider_name is None:
+                raise ValidationError(
+                    "current scenario has no configured LLM provider; create a live or live_llm_smoke run"
                 )
             world = self._world(branch_id)
             if requested_effective_time_us < world.sim_time_us:

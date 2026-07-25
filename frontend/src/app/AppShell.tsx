@@ -36,12 +36,7 @@ export function AppShell() {
   const [error, setError] = useState<string | null>(null)
 
   const activeBranch = useMemo(() => run?.branches.find(branch => branch.branch_id === branchId) ?? null, [branchId, run])
-  const activeLlmProvider = useMemo(() => {
-    const profile = projection?.agents
-      .map(agent => agent.planner_profile_id)
-      .find(value => value && !/^(rule|replay)\./.test(value))
-    return profile?.split('.', 1)[0] ?? 'openai'
-  }, [projection])
+  const activeLlmProvider = projection?.planning?.provider ?? null
 
   const loadBranch = useCallback(async (targetRun: Run, targetBranchId: string, cursor?: number) => {
     setBusy(true); setError(null)
